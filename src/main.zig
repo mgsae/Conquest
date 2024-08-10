@@ -134,10 +134,10 @@ fn processInput(accumulatedMouseWheel: *f32, accumulatedKeyInput: *u32) void {
     if (rl.isKeyDown(rl.KeyboardKey.key_s) or rl.isKeyDown(rl.KeyboardKey.key_down)) accumulatedKeyInput.* |= 1 << 2;
     if (rl.isKeyDown(rl.KeyboardKey.key_d) or rl.isKeyDown(rl.KeyboardKey.key_right)) accumulatedKeyInput.* |= 1 << 3;
     // Build keys
-    if (rl.isKeyDown(rl.KeyboardKey.key_one)) accumulatedKeyInput.* |= 1 << 4;
-    if (rl.isKeyDown(rl.KeyboardKey.key_two)) accumulatedKeyInput.* |= 1 << 5;
-    if (rl.isKeyDown(rl.KeyboardKey.key_three)) accumulatedKeyInput.* |= 1 << 6;
-    if (rl.isKeyDown(rl.KeyboardKey.key_four)) accumulatedKeyInput.* |= 1 << 7;
+    if (rl.isKeyPressed(rl.KeyboardKey.key_one)) accumulatedKeyInput.* |= 1 << 4;
+    if (rl.isKeyPressed(rl.KeyboardKey.key_two)) accumulatedKeyInput.* |= 1 << 5;
+    if (rl.isKeyPressed(rl.KeyboardKey.key_three)) accumulatedKeyInput.* |= 1 << 6;
+    if (rl.isKeyPressed(rl.KeyboardKey.key_four)) accumulatedKeyInput.* |= 1 << 7;
     // Special keys
     if (rl.isKeyDown(rl.KeyboardKey.key_space)) accumulatedKeyInput.* |= 1 << 9;
 }
@@ -177,12 +177,8 @@ pub fn updateCanvasZoom(mouseWheelDelta: f32) void {
         // Adjust offsets to zoom around the mouse position
         const mouseX = @as(f32, @floatFromInt(rl.getMouseX()));
         const mouseY = @as(f32, @floatFromInt(rl.getMouseY()));
-
-        // Calculate the position of the mouse in canvas coordinates before zoom
         const canvasMouseXBeforeZoom = (mouseX - canvasOffsetX) / oldZoom;
         const canvasMouseYBeforeZoom = (mouseY - canvasOffsetY) / oldZoom;
-
-        // Calculate the position of the mouse in canvas coordinates after zoom
         const canvasMouseXAfterZoom = (mouseX - canvasOffsetX) / canvasZoom;
         const canvasMouseYAfterZoom = (mouseY - canvasOffsetY) / canvasZoom;
 
@@ -233,26 +229,17 @@ pub fn updateCanvasPosition(keyInput: u32) void {
     if (canvasOffsetY > 0) canvasOffsetY = 0;
     if (canvasOffsetX < minMapOffsetX) canvasOffsetX = minMapOffsetX;
     if (canvasOffsetY < minMapOffsetY) canvasOffsetY = minMapOffsetY;
-
-    // Just for debugging
-    if ((keyInput & (1 << 9)) != 0) {
-        std.debug.print("minMapOffsetX {}, minMapOffsetY {}, canvasOffsetX {}, canvasOffsetY {}.\n", .{ minMapOffsetX, minMapOffsetY, canvasOffsetX, canvasOffsetY });
-    }
 }
 
 /// Draws map and grid markers relative to current canvas
 pub fn drawMap() void {
-    // Draw the entire map area
-    utils.drawRect(0, 0, mapWidth, mapHeight, rl.Color.ray_white);
-
-    // Draw grid
-    for (1..gameGrid.cells.len) |rowIndex| {
+    utils.drawRect(0, 0, mapWidth, mapHeight, rl.Color.ray_white); // Map area
+    for (1..gameGrid.cells.len) |rowIndex| { // Grid rows
         utils.drawRect(0, @as(i32, @intCast(utils.Grid.CellSize * rowIndex)), mapWidth, 5, rl.Color.light_gray);
     }
-    for (1..gameGrid.cells[0].len) |colIndex| {
+    for (1..gameGrid.cells[0].len) |colIndex| { // Grid columns
         utils.drawRect(@as(i32, @intCast(utils.Grid.CellSize * colIndex)), 0, 5, mapHeight, rl.Color.light_gray);
     }
-
     // Draw the edges of the map
     utils.drawRect(0, -10, mapWidth, 20, rl.Color.dark_gray); // Top edge
     utils.drawRect(0, mapHeight - 10, mapWidth, 20, rl.Color.dark_gray); // Bottom edge
@@ -282,11 +269,12 @@ pub fn setMapSize(width: i32, height: i32) void {
 // Game conditions
 //----------------------------------------------------------------------------------
 pub fn startingLocations(allocator: std.mem.Allocator, playerAmount: u8) ![]utils.Point {
+    const offset = utils.Grid.CellSize * 3;
     const coordinates: [4]utils.Point = [_]utils.Point{
-        utils.Point{ .x = 100, .y = 100 },
-        utils.Point{ .x = mapWidth - 100, .y = mapHeight - 100 },
-        utils.Point{ .x = mapWidth - 100, .y = 100 },
-        utils.Point{ .x = 100, .y = mapHeight - 100 },
+        utils.Point{ .x = offset, .y = offset },
+        utils.Point{ .x = mapWidth - offset, .y = mapHeight - offset },
+        utils.Point{ .x = mapWidth - offset, .y = offset },
+        utils.Point{ .x = offset, .y = mapHeight - offset },
     };
 
     // Allocate memory for the slice

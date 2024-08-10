@@ -232,7 +232,7 @@ pub const Unit = struct {
     y: i32,
     width: u16,
     height: u16,
-    hp: u16,
+    life: u16,
 
     pub fn draw(self: *const Unit) void {
         utils.drawEntity(self.x, self.y, self.width, self.height, self.color);
@@ -242,8 +242,12 @@ pub const Unit = struct {
         const dx = @as(f16, @floatFromInt(utils.randomInt(2) - 1)); // Test
         const dy = @as(f16, @floatFromInt(utils.randomInt(2) - 1)); // Test
         self.move(dx, dy);
+
         // move, determine movement based on AI logic
         // act, determine ability use based on AI logic
+
+        self.life -= 1;
+        if (self.life <= 0) self.die(null);
     }
 
     pub fn move(self: *Unit, dx: f16, dy: f16) void {
@@ -276,7 +280,7 @@ pub const Unit = struct {
             .color = fromClass.color,
             .width = fromClass.width,
             .height = fromClass.height,
-            .hp = fromClass.hp,
+            .life = fromClass.life,
             .x = x,
             .y = y,
         };
@@ -291,20 +295,37 @@ pub const Unit = struct {
         return unit;
     }
 
+    pub fn destroy(self: *Unit) !void {
+        try main.gameGrid.removeEntity(getEntity(self), null, null);
+        try utils.findAndSwapRemove(Unit, &units, self);
+    }
+
+    pub fn die(self: *Unit, cause: ?u8) void {
+        // Death effect
+        if (cause) |c| {
+            //switch (c) {
+            //    else => // Handle different death types differently
+            // }
+            self.destroy() catch std.debug.panic("Failed to destroy, cause {}.\n", .{c});
+        } else { // Unknown cause of death, very sad
+            self.destroy() catch std.debug.panic("Failed to destroy\n", .{});
+        }
+    }
+
     pub const UnitProperties = struct {
         speed: f16,
         color: rl.Color,
         width: u16,
         height: u16,
-        hp: u16,
+        life: u16,
     };
 
     pub fn classProperties(class: u8) UnitProperties {
         return switch (class) {
-            0 => UnitProperties{ .speed = 5, .color = rl.Color.sky_blue, .width = 50, .height = 50, .hp = 100 },
-            1 => UnitProperties{ .speed = 6, .color = rl.Color.blue, .width = 55, .height = 55, .hp = 90 },
-            2 => UnitProperties{ .speed = 4, .color = rl.Color.dark_blue, .width = 70, .height = 70, .hp = 130 },
-            3 => UnitProperties{ .speed = 6, .color = rl.Color.violet, .width = 50, .height = 50, .hp = 150 },
+            0 => UnitProperties{ .speed = 5, .color = rl.Color.sky_blue, .width = 50, .height = 50, .life = 1000 },
+            1 => UnitProperties{ .speed = 6, .color = rl.Color.blue, .width = 55, .height = 55, .life = 900 },
+            2 => UnitProperties{ .speed = 4, .color = rl.Color.dark_blue, .width = 70, .height = 70, .life = 1300 },
+            3 => UnitProperties{ .speed = 6, .color = rl.Color.violet, .width = 50, .height = 50, .life = 1500 },
             else => @panic("Invalid unit class"),
         };
     }
@@ -324,8 +345,9 @@ pub const Structure = struct {
     height: i32,
     class: u8,
     color: rl.Color,
-    interval: u32,
-    elapsed: u32 = 0,
+    life: u16,
+    pulse: u16,
+    elapsed: u16 = 0,
 
     pub fn draw(self: *const Structure) void {
         utils.drawEntity(self.x, self.y, self.width, self.height, self.color);
@@ -333,8 +355,8 @@ pub const Structure = struct {
 
     pub fn update(self: *Structure) void {
         self.elapsed += 1;
-        if (self.elapsed >= self.interval) {
-            self.elapsed -= self.interval; // Subtracting interval accounts for possible overshoot
+        if (self.elapsed >= self.pulse) {
+            self.elapsed -= self.pulse; // Subtracting interval accounts for possible overshoot
             self.spawnUnit() catch return;
         }
     }
@@ -360,7 +382,8 @@ pub const Structure = struct {
             .width = fromClass.width,
             .height = fromClass.height,
             .color = fromClass.color,
-            .interval = fromClass.interval,
+            .life = fromClass.life,
+            .pulse = fromClass.pulse,
             .x = x,
             .y = y,
         };
@@ -388,16 +411,16 @@ pub const Structure = struct {
         color: rl.Color,
         width: u16,
         height: u16,
-        hp: u16,
-        interval: u32,
+        life: u16,
+        pulse: u16,
     };
 
     pub fn classProperties(class: u8) StructureProperties {
         return switch (class) {
-            0 => StructureProperties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .hp = 500, .interval = 180 },
-            1 => StructureProperties{ .color = rl.Color.blue, .width = 175, .height = 175, .hp = 600, .interval = 320 },
-            2 => StructureProperties{ .color = rl.Color.dark_blue, .width = 150, .height = 150, .hp = 700, .interval = 240 },
-            3 => StructureProperties{ .color = rl.Color.violet, .width = 125, .height = 125, .hp = 800, .interval = 120 },
+            0 => StructureProperties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 5000, .pulse = 180 },
+            1 => StructureProperties{ .color = rl.Color.blue, .width = 175, .height = 175, .life = 6000, .pulse = 320 },
+            2 => StructureProperties{ .color = rl.Color.dark_blue, .width = 150, .height = 150, .life = 7000, .pulse = 240 },
+            3 => StructureProperties{ .color = rl.Color.violet, .width = 125, .height = 125, .life = 8000, .pulse = 120 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -486,12 +509,13 @@ pub const Projectile = struct {
     }
 
     pub fn impact(self: Projectile) void {
-        // Effect when projectile hits entity; subtract hp
+        // Effect when projectile hits entity; subtract life
         self.destroy();
     }
 
-    pub fn destroy(self: Projectile) void {
-        main.gameGrid.removeEntity(main.gameGrid, self);
+    pub fn destroy(self: Projectile) !void {
+        try main.gameGrid.removeEntity(getEntity(@constCast(&self)), null, null);
+        // no array list of Projectiles, otherwise: try utils.findAndSwapRemove(Projectile, &projectiles, @constCast(&self));
     }
 
     pub fn getEntity(projectile: *Projectile) *Entity {

@@ -19,6 +19,26 @@ pub fn printTotalEntitiesOnGrid(grid: *entity.Grid) void {
     std.debug.print("Entities on grid: {}\n", .{totalEntities});
 }
 
+// Data structures
+//----------------------------------------------------------------------------------
+pub fn findAndSwapRemove(comptime T: type, list: *std.ArrayList(*T), ptr: *T) !void {
+    var foundIndex: ?usize = null;
+
+    // Iterate over the items in the list to find the index of the item matching ptr
+    for (list.items, 0..) |item, i| {
+        if (item == ptr) { // Compare the pointer addresses
+            foundIndex = i;
+            break;
+        }
+    }
+
+    if (foundIndex) |index| {
+        _ = list.swapRemove(index);
+    } else {
+        return error.ItemNotFound;
+    }
+}
+
 // RNG
 //----------------------------------------------------------------------------------
 pub fn rngInit() void {
