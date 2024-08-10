@@ -378,7 +378,7 @@ pub const Structure = struct {
 
     pub fn build(x: i32, y: i32, class: u8) ?*Structure {
         const collision = entityCollision(x, y, 150, 150, Player.getEntity(main.gamePlayer)) catch return null;
-        if (collision) {
+        if (collision or !utils.isInMap(x, y, classProperties(class).width, classProperties(class).height)) {
             return null;
         }
         const structure = Structure.create(x, y, class) catch return null;
@@ -448,7 +448,7 @@ pub const Structure = struct {
                 else => @panic("Unrecognized side"),
             }
 
-            if (!try entityCollision(spawnX, spawnY, unitWidth, unitHeight, null)) {
+            if (!try entityCollision(spawnX, spawnY, unitWidth, unitHeight, null) and utils.isInMap(spawnX, spawnY, unitWidth, unitHeight)) {
                 return [2]i32{ spawnX, spawnY };
             }
         }

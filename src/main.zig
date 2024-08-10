@@ -228,21 +228,21 @@ pub fn updateCanvasPosition() void {
 /// Draws map and grid markers relative to current canvas
 pub fn drawMap() void {
     // Draw the entire map area
-    utils.drawRect(0, 0, mapWidth, mapHeight, rl.Color.light_gray);
+    utils.drawRect(0, 0, mapWidth, mapHeight, rl.Color.gray);
 
     // Draw grid
     for (1..gameGrid.cells.len) |rowIndex| {
-        utils.drawRect(0, @as(i32, @intCast(utils.Grid.CellSize * rowIndex)), mapWidth, 5, rl.Color.white);
+        utils.drawRect(0, @as(i32, @intCast(utils.Grid.CellSize * rowIndex)), mapWidth, 5, rl.Color.dark_gray);
     }
     for (1..gameGrid.cells[0].len) |colIndex| {
-        utils.drawRect(@as(i32, @intCast(utils.Grid.CellSize * colIndex)), 0, 5, mapHeight, rl.Color.white);
+        utils.drawRect(@as(i32, @intCast(utils.Grid.CellSize * colIndex)), 0, 5, mapHeight, rl.Color.dark_gray);
     }
 
     // Draw the edges of the map
-    utils.drawRect(0, -10, mapWidth, 20, rl.Color.dark_gray); // Top edge
-    utils.drawRect(0, mapHeight - 10, mapWidth, 20, rl.Color.dark_gray); // Bottom edge
-    utils.drawRect(-10, 0, 20, mapHeight, rl.Color.dark_gray); // Left edge
-    utils.drawRect(mapWidth - 10, 0, 20, mapHeight, rl.Color.dark_gray); // Right edge
+    utils.drawRect(0, -10, mapWidth, 20, rl.Color.light_gray); // Top edge
+    utils.drawRect(0, mapHeight - 10, mapWidth, 20, rl.Color.light_gray); // Bottom edge
+    utils.drawRect(-10, 0, 20, mapHeight, rl.Color.light_gray); // Left edge
+    utils.drawRect(mapWidth - 10, 0, 20, mapHeight, rl.Color.light_gray); // Right edge
 
 }
 

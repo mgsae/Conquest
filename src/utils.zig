@@ -86,6 +86,10 @@ pub fn isOnMap(x: i32, y: i32) bool {
     return x >= 0 and x < main.mapWidth and y >= 0 and y <= main.mapHeight;
 }
 
+pub fn isInMap(x: i32, y: i32, width: i32, height: i32) bool {
+    return x - @divTrunc(width, 2) >= 0 and x + @divTrunc(width, 2) < main.mapWidth and y - @divTrunc(height, 2) >= 0 and y + @divTrunc(height, 2) <= main.mapHeight;
+}
+
 pub fn mapClampX(x: i32, width: i32) i32 {
     return @min(main.mapWidth - @divTrunc(width, 2), @max(x, @divTrunc(width, 2)));
 }
