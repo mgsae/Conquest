@@ -106,17 +106,21 @@ pub const Player = struct {
             self.direction = 6; // Numpad direction
         }
 
-        // Check collisions
-        const canMoveX: bool = if (newX != null) !try entityCollision(newX.?, self.y, self.width, self.height, Player.getEntity(self)) else true;
-        const canMoveY: bool = if (newY != null) !try entityCollision(self.x, newY.?, self.width, self.height, Player.getEntity(self)) else true;
-
-        // Apply movement
-        if (canMoveX or canMoveY) {
-            const oldX = self.x;
-            const oldY = self.y;
-            self.x = newX orelse oldX;
-            self.y = newY orelse oldY;
-            main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
+        if (newX != null) {
+            const canMoveX = !try entityCollision(newX.?, self.y, self.width, self.height, Player.getEntity(self));
+            if (canMoveX) {
+                const oldX = self.x;
+                self.x = newX.?;
+                main.gameGrid.updateEntity(getEntity(self), oldX, self.y);
+            }
+        }
+        if (newY != null) {
+            const canMoveY = !try entityCollision(self.x, newY.?, self.width, self.height, Player.getEntity(self));
+            if (canMoveY) {
+                const oldY = self.y;
+                self.y = newY.?;
+                main.gameGrid.updateEntity(getEntity(self), self.x, oldY);
+            }
         }
     }
 
