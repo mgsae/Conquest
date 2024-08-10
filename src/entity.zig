@@ -107,7 +107,7 @@ pub const Player = struct {
         }
 
         if (newX != null) {
-            const canMoveX = !try entityCollision(newX.?, self.y, self.width, self.height, Player.getEntity(self));
+            const canMoveX = !try main.gameGrid.entityCollision(newX.?, self.y, self.width, self.height, Player.getEntity(self));
             if (canMoveX) {
                 const oldX = self.x;
                 self.x = newX.?;
@@ -115,7 +115,7 @@ pub const Player = struct {
             }
         }
         if (newY != null) {
-            const canMoveY = !try entityCollision(self.x, newY.?, self.width, self.height, Player.getEntity(self));
+            const canMoveY = !try main.gameGrid.entityCollision(self.x, newY.?, self.width, self.height, Player.getEntity(self));
             if (canMoveY) {
                 const oldY = self.y;
                 self.y = newY.?;
@@ -258,8 +258,7 @@ pub const Unit = struct {
         const newY = utils.i32AddFloat(f16, oldY, (dy * self.speed));
 
         // Check collisions in nearby grid cells
-        // This caused out of memory crash
-        const collides = entityCollision(newX, newY, self.width, self.height, Unit.getEntity(self)) catch true;
+        const collides = main.gameGrid.entityCollision(newX, newY, self.width, self.height, Unit.getEntity(self)) catch true;
 
         // Apply movement
         if (!collides) {
@@ -399,7 +398,7 @@ pub const Structure = struct {
     }
 
     pub fn build(x: i32, y: i32, class: u8) ?*Structure {
-        const collision = entityCollision(x, y, 150, 150, Player.getEntity(main.gamePlayer)) catch return null;
+        const collision = main.gameGrid.entityCollision(x, y, 150, 150, Player.getEntity(main.gamePlayer)) catch return null;
         if (collision or !utils.isInMap(x, y, classProperties(class).width, classProperties(class).height)) {
             return null;
         }
@@ -470,7 +469,7 @@ pub const Structure = struct {
                 else => @panic("Unrecognized side"),
             }
 
-            if (!try entityCollision(spawnX, spawnY, unitWidth, unitHeight, null) and utils.isInMap(spawnX, spawnY, unitWidth, unitHeight)) {
+            if (!try main.gameGrid.entityCollision(spawnX, spawnY, unitWidth, unitHeight, null) and utils.isInMap(spawnX, spawnY, unitWidth, unitHeight)) {
                 return [2]i32{ spawnX, spawnY };
             }
         }
@@ -606,7 +605,7 @@ pub const Grid = struct {
         }
     }
 
-    pub fn getNearbyEntities(self: *Grid, x: i32, y: i32) ![]*Entity {
+    pub fn getNearbyEntitiesOld(self: *Grid, x: i32, y: i32) ![]*Entity {
         // var nearbyEntities = std.ArrayList(*Entity).init(self.allocator.*); // Dereference allocator
         var nearbyEntities: [main.ENTITY_COLLISION_LIMIT]*Entity = undefined;
         var count: usize = 0;
@@ -640,39 +639,76 @@ pub const Grid = struct {
         // std.debug.print("Total units in the world: {}.\n", .{units.items.len});
         return nearbyEntities[0..count];
     }
-};
 
-pub fn entityCollision(x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !bool {
-    const halfWidth = @divTrunc(width, 2);
-    const halfHeight = @divTrunc(height, 2);
+    pub fn getNearbyEntities(self: *Grid, x: i32, y: i32) ![]*Entity {
+        // Broad-phase check
+        var nearbyEntities: [main.ENTITY_COLLISION_LIMIT]*Entity = undefined;
+        var count: usize = 0;
 
-    const left = x - halfWidth;
-    const right = x + halfWidth;
-    const top = y - halfHeight;
-    const bottom = y + halfHeight;
+        const coord = self.toGridCoord(x, y);
+        const startX = if (coord.x == 0) 0 else coord.x - 1;
+        const endX = if (coord.x + 1 >= self.cells.len) coord.x else coord.x + 1;
+        const startY = if (coord.y == 0) 0 else coord.y - 1;
+        const endY = if (coord.y + 1 >= self.cells[0].len) coord.y else coord.y + 1;
 
-    const nearbyEntities = try main.gameGrid.getNearbyEntities(x, y);
-
-    for (nearbyEntities) |entity| {
-        if (currentEntity) |cur| {
-            if (@intFromPtr(cur) == @intFromPtr(entity)) {
-                continue; // Skip current entity
+        for (startX..endX + 1) |i| {
+            for (startY..endY + 1) |j| {
+                if (i < self.cells.len and j < self.cells[i].len) {
+                    for (self.cells[i][j].entities.items) |entity| {
+                        if (count < main.ENTITY_COLLISION_LIMIT) {
+                            // Perform a quick bounding box check
+                            if (broadPhaseCheck(x, y, entity)) {
+                                nearbyEntities[count] = entity;
+                                count += 1;
+                            }
+                        } else {
+                            return error.TooManyEntities;
+                        }
+                    }
+                }
             }
         }
 
-        const entityHalfWidth = @divTrunc(entityWidth(entity), 2);
-        const entityHalfHeight = @divTrunc(entityHeight(entity), 2);
-
-        const entityLeft = entityX(entity) - entityHalfWidth;
-        const entityRight = entityX(entity) + entityHalfWidth;
-        const entityTop = entityY(entity) - entityHalfHeight;
-        const entityBottom = entityY(entity) + entityHalfHeight;
-
-        if ((left < entityRight) and (right > entityLeft) and
-            (top < entityBottom) and (bottom > entityTop))
-        {
-            return true;
-        }
+        return nearbyEntities[0..count];
     }
-    return false;
-}
+
+    fn broadPhaseCheck(x: i32, y: i32, entity: *Entity) bool {
+        const broadBoxSize = 150; // Minimum distance
+        return (@abs(x - entityX(entity)) <= broadBoxSize and @abs(y - entityY(entity)) <= broadBoxSize);
+    }
+
+    pub fn entityCollision(self: *Grid, x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !bool {
+        const halfWidth = @divTrunc(width, 2);
+        const halfHeight = @divTrunc(height, 2);
+
+        const left = x - halfWidth;
+        const right = x + halfWidth;
+        const top = y - halfHeight;
+        const bottom = y + halfHeight;
+
+        const nearbyEntities = try self.getNearbyEntities(x, y);
+
+        for (nearbyEntities) |entity| {
+            if (currentEntity) |cur| {
+                if (@intFromPtr(cur) == @intFromPtr(entity)) {
+                    continue; // Skip current entity
+                }
+            }
+
+            const entityHalfWidth = @divTrunc(entityWidth(entity), 2);
+            const entityHalfHeight = @divTrunc(entityHeight(entity), 2);
+
+            const entityLeft = entityX(entity) - entityHalfWidth;
+            const entityRight = entityX(entity) + entityHalfWidth;
+            const entityTop = entityY(entity) - entityHalfHeight;
+            const entityBottom = entityY(entity) + entityHalfHeight;
+
+            if ((left < entityRight) and (right > entityLeft) and
+                (top < entityBottom) and (bottom > entityTop))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+};

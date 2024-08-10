@@ -22,6 +22,7 @@ pub var maxZoomOut: f32 = 1.0; // Recalculated in setMapSize() for max map visib
 // Game map
 const STARTING_MAP_WIDTH = 1920 * 8;
 const STARTING_MAP_HEIGHT = 1080 * 8;
+pub const GRID_CELL_SIZE = 128;
 pub var mapWidth: i32 = 0;
 pub var mapHeight: i32 = 0;
 pub var gameGrid: entity.Grid = undefined;
@@ -82,11 +83,11 @@ pub fn main() anyerror!void {
     allocator.free(startCoords); // Freeing starting positions
 
     // Testing/debugging
-    // var count: i32 = 0; // debugging, for longer interval
+    var count: i32 = 0; // debugging, for longer interval
     // try entity.structures.append(try entity.Structure.create(2500, 1500, 0));
     // try entity.units.append(try entity.Unit.create(2500, 1500, 0));
-    for (0..8000) |_| {
-        try entity.units.append(try entity.Unit.create(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3)))));
+    for (0..400) |_| {
+        try entity.structures.append(try entity.Structure.create(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3)))));
     }
 
     defer entity.players.deinit();
@@ -103,20 +104,6 @@ pub fn main() anyerror!void {
 
         // Logic
         //----------------------------------------------------------------------------------
-        //const currentTime: f64 = rl.getTime(); // Get current time in seconds
-        //const updatesNeeded: usize = @intFromFloat((currentTime - lastUpdateTime) / UPDATE_INTERVAL);
-        //const updatesCurrent = @min(updatesNeeded, MAX_UPDATES_PER_FRAME); // Capped to prevent lag spiral
-        //if (updatesCurrent > 0) { // At least one interval passed since previous update
-        //    if (updatesNeeded > 1) std.debug.print("Time lapse detected, updates needed: {}, applying {}.\n", .{ updatesNeeded, updatesCurrent });
-        //    for (0..updatesCurrent) |_| {
-        //        try updateLogic(accumulatedMouseWheel, accumulatedKeyInput);
-        //        accumulatedMouseWheel = 0.0;
-        //        accumulatedKeyInput = 0;
-        //    } // Increment the last update time
-        //    lastUpdateTime += UPDATE_INTERVAL * @as(f64, @floatFromInt(updatesCurrent));
-        //    if (@mod(count, 100) == 0) utils.printTotalEntitiesOnGrid(&gameGrid);
-        //    count += 1;
-        //}
 
         const currentTime: f64 = rl.getTime();
         var elapsedTime: f64 = currentTime - lastUpdateTime;
@@ -138,6 +125,10 @@ pub fn main() anyerror!void {
         }
 
         lastUpdateTime += @as(f64, @floatFromInt(updatesPerformed)) * UPDATE_INTERVAL;
+
+        // Debugging/testing
+        if (@mod(count, 100) == 0) utils.printTotalEntitiesOnGrid(&gameGrid);
+        count += 1;
 
         // Drawing
         //----------------------------------------------------------------------------------

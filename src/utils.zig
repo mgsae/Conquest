@@ -87,7 +87,7 @@ pub const Point = struct {
 };
 
 pub const Grid = struct {
-    pub const CellSize = 64;
+    pub const CellSize = main.GRID_CELL_SIZE;
 
     pub const GridCoord = struct {
         x: usize,
