@@ -59,7 +59,7 @@ pub fn main() anyerror!void {
     std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ mapWidth, mapHeight, utils.Grid.CellSize });
 
     // Initialize the grid
-    try gameGrid.init(gridWidth, gridHeight, @constCast(&allocator));
+    try gameGrid.init(allocator);
     defer gameGrid.deinit();
 
     // Initialize entities
@@ -249,11 +249,15 @@ pub fn updateCanvasPosition(keyInput: u32) void {
 
 /// Draws map and grid markers relative to current canvas
 pub fn drawMap() void {
-    utils.drawRect(0, 0, mapWidth, mapHeight, rl.Color.ray_white); // Map area
-    for (1..gameGrid.cells.len) |rowIndex| { // Grid rows
+    // Draw the map area
+    utils.drawRect(0, 0, mapWidth, mapHeight, rl.Color.ray_white);
+    // Draw grid lines
+    var rowIndex: i32 = 1;
+    while (rowIndex * utils.Grid.CellSize < mapHeight) : (rowIndex += 1) {
         utils.drawRect(0, @as(i32, @intCast(utils.Grid.CellSize * rowIndex)), mapWidth, 5, rl.Color.light_gray);
     }
-    for (1..gameGrid.cells[0].len) |colIndex| { // Grid columns
+    var colIndex: i32 = 1;
+    while (colIndex * utils.Grid.CellSize < mapWidth) : (colIndex += 1) {
         utils.drawRect(@as(i32, @intCast(utils.Grid.CellSize * colIndex)), 0, 5, mapHeight, rl.Color.light_gray);
     }
     // Draw the edges of the map

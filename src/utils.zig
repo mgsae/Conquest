@@ -8,15 +8,7 @@ var rng: std.Random.DefaultPrng = undefined;
 // Debug/analysis
 //----------------------------------------------------------------------------------
 pub fn printTotalEntitiesOnGrid(grid: *entity.Grid) void {
-    var totalEntities: usize = 0;
-
-    for (grid.cells) |row| {
-        for (row) |cell| {
-            totalEntities += cell.entities.items.len;
-        }
-    }
-
-    std.debug.print("Entities on grid: {}\n", .{totalEntities});
+    std.debug.print("Entities on grid: {}\n", .{grid.cells.count()});
 }
 
 // Data structures
@@ -46,6 +38,9 @@ pub fn rngInit() void {
 }
 
 pub fn randomInt(max: i32) i32 {
+    if (max < 0) {
+        std.debug.panic("randomInt called with a negative max: {}", .{max});
+    }
     const random_value = rng.next() % @as(u64, @intCast(max + 1));
     return @as(i32, @intCast(random_value));
 }
@@ -55,6 +50,11 @@ pub fn randomInt(max: i32) i32 {
 pub fn angleToVector(angle: f16) [2]f16 {
     const radians = angle * math.pi / 180.0;
     return [2]f16{ math.cos(radians), math.sin(radians) };
+}
+
+/// Equivalent to std.math.clamp
+pub fn clamp(val: anytype, lower: anytype, upper: anytype) @TypeOf(val, lower, upper) {
+    return @max(lower, @min(val, upper));
 }
 
 pub fn i32AddFloat(comptime T: type, int: i32, floatValue: T) i32 {
@@ -103,6 +103,28 @@ pub const Grid = struct {
             .x = @as(usize, @max(0, @min(iX, maxGridWidth))),
             .y = @as(usize, @max(0, @min(iY, maxGridHeight))),
         };
+    }
+};
+
+pub const SpatialHash = struct {
+    pub const CellSize = main.GRID_CELL_SIZE;
+
+    pub fn hash(x: i32, y: i32) u64 {
+        const gridX = @divFloor(x, CellSize);
+        const gridY = @divFloor(y, CellSize);
+        return @as(u64, @intCast(gridX)) << 32 | @as(u64, @intCast(gridY));
+    }
+};
+
+pub const HashContext = struct {
+    pub fn hash(self: HashContext, key: u64) u64 {
+        _ = self;
+        return key;
+    }
+
+    pub fn eql(self: HashContext, a: u64, b: u64) bool {
+        _ = self;
+        return a == b;
     }
 };
 

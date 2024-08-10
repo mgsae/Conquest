@@ -526,155 +526,101 @@ pub const Projectile = struct {
 // Map Geometry
 //----------------------------------------------------------------------------------
 
+const HashMap = std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.HashContext, 80);
+
 const GridCell = struct {
     entities: std.ArrayList(*Entity) = undefined,
 };
 
 pub const Grid = struct {
-    cells: [][]GridCell = undefined,
-    allocator: *std.mem.Allocator,
+    cells: HashMap = undefined,
+    allocator: std.mem.Allocator,
 
-    pub fn init(self: *Grid, width: usize, height: usize, allocator: *std.mem.Allocator) !void {
-        self.allocator = allocator; // Initialize allocator
-
-        // Allocate for rows (height of the grid)
-        self.cells = try allocator.alloc([]GridCell, height);
-
-        // For each row, allocate columns (width of the grid)
-        for (0..self.cells.len) |rowIndex| {
-            self.cells[rowIndex] = try allocator.alloc(GridCell, width); // Each row has `width` columns
-
-            // Initialize each GridCell in the 2D grid
-            for (0..self.cells[rowIndex].len) |colIndex| {
-                self.cells[rowIndex][colIndex] = GridCell{
-                    .entities = std.ArrayList(*Entity).init(allocator.*),
-                };
-                // std.debug.print("Initialized cell ({}, {})\n", .{ rowIndex, colIndex });
-            }
-        }
+    pub fn init(self: *Grid, allocator: std.mem.Allocator) !void {
+        self.allocator = allocator;
+        self.cells = HashMap.init(allocator);
     }
 
     pub fn deinit(self: *Grid) void {
-        for (self.cells) |row| {
-            for (row) |*cell| {
-                cell.entities.deinit();
-            }
-            self.allocator.free(row);
+        var it = self.cells.iterator();
+        while (it.next()) |entry| {
+            entry.value_ptr.*.deinit(); // Dereference value_ptr to access and deinitialize the value
         }
-        self.allocator.free(self.cells);
-        std.debug.print("Deinitialized grid\n", .{});
-    }
-
-    pub fn toGridCoord(self: *Grid, x: i32, y: i32) utils.Grid.GridCoord {
-        const coord = utils.Grid.toGridCoord(x, y, self.cells.len, self.cells[0].len);
-        return coord;
+        self.cells.deinit();
     }
 
     pub fn addEntity(self: *Grid, entity: *Entity, newX: ?i32, newY: ?i32) !void {
-        const x = newX orelse entityX(entity);
-        const y = newY orelse entityY(entity);
-        const coord = self.toGridCoord(x, y);
-        // std.debug.print("Adding entity at grid coordinates: ({}, {})\n", .{ coord.x, coord.y });
-        if (coord.x >= self.cells.len or coord.y >= self.cells[coord.x].len) {
-            return error.IndexOutOfBounds; // Define this error appropriately
+        const x = std.math.clamp(newX orelse entityX(entity), 0, main.mapWidth);
+        const y = std.math.clamp(newY orelse entityY(entity), 0, main.mapHeight);
+        const key = utils.SpatialHash.hash(x, y);
+
+        const result = try self.cells.getOrPut(key);
+        if (!result.found_existing) {
+            result.value_ptr.* = std.ArrayList(*Entity).init(self.allocator);
         }
-        try self.cells[coord.x][coord.y].entities.append(entity);
-        // std.debug.print("Entity added at grid coordinates: ({}, {})\n", .{ coord.x, coord.y });
+        try result.value_ptr.*.append(entity);
     }
 
     pub fn removeEntity(self: *Grid, entity: *Entity, oldX: ?i32, oldY: ?i32) !void {
-        const x = oldX orelse entityX(entity);
-        const y = oldY orelse entityY(entity);
-        const coord = self.toGridCoord(x, y);
-        const cell = &self.cells[coord.x][coord.y];
-        for (cell.entities.items, 0..) |*e, index| {
-            if (e.* == entity) {
-                _ = cell.entities.swapRemove(index);
-                return;
+        const x = std.math.clamp(oldX orelse entityX(entity), 0, main.mapWidth);
+        const y = std.math.clamp(oldY orelse entityY(entity), 0, main.mapHeight);
+        const key = utils.SpatialHash.hash(x, y);
+
+        if (self.cells.get(key)) |list| {
+            for (list.items, 0..) |e, index| {
+                if (e == entity) {
+                    _ = @constCast(&list).swapRemove(index);
+                    if (list.items.len == 0) {
+                        _ = self.cells.remove(key); // Safely remove the entry from the map
+                    }
+                    return;
+                }
             }
         }
     }
 
     pub fn updateEntity(self: *Grid, entity: *Entity, oldX: i32, oldY: i32) void {
-        const oldCoord = self.toGridCoord(oldX, oldY);
-        const newCoord = self.toGridCoord(entityX(entity), entityY(entity));
-        // std.debug.print("Updating entity from ({}, {}) to ({}, {})\n", .{ oldCoord.x, oldCoord.y, newCoord.x, newCoord.y });
-        if (oldCoord.x != newCoord.x or oldCoord.y != newCoord.y) {
-            self.removeEntity(entity, oldX, oldY) catch @panic("Grid removal failed");
-            self.addEntity(entity, null, null) catch @panic("Grid addition failed");
+        const oldKey = utils.SpatialHash.hash(std.math.clamp(oldX, 0, main.mapWidth), std.math.clamp(oldY, 0, main.mapHeight));
+        const newKey = utils.SpatialHash.hash(std.math.clamp(entityX(entity), 0, main.mapWidth), std.math.clamp(entityY(entity), 0, main.mapHeight));
+
+        if (oldKey != newKey) {
+            self.removeEntity(entity, oldX, oldY) catch @panic("Failed to remove entity from grid");
+            self.addEntity(entity, null, null) catch @panic("Failed to add entity to grid");
         }
-    }
-
-    pub fn getNearbyEntitiesOld(self: *Grid, x: i32, y: i32) ![]*Entity {
-        // var nearbyEntities = std.ArrayList(*Entity).init(self.allocator.*); // Dereference allocator
-        var nearbyEntities: [main.ENTITY_COLLISION_LIMIT]*Entity = undefined;
-        var count: usize = 0;
-
-        // std.debug.print("Searching nearby entities at grid coordinates: ({}, {})\n", .{ coord.x, coord.y });
-
-        const coord = self.toGridCoord(x, y);
-        // Includes the cells to the left, right, above, and below the central cell
-        const startX = if (coord.x == 0) 0 else coord.x - 1;
-        const endX = if (coord.x + 1 >= self.cells.len) coord.x else coord.x + 1;
-        const startY = if (coord.y == 0) 0 else coord.y - 1;
-        const endY = if (coord.y + 1 >= self.cells[0].len) coord.y else coord.y + 1;
-
-        // std.debug.print("Searching cells from ({}, {}) to ({}, {})\n", .{ startX, startY, endX, endY });
-
-        for (startX..endX + 1) |i| {
-            for (startY..endY + 1) |j| {
-                if (i < self.cells.len and j < self.cells[i].len) {
-                    for (self.cells[i][j].entities.items) |entity| {
-                        if (count < main.ENTITY_COLLISION_LIMIT) {
-                            nearbyEntities[count] = entity;
-                            count += 1;
-                        } else {
-                            return error.TooManyEntities; // Handle overflow case
-                        }
-                    }
-                }
-            }
-        }
-        // std.debug.print("Found {} entities nearby.\n", .{count});
-        // std.debug.print("Total units in the world: {}.\n", .{units.items.len});
-        return nearbyEntities[0..count];
     }
 
     pub fn getNearbyEntities(self: *Grid, x: i32, y: i32) ![]*Entity {
-        // Broad-phase check
         var nearbyEntities: [main.ENTITY_COLLISION_LIMIT]*Entity = undefined;
         var count: usize = 0;
 
-        const coord = self.toGridCoord(x, y);
-        const startX = if (coord.x == 0) 0 else coord.x - 1;
-        const endX = if (coord.x + 1 >= self.cells.len) coord.x else coord.x + 1;
-        const startY = if (coord.y == 0) 0 else coord.y - 1;
-        const endY = if (coord.y + 1 >= self.cells[0].len) coord.y else coord.y + 1;
+        const offsets = [_][2]i32{
+            [_]i32{ 0, 0 },
+            [_]i32{ -utils.SpatialHash.CellSize, 0 },
+            [_]i32{ utils.SpatialHash.CellSize, 0 },
+            [_]i32{ 0, -utils.SpatialHash.CellSize },
+            [_]i32{ 0, utils.SpatialHash.CellSize },
+            [_]i32{ -utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize },
+            [_]i32{ utils.SpatialHash.CellSize, utils.SpatialHash.CellSize },
+            [_]i32{ -utils.SpatialHash.CellSize, utils.SpatialHash.CellSize },
+            [_]i32{ utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize },
+        };
 
-        for (startX..endX + 1) |i| {
-            for (startY..endY + 1) |j| {
-                if (i < self.cells.len and j < self.cells[i].len) {
-                    for (self.cells[i][j].entities.items) |entity| {
-                        if (count < main.ENTITY_COLLISION_LIMIT) {
-                            // Perform a quick bounding box check
-                            if (broadPhaseCheck(x, y, entity)) {
-                                nearbyEntities[count] = entity;
-                                count += 1;
-                            }
-                        } else {
-                            return error.TooManyEntities;
-                        }
+        for (offsets) |offset| {
+            const offsetX = std.math.clamp(x + offset[0], 0, main.mapWidth);
+            const offsetY = std.math.clamp(y + offset[1], 0, main.mapHeight);
+            const neighborKey = utils.SpatialHash.hash(offsetX, offsetY);
+            if (self.cells.get(neighborKey)) |list| {
+                for (list.items) |entity| {
+                    if (count < main.ENTITY_COLLISION_LIMIT) {
+                        nearbyEntities[count] = entity;
+                        count += 1;
+                    } else {
+                        return error.TooManyEntities;
                     }
                 }
             }
         }
-
         return nearbyEntities[0..count];
-    }
-
-    fn broadPhaseCheck(x: i32, y: i32, entity: *Entity) bool {
-        const broadBoxSize = 150; // Minimum distance
-        return (@abs(x - entityX(entity)) <= broadBoxSize and @abs(y - entityY(entity)) <= broadBoxSize);
     }
 
     pub fn entityCollision(self: *Grid, x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !bool {
