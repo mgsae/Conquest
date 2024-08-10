@@ -3,29 +3,29 @@ const std: type = @import("std");
 const utils = @import("utils.zig");
 const entity = @import("entity.zig");
 
+// Config
+pub const ENTITY_COLLISION_LIMIT = 400;
+pub const LOGIC_FRAMERATE = 60;
+pub const UPDATE_INTERVAL: f64 = 1.0 / @as(f64, @floatFromInt(LOGIC_FRAMERATE));
+const MAX_UPDATES_PER_FRAME = 4;
+var lastUpdateTime: f64 = 0.0;
+
 // Camera movement
+pub const SCROLL_SPEED: f16 = 25.0;
 pub var screenWidth: i16 = 1920;
 pub var screenHeight: i16 = 1080;
 pub var canvasOffsetX: f32 = 0.0;
 pub var canvasOffsetY: f32 = 0.0;
-pub const scrollSpeed: f16 = 30.0;
 pub var canvasZoom: f32 = 1.0;
 pub var maxZoomOut: f32 = 1.0; // Recalculated in setMapSize() for max map visibility
 
 // Game map
-const startingMapWidth = 1920 * 4;
-const startingMapHeight = 1080 * 4;
+const STARTING_MAP_WIDTH = 1920 * 8;
+const STARTING_MAP_HEIGHT = 1080 * 8;
 pub var mapWidth: i32 = 0;
 pub var mapHeight: i32 = 0;
 pub var gameGrid: entity.Grid = undefined;
 pub var gamePlayer: *entity.Player = undefined;
-
-// Config
-pub const entityCollisionLimit = 400;
-const logicFps = 60;
-const updateInterval: f64 = 1.0 / @as(f64, @floatFromInt(logicFps));
-var lastUpdateTime: f64 = 0.0;
-var intervalUpdated: bool = false;
 
 pub fn main() anyerror!void {
 
@@ -39,7 +39,7 @@ pub fn main() anyerror!void {
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
     rl.toggleFullscreen();
-    rl.setTargetFPS(1000);
+    //rl.setTargetFPS(120);
 
     // Initialize utility
     //--------------------------------------------------------------------------------------
@@ -49,7 +49,7 @@ pub fn main() anyerror!void {
 
     // Initialize map
     //--------------------------------------------------------------------------------------
-    setMapSize(startingMapWidth, startingMapHeight);
+    setMapSize(STARTING_MAP_WIDTH, STARTING_MAP_HEIGHT);
     // Define grid dimensions
     const gridWidth: usize = @intCast(utils.ceilDiv(mapWidth, utils.Grid.CellSize));
     const gridHeight: usize = @intCast(utils.ceilDiv(mapHeight, utils.Grid.CellSize));
@@ -81,14 +81,18 @@ pub fn main() anyerror!void {
     }
     allocator.free(startCoords); // Freeing starting positions
 
+    // Testing/debugging
+    // var count: i32 = 0; // debugging, for longer interval
     // try entity.structures.append(try entity.Structure.create(2500, 1500, 0));
     // try entity.units.append(try entity.Unit.create(2500, 1500, 0));
+    for (0..8000) |_| {
+        try entity.units.append(try entity.Unit.create(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3)))));
+    }
 
     defer entity.players.deinit();
     defer entity.units.deinit();
     defer entity.structures.deinit();
 
-    var count: i32 = 0; // debugging, for longer interval
     // Main game loop
     //--------------------------------------------------------------------------------------
     while (!rl.windowShouldClose()) { // Detect window close button or ESC key
@@ -99,20 +103,41 @@ pub fn main() anyerror!void {
 
         // Logic
         //----------------------------------------------------------------------------------
-        const currentTime: f64 = rl.getTime(); // Get current time in seconds
-        const updatesNeeded: usize = @intFromFloat((currentTime - lastUpdateTime) / updateInterval);
-        if (updatesNeeded > 0) { // If interval passed since previous update
-            if (updatesNeeded > 1) std.debug.print("Time lapse detected, applying {} updates.\n", .{updatesNeeded});
-            for (0..updatesNeeded) |_| {
-                try updateLogic(accumulatedMouseWheel, accumulatedKeyInput);
-                accumulatedMouseWheel = 0.0;
-                accumulatedKeyInput = 0;
-            } // Increment the last update time
-            lastUpdateTime += updateInterval * @as(f64, @floatFromInt(updatesNeeded));
-            const grid = &gameGrid;
-            if (@mod(count, 100) == 0) utils.printTotalEntitiesOnGrid(grid);
-            count += 1;
+        //const currentTime: f64 = rl.getTime(); // Get current time in seconds
+        //const updatesNeeded: usize = @intFromFloat((currentTime - lastUpdateTime) / UPDATE_INTERVAL);
+        //const updatesCurrent = @min(updatesNeeded, MAX_UPDATES_PER_FRAME); // Capped to prevent lag spiral
+        //if (updatesCurrent > 0) { // At least one interval passed since previous update
+        //    if (updatesNeeded > 1) std.debug.print("Time lapse detected, updates needed: {}, applying {}.\n", .{ updatesNeeded, updatesCurrent });
+        //    for (0..updatesCurrent) |_| {
+        //        try updateLogic(accumulatedMouseWheel, accumulatedKeyInput);
+        //        accumulatedMouseWheel = 0.0;
+        //        accumulatedKeyInput = 0;
+        //    } // Increment the last update time
+        //    lastUpdateTime += UPDATE_INTERVAL * @as(f64, @floatFromInt(updatesCurrent));
+        //    if (@mod(count, 100) == 0) utils.printTotalEntitiesOnGrid(&gameGrid);
+        //    count += 1;
+        //}
+
+        const currentTime: f64 = rl.getTime();
+        var elapsedTime: f64 = currentTime - lastUpdateTime;
+
+        var updatesPerformed: usize = 0;
+
+        // Perform updates if enough time has elapsed
+        while (elapsedTime >= UPDATE_INTERVAL) {
+            try updateLogic(accumulatedMouseWheel, accumulatedKeyInput);
+            accumulatedMouseWheel = 0.0;
+            accumulatedKeyInput = 0;
+
+            elapsedTime -= UPDATE_INTERVAL;
+            updatesPerformed += 1;
+
+            if (updatesPerformed >= MAX_UPDATES_PER_FRAME) {
+                break; // Prevent too much work per frame
+            }
         }
+
+        lastUpdateTime += @as(f64, @floatFromInt(updatesPerformed)) * UPDATE_INTERVAL;
 
         // Drawing
         //----------------------------------------------------------------------------------
@@ -195,7 +220,7 @@ pub fn updateCanvasPosition(keyInput: u32) void {
     const screenHeightF = @as(f32, @floatFromInt(screenHeight));
     const edgeMarginW: f32 = screenWidthF / 10.0;
     const edgeMarginH: f32 = screenHeightF / 10.0;
-    const effectiveScrollSpeed: f32 = @as(f32, @floatCast(scrollSpeed)) / @max(1, canvasZoom * 0.1);
+    const effectiveScrollSpeed: f32 = @as(f32, @floatCast(SCROLL_SPEED)) / @max(1, canvasZoom * 0.1);
 
     if ((keyInput & (1 << 9)) != 0) {
         // Space key centers camera on player

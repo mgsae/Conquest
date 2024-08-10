@@ -87,21 +87,22 @@ pub const Player = struct {
     fn updateMoveInput(self: *Player, keyInput: u32) anyerror!void {
         var newX: ?i32 = null;
         var newY: ?i32 = null;
+        const speed = utils.scaleToFrameRate(self.speed);
 
         if ((keyInput & (1 << 0)) != 0) { // key_w
-            newY = utils.mapClampY(utils.iSubF16(self.y, self.speed), self.height);
+            newY = utils.mapClampY(utils.i32SubFloat(f32, self.y, speed), self.height);
             self.direction = 8; // Numpad direction
         }
         if ((keyInput & (1 << 1)) != 0) { // key_a
-            newX = utils.mapClampX(utils.iSubF16(self.x, self.speed), self.width);
+            newX = utils.mapClampX(utils.i32SubFloat(f32, self.x, speed), self.width);
             self.direction = 4; // Numpad direction
         }
         if ((keyInput & (1 << 2)) != 0) { // key_s
-            newY = utils.mapClampY(utils.iAddF16(self.y, self.speed), self.height);
+            newY = utils.mapClampY(utils.i32AddFloat(f32, self.y, speed), self.height);
             self.direction = 2; // Numpad direction
         }
         if ((keyInput & (1 << 3)) != 0) { // key_d
-            newX = utils.mapClampX(utils.iAddF16(self.x, self.speed), self.width);
+            newX = utils.mapClampX(utils.i32AddFloat(f32, self.x, speed), self.width);
             self.direction = 6; // Numpad direction
         }
 
@@ -253,8 +254,8 @@ pub const Unit = struct {
     pub fn move(self: *Unit, dx: f16, dy: f16) void {
         const oldX = self.x;
         const oldY = self.y;
-        const newX = utils.iAddF16(oldX, (dx * self.speed));
-        const newY = utils.iAddF16(oldY, (dy * self.speed));
+        const newX = utils.i32AddFloat(f16, oldX, (dx * self.speed));
+        const newY = utils.i32AddFloat(f16, oldY, (dy * self.speed));
 
         // Check collisions in nearby grid cells
         // This caused out of memory crash
@@ -322,10 +323,10 @@ pub const Unit = struct {
 
     pub fn classProperties(class: u8) UnitProperties {
         return switch (class) {
-            0 => UnitProperties{ .speed = 5, .color = rl.Color.sky_blue, .width = 50, .height = 50, .life = 1000 },
-            1 => UnitProperties{ .speed = 6, .color = rl.Color.blue, .width = 55, .height = 55, .life = 900 },
-            2 => UnitProperties{ .speed = 4, .color = rl.Color.dark_blue, .width = 70, .height = 70, .life = 1300 },
-            3 => UnitProperties{ .speed = 6, .color = rl.Color.violet, .width = 50, .height = 50, .life = 1500 },
+            0 => UnitProperties{ .speed = 5, .color = rl.Color.sky_blue, .width = 25, .height = 25, .life = 2000 },
+            1 => UnitProperties{ .speed = 6, .color = rl.Color.blue, .width = 40, .height = 40, .life = 3000 },
+            2 => UnitProperties{ .speed = 4, .color = rl.Color.dark_blue, .width = 50, .height = 50, .life = 4000 },
+            3 => UnitProperties{ .speed = 6, .color = rl.Color.violet, .width = 35, .height = 35, .life = 5000 },
             else => @panic("Invalid unit class"),
         };
     }
@@ -607,7 +608,7 @@ pub const Grid = struct {
 
     pub fn getNearbyEntities(self: *Grid, x: i32, y: i32) ![]*Entity {
         // var nearbyEntities = std.ArrayList(*Entity).init(self.allocator.*); // Dereference allocator
-        var nearbyEntities: [main.entityCollisionLimit]*Entity = undefined;
+        var nearbyEntities: [main.ENTITY_COLLISION_LIMIT]*Entity = undefined;
         var count: usize = 0;
 
         // std.debug.print("Searching nearby entities at grid coordinates: ({}, {})\n", .{ coord.x, coord.y });
@@ -625,7 +626,7 @@ pub const Grid = struct {
             for (startY..endY + 1) |j| {
                 if (i < self.cells.len and j < self.cells[i].len) {
                     for (self.cells[i][j].entities.items) |entity| {
-                        if (count < main.entityCollisionLimit) {
+                        if (count < main.ENTITY_COLLISION_LIMIT) {
                             nearbyEntities[count] = entity;
                             count += 1;
                         } else {

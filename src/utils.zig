@@ -57,22 +57,26 @@ pub fn angleToVector(angle: f16) [2]f16 {
     return [2]f16{ math.cos(radians), math.sin(radians) };
 }
 
-pub fn iAddF16(int: i32, float: f16) i32 {
-    return int + @as(i32, @intFromFloat(float));
+pub fn i32AddFloat(comptime T: type, int: i32, floatValue: T) i32 {
+    return int + @as(i32, @intFromFloat(floatValue));
 }
 
-pub fn iSubF16(int: i32, float: f16) i32 {
-    return int - @as(i32, @intFromFloat(float));
+pub fn i32SubFloat(comptime T: type, int: i32, floatValue: T) i32 {
+    return int - @as(i32, @intFromFloat(floatValue));
 }
 
-pub fn iTimesF16(int: i32, float: f16) i32 {
-    return @as(i32, @intFromFloat(@as(f16, @floatFromInt(int)) * float));
+pub fn i32TimesFloat(comptime T: type, int: i32, floatValue: T) i32 {
+    return @as(i32, @intFromFloat(@as(T, @floatFromInt(int)) * floatValue));
 }
 
 pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
     const divResult = @divTrunc(numerator, denominator);
     const remainder = @rem(numerator, denominator);
     return if (remainder != 0) divResult + 1 else divResult;
+}
+
+pub fn scaleToFrameRate(float: f32) f32 { // Delta time capped at 60 fps
+    return (float * (@max(@as(f32, @floatCast(main.UPDATE_INTERVAL)), rl.getFrameTime()))) * main.LOGIC_FRAMERATE;
 }
 
 // Map Coordinates
@@ -83,7 +87,7 @@ pub const Point = struct {
 };
 
 pub const Grid = struct {
-    pub const CellSize = 128;
+    pub const CellSize = 64;
 
     pub const GridCoord = struct {
         x: usize,
