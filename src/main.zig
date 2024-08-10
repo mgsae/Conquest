@@ -10,7 +10,7 @@ pub var canvasOffsetX: f32 = 0.0;
 pub var canvasOffsetY: f32 = 0.0;
 pub const scrollSpeed: f16 = 30.0;
 pub var canvasZoom: f32 = 1.0;
-pub var maxZoomOut: f32 = 1.0;
+pub var maxZoomOut: f32 = 1.0; // Recalculated in setMapSize() for max map visibility
 
 // Game map
 const startingMapWidth = 1920 * 4;
@@ -22,7 +22,8 @@ pub var gamePlayer: *entity.Player = undefined;
 
 // Config
 pub const entityCollisionLimit = 400;
-const updateInterval: f64 = 1.0 / 60.0; // Targetfps 60
+const logicFps = 60;
+const updateInterval: f64 = 1.0 / @as(f64, @floatFromInt(logicFps));
 var lastUpdateTime: f64 = 0.0;
 var intervalUpdated: bool = false;
 
@@ -44,7 +45,7 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     utils.rngInit();
     var accumulatedMouseWheel: f32 = 0.0;
-    var accumulatedKeyPresses: u32 = 0;
+    var accumulatedKeyInput: u32 = 0;
 
     // Initialize map
     //--------------------------------------------------------------------------------------
@@ -94,18 +95,19 @@ pub fn main() anyerror!void {
 
         // Input
         //----------------------------------------------------------------------------------
-        processInput(&accumulatedMouseWheel, &accumulatedKeyPresses);
+        processInput(&accumulatedMouseWheel, &accumulatedKeyInput);
 
         // Logic
         //----------------------------------------------------------------------------------
         const currentTime: f64 = rl.getTime(); // Get current time in seconds
         const updatesNeeded: usize = @intFromFloat((currentTime - lastUpdateTime) / updateInterval);
-        if (updatesNeeded > 0) { // If interval update since previous
+        if (updatesNeeded > 0) { // If interval passed since previous update
+            if (updatesNeeded > 1) std.debug.print("Time lapse detected, applying {} updates.\n", .{updatesNeeded});
             for (0..updatesNeeded) |_| {
-                try updateLogic(accumulatedMouseWheel, accumulatedKeyPresses);
+                try updateLogic(accumulatedMouseWheel, accumulatedKeyInput);
                 accumulatedMouseWheel = 0.0;
-                accumulatedKeyPresses = 0;
-            } // Move forward the last update time
+                accumulatedKeyInput = 0;
+            } // Increment the last update time
             lastUpdateTime += updateInterval * @as(f64, @floatFromInt(updatesNeeded));
             const grid = &gameGrid;
             if (@mod(count, 100) == 0) utils.printTotalEntitiesOnGrid(grid);
@@ -124,26 +126,28 @@ pub fn main() anyerror!void {
     }
 }
 
-fn processInput(accumulatedMouseWheel: *f32, accumulatedKeyPresses: *u32) void {
+fn processInput(accumulatedMouseWheel: *f32, accumulatedKeyInput: *u32) void {
     accumulatedMouseWheel.* += rl.getMouseWheelMove();
     // Move keys
-    if (rl.isKeyDown(rl.KeyboardKey.key_w) or rl.isKeyDown(rl.KeyboardKey.key_up)) accumulatedKeyPresses.* |= 1 << 0;
-    if (rl.isKeyDown(rl.KeyboardKey.key_a) or rl.isKeyDown(rl.KeyboardKey.key_left)) accumulatedKeyPresses.* |= 1 << 1;
-    if (rl.isKeyDown(rl.KeyboardKey.key_s) or rl.isKeyDown(rl.KeyboardKey.key_down)) accumulatedKeyPresses.* |= 1 << 2;
-    if (rl.isKeyDown(rl.KeyboardKey.key_d) or rl.isKeyDown(rl.KeyboardKey.key_right)) accumulatedKeyPresses.* |= 1 << 3;
-    // Action keys
-    if (rl.isKeyDown(rl.KeyboardKey.key_one)) accumulatedKeyPresses.* |= 1 << 4;
-    if (rl.isKeyDown(rl.KeyboardKey.key_two)) accumulatedKeyPresses.* |= 1 << 5;
-    if (rl.isKeyDown(rl.KeyboardKey.key_three)) accumulatedKeyPresses.* |= 1 << 6;
-    if (rl.isKeyDown(rl.KeyboardKey.key_four)) accumulatedKeyPresses.* |= 1 << 7;
+    if (rl.isKeyDown(rl.KeyboardKey.key_w) or rl.isKeyDown(rl.KeyboardKey.key_up)) accumulatedKeyInput.* |= 1 << 0;
+    if (rl.isKeyDown(rl.KeyboardKey.key_a) or rl.isKeyDown(rl.KeyboardKey.key_left)) accumulatedKeyInput.* |= 1 << 1;
+    if (rl.isKeyDown(rl.KeyboardKey.key_s) or rl.isKeyDown(rl.KeyboardKey.key_down)) accumulatedKeyInput.* |= 1 << 2;
+    if (rl.isKeyDown(rl.KeyboardKey.key_d) or rl.isKeyDown(rl.KeyboardKey.key_right)) accumulatedKeyInput.* |= 1 << 3;
+    // Build keys
+    if (rl.isKeyDown(rl.KeyboardKey.key_one)) accumulatedKeyInput.* |= 1 << 4;
+    if (rl.isKeyDown(rl.KeyboardKey.key_two)) accumulatedKeyInput.* |= 1 << 5;
+    if (rl.isKeyDown(rl.KeyboardKey.key_three)) accumulatedKeyInput.* |= 1 << 6;
+    if (rl.isKeyDown(rl.KeyboardKey.key_four)) accumulatedKeyInput.* |= 1 << 7;
+    // Special keys
+    if (rl.isKeyDown(rl.KeyboardKey.key_space)) accumulatedKeyInput.* |= 1 << 9;
 }
 
-fn updateLogic(mouseWheelDelta: f32, keyPresses: u32) !void {
+fn updateLogic(mouseWheelDelta: f32, keyInput: u32) !void {
 
     //Camera
     //----------------------------------------------------------------------------------
     updateCanvasZoom(mouseWheelDelta);
-    updateCanvasPosition();
+    updateCanvasPosition(keyInput);
 
     // Entities
     //----------------------------------------------------------------------------------
@@ -155,7 +159,7 @@ fn updateLogic(mouseWheelDelta: f32, keyPresses: u32) !void {
     }
     for (entity.players.items) |player| {
         if (player == gamePlayer) {
-            try player.update(keyPresses);
+            try player.update(keyInput);
         } else {
             try player.update(null);
         }
@@ -168,7 +172,7 @@ pub fn updateCanvasZoom(mouseWheelDelta: f32) void {
         const oldZoom: f32 = canvasZoom;
 
         const zoomChange: f32 = 1 + (0.025 * i);
-        canvasZoom = @min(10.0, @max(maxZoomOut, canvasZoom * zoomChange)); // Clamped 1 (max out) - 10 (max in)
+        canvasZoom = @min(@max(maxZoomOut, canvasZoom * zoomChange), 10.0); // From <1 (full map) to 10 (zoomed in)
 
         // Adjust offsets to zoom around the mouse position
         const mouseX = @as(f32, @floatFromInt(rl.getMouseX()));
@@ -188,7 +192,7 @@ pub fn updateCanvasZoom(mouseWheelDelta: f32) void {
     }
 }
 
-pub fn updateCanvasPosition() void {
+pub fn updateCanvasPosition(keyInput: u32) void {
     const mouseX = @as(f32, @floatFromInt(rl.getMouseX()));
     const mouseY = @as(f32, @floatFromInt(rl.getMouseY()));
     const screenWidthF = @as(f32, @floatFromInt(screenWidth));
@@ -197,22 +201,28 @@ pub fn updateCanvasPosition() void {
     const edgeMarginH: f32 = screenHeightF / 10.0;
     const effectiveScrollSpeed: f32 = @as(f32, @floatCast(scrollSpeed)) / @max(1, canvasZoom * 0.1);
 
-    // Edge scrolling
-    if (mouseX < edgeMarginW) {
-        const factor = 1.0 - (mouseX / edgeMarginW);
-        canvasOffsetX += effectiveScrollSpeed * factor;
-    }
-    if (mouseX > screenWidthF - edgeMarginW) {
-        const factor = 1.0 - ((screenWidthF - mouseX) / edgeMarginW);
-        canvasOffsetX -= effectiveScrollSpeed * factor;
-    }
-    if (mouseY < edgeMarginH) {
-        const factor = 1.0 - (mouseY / edgeMarginH);
-        canvasOffsetY += effectiveScrollSpeed * factor;
-    }
-    if (mouseY > screenHeightF - edgeMarginH) {
-        const factor = 1.0 - ((screenHeightF - mouseY) / edgeMarginH);
-        canvasOffsetY -= effectiveScrollSpeed * factor;
+    if ((keyInput & (1 << 9)) != 0) {
+        // Space key centers camera on player
+        canvasOffsetX = -(@as(f32, @floatFromInt(gamePlayer.x)) * canvasZoom) + (screenWidthF / 2);
+        canvasOffsetY = -(@as(f32, @floatFromInt(gamePlayer.y)) * canvasZoom) + (screenHeightF / 2);
+    } else {
+        // Mouse edge scrolls camera
+        if (mouseX < edgeMarginW) {
+            const factor = 1.0 - (mouseX / edgeMarginW);
+            canvasOffsetX += effectiveScrollSpeed * factor;
+        }
+        if (mouseX > screenWidthF - edgeMarginW) {
+            const factor = 1.0 - ((screenWidthF - mouseX) / edgeMarginW);
+            canvasOffsetX -= effectiveScrollSpeed * factor;
+        }
+        if (mouseY < edgeMarginH) {
+            const factor = 1.0 - (mouseY / edgeMarginH);
+            canvasOffsetY += effectiveScrollSpeed * factor;
+        }
+        if (mouseY > screenHeightF - edgeMarginH) {
+            const factor = 1.0 - ((screenHeightF - mouseY) / edgeMarginH);
+            canvasOffsetY -= effectiveScrollSpeed * factor;
+        }
     }
 
     // Restrict canvas to map bounds
@@ -223,26 +233,31 @@ pub fn updateCanvasPosition() void {
     if (canvasOffsetY > 0) canvasOffsetY = 0;
     if (canvasOffsetX < minMapOffsetX) canvasOffsetX = minMapOffsetX;
     if (canvasOffsetY < minMapOffsetY) canvasOffsetY = minMapOffsetY;
+
+    // Just for debugging
+    if ((keyInput & (1 << 9)) != 0) {
+        std.debug.print("minMapOffsetX {}, minMapOffsetY {}, canvasOffsetX {}, canvasOffsetY {}.\n", .{ minMapOffsetX, minMapOffsetY, canvasOffsetX, canvasOffsetY });
+    }
 }
 
 /// Draws map and grid markers relative to current canvas
 pub fn drawMap() void {
     // Draw the entire map area
-    utils.drawRect(0, 0, mapWidth, mapHeight, rl.Color.gray);
+    utils.drawRect(0, 0, mapWidth, mapHeight, rl.Color.ray_white);
 
     // Draw grid
     for (1..gameGrid.cells.len) |rowIndex| {
-        utils.drawRect(0, @as(i32, @intCast(utils.Grid.CellSize * rowIndex)), mapWidth, 5, rl.Color.dark_gray);
+        utils.drawRect(0, @as(i32, @intCast(utils.Grid.CellSize * rowIndex)), mapWidth, 5, rl.Color.light_gray);
     }
     for (1..gameGrid.cells[0].len) |colIndex| {
-        utils.drawRect(@as(i32, @intCast(utils.Grid.CellSize * colIndex)), 0, 5, mapHeight, rl.Color.dark_gray);
+        utils.drawRect(@as(i32, @intCast(utils.Grid.CellSize * colIndex)), 0, 5, mapHeight, rl.Color.light_gray);
     }
 
     // Draw the edges of the map
-    utils.drawRect(0, -10, mapWidth, 20, rl.Color.light_gray); // Top edge
-    utils.drawRect(0, mapHeight - 10, mapWidth, 20, rl.Color.light_gray); // Bottom edge
-    utils.drawRect(-10, 0, 20, mapHeight, rl.Color.light_gray); // Left edge
-    utils.drawRect(mapWidth - 10, 0, 20, mapHeight, rl.Color.light_gray); // Right edge
+    utils.drawRect(0, -10, mapWidth, 20, rl.Color.dark_gray); // Top edge
+    utils.drawRect(0, mapHeight - 10, mapWidth, 20, rl.Color.dark_gray); // Bottom edge
+    utils.drawRect(-10, 0, 20, mapHeight, rl.Color.dark_gray); // Left edge
+    utils.drawRect(mapWidth - 10, 0, 20, mapHeight, rl.Color.dark_gray); // Right edge
 
 }
 

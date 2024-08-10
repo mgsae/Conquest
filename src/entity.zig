@@ -72,11 +72,11 @@ pub const Player = struct {
         utils.drawEntity(self.x, self.y, self.width, self.height, self.color);
     }
 
-    pub fn update(self: *Player, keyPresses: ?u32) anyerror!void {
+    pub fn update(self: *Player, keyInput: ?u32) anyerror!void {
         if (self.local) { // Local player
-            if (keyPresses) |presses| {
-                try self.updateMoveInput(presses);
-                try self.updateActionInput(presses);
+            if (keyInput) |input| {
+                try self.updateMoveInput(input);
+                try self.updateActionInput(input);
             }
         } else { // If AI or remote player
             // updateMoveEvent, determine movement based on network or AI logic
@@ -84,24 +84,23 @@ pub const Player = struct {
         }
     }
 
-    fn updateMoveInput(self: *Player, keyPresses: u32) anyerror!void {
+    fn updateMoveInput(self: *Player, keyInput: u32) anyerror!void {
         var newX: ?i32 = null;
         var newY: ?i32 = null;
 
-        // Check bitwise keypress data to calculate new position
-        if ((keyPresses & (1 << 0)) != 0) { // W
+        if ((keyInput & (1 << 0)) != 0) { // key_w
             newY = utils.mapClampY(utils.iSubF16(self.y, self.speed), self.height);
             self.direction = 8; // Numpad direction
         }
-        if ((keyPresses & (1 << 1)) != 0) { // A
+        if ((keyInput & (1 << 1)) != 0) { // key_a
             newX = utils.mapClampX(utils.iSubF16(self.x, self.speed), self.width);
             self.direction = 4; // Numpad direction
         }
-        if ((keyPresses & (1 << 2)) != 0) { // S
+        if ((keyInput & (1 << 2)) != 0) { // key_s
             newY = utils.mapClampY(utils.iAddF16(self.y, self.speed), self.height);
             self.direction = 2; // Numpad direction
         }
-        if ((keyPresses & (1 << 3)) != 0) { // D
+        if ((keyInput & (1 << 3)) != 0) { // key_d
             newX = utils.mapClampX(utils.iAddF16(self.x, self.speed), self.width);
             self.direction = 6; // Numpad direction
         }
@@ -124,33 +123,33 @@ pub const Player = struct {
         }
     }
 
-    fn updateActionInput(self: *Player, keyPresses: u32) anyerror!void {
+    fn updateActionInput(self: *Player, keyInput: u32) anyerror!void {
         var built: ?*Structure = undefined;
         var buildAttempted: bool = false;
         const dir = self.direction;
 
-        if ((keyPresses & (1 << 4)) != 0) {
+        if ((keyInput & (1 << 4)) != 0) { // key_one
             const class = Structure.classProperties(0);
             const clearX = if (dir == 4 or dir == 6) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else 0;
             const clearY = if (dir == 2 or dir == 8) @divTrunc(class.height, 2) + @divTrunc(self.height, 2) else 0;
             built = Structure.build(if (dir == 4) self.x - clearX else self.x + clearX, if (dir == 8) self.y - clearY else self.y + clearY, 0);
             buildAttempted = true;
         }
-        if ((keyPresses & (1 << 5)) != 0) {
+        if ((keyInput & (1 << 5)) != 0) { // key_two
             const class = Structure.classProperties(1);
             const clearX = if (dir == 4 or dir == 6) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else 0;
             const clearY = if (dir == 2 or dir == 8) @divTrunc(class.height, 2) + @divTrunc(self.height, 2) else 0;
             built = Structure.build(if (dir == 4) self.x - clearX else self.x + clearX, if (dir == 8) self.y - clearY else self.y + clearY, 1);
             buildAttempted = true;
         }
-        if ((keyPresses & (1 << 6)) != 0) {
+        if ((keyInput & (1 << 6)) != 0) { // key_three
             const class = Structure.classProperties(2);
             const clearX = if (dir == 4 or dir == 6) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else 0;
             const clearY = if (dir == 2 or dir == 8) @divTrunc(class.height, 2) + @divTrunc(self.height, 2) else 0;
             built = Structure.build(if (dir == 4) self.x - clearX else self.x + clearX, if (dir == 8) self.y - clearY else self.y + clearY, 2);
             buildAttempted = true;
         }
-        if ((keyPresses & (1 << 7)) != 0) {
+        if ((keyInput & (1 << 7)) != 0) { // key_four
             const class = Structure.classProperties(3);
             const clearX = if (dir == 4 or dir == 6) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else 0;
             const clearY = if (dir == 2 or dir == 8) @divTrunc(class.height, 2) + @divTrunc(self.height, 2) else 0;
@@ -287,7 +286,7 @@ pub const Unit = struct {
             .entity = .{ .Unit = unit }, // Store the pointer to the Unit
         };
 
-        std.debug.print("Created unit at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entityUnit) });
+        // std.debug.print("Created unit at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entityUnit) });
         try main.gameGrid.addEntity(entityUnit, null, null);
         return unit;
     }
@@ -335,8 +334,7 @@ pub const Structure = struct {
     pub fn update(self: *Structure) void {
         self.elapsed += 1;
         if (self.elapsed >= self.interval) {
-            std.debug.print("Elapsed time {} surpasses interval {}.\n", .{ self.elapsed, self.interval });
-            self.elapsed -= self.interval; // Reset elapsed time, accounting for possible overshoot
+            self.elapsed -= self.interval; // Subtracting interval accounts for possible overshoot
             self.spawnUnit() catch return;
         }
     }
@@ -347,7 +345,7 @@ pub const Structure = struct {
         if (spawnPoint) |sp| { // If spawnPoint is not null, unwrap it
             try units.append(try Unit.create(sp[0], sp[1], unitClass));
         } else {
-            std.debug.print("Failed to find a spawn point.\n", .{});
+            // std.debug.print("Failed to find a spawn point.\n", .{});
         }
     }
 
@@ -371,7 +369,7 @@ pub const Structure = struct {
             .entity = .{ .Structure = structure },
         };
 
-        std.debug.print("Created structure at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entityStructure) });
+        // std.debug.print("Created structure at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entityStructure) });
         try main.gameGrid.addEntity(entityStructure, null, null);
         return structure;
     }
