@@ -120,7 +120,7 @@ pub const Player = struct {
         }
 
         if ((newX != null and canMoveX) or (newY != null and canMoveY)) {
-            std.debug.print("Updating player entity with oldX, oldY: {},{} to newX, newY: {},{} )\n", .{ oldX, oldY, self.x, self.y });
+            //std.debug.print("Updating player entity with oldX, oldY: {},{} to newX, newY: {},{} )\n", .{ oldX, oldY, self.x, self.y });
             main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
         }
     }
@@ -555,11 +555,10 @@ pub const Grid = struct {
         const y = newY orelse entityY(entity);
         const key = utils.SpatialHash.hash(x, y);
 
-        //std.debug.print("Adding entity to cell with hash {}\n", .{key});
-
         const result = try self.cells.getOrPut(key);
-        if (!result.found_existing) {
+        if (!result.found_existing) { // If cell was newly created, adds it as arraylist of entities
             result.value_ptr.* = std.ArrayList(*Entity).init(self.allocator);
+            std.debug.print("Added entity to new cell with hash {}\n", .{key});
         } else {
             // Ensure the entity is not already in the cell to avoid duplicates
             for (result.value_ptr.*.items) |existing_entity| {
@@ -568,6 +567,7 @@ pub const Grid = struct {
                     return;
                 }
             }
+            std.debug.print("Adding entity to existing cell with hash {}\n", .{key});
         }
         try result.value_ptr.*.append(entity);
     }
@@ -577,26 +577,32 @@ pub const Grid = struct {
         const y = std.math.clamp(oldY orelse entityY(entity), 0, main.mapHeight);
         const key = utils.SpatialHash.hash(x, y);
 
-        //std.debug.print("Attempting to remove entity from cell with hash {} at position ({}, {})\n", .{ key, x, y });
+        std.debug.print("Attempting to remove entity with ptr {} from cell {} at position ({}, {}).\n", .{ @intFromPtr(entity), key, x, y });
 
-        if (self.cells.get(key)) |list| {
+        if (self.cells.get(key)) |*list| {
+            var mutable_list = @constCast(list); // Cast the list to mutable
+            std.debug.print("(Prior to removal) Cell contains entities: {any}.\n", .{mutable_list.items});
+
             var removed = false;
-            for (list.items, 0..) |e, index| {
-                if (e == entity) {
-                    _ = @constCast(&list).swapRemove(index);
+            for (mutable_list.items, 0..) |e, index| {
+                if (@intFromPtr(e) == @intFromPtr(entity)) { // Compare pointers
+                    _ = mutable_list.swapRemove(index); // Use swapRemove on the mutable ArrayList
                     removed = true;
-                    //std.debug.print("Entity successfully removed from cell with hash {}\n", .{key});
-                    if (list.items.len == 0) {
-                        _ = self.cells.remove(key); // Safely remove the entry from the map
-                    }
+                    std.debug.print("Entity successfully removed from cell {}.\n", .{key});
+                    std.debug.print("(After removal) Cell contains entities: {any}.\n", .{mutable_list.items});
                     break;
                 }
             }
+
             if (!removed) {
-                //std.log.err("Failed to find entity in cell with hash {} for removal\n", .{key});
+                std.log.err("Failed to find entity with pointer {} in cell {} for removal.\n", .{ @intFromPtr(entity), key });
+            }
+
+            if (mutable_list.items.len == 0) {
+                _ = self.cells.remove(key); // Safely remove the entry from the map
             }
         } else {
-            //std.debug.print("Cell with hash {} not found for entity removal\n", .{key});
+            std.debug.print("Cell {} not found for entity removal.\n", .{key});
         }
     }
 
@@ -605,7 +611,7 @@ pub const Grid = struct {
         const newKey = utils.SpatialHash.hash(std.math.clamp(entityX(entity), 0, main.mapWidth), std.math.clamp(entityY(entity), 0, main.mapHeight));
 
         if (oldKey != newKey) {
-            //std.debug.print("Entity is moving from cell {} to cell {}\n", .{ oldKey, newKey });
+            std.debug.print("Grid updateEntity, moving entity from cell hash {} to cell hash {}.\n", .{ oldKey, newKey });
             //std.debug.print("Cell {} before removal: {?}\n", .{ oldKey, self.cells.get(oldKey) });
             self.removeEntity(entity, oldX, oldY) catch @panic("Failed to remove entity from grid");
             //std.debug.print("Cell {} after removal: {?}\n", .{ oldKey, self.cells.get(oldKey) });
@@ -615,20 +621,23 @@ pub const Grid = struct {
         }
     }
 
+    /// Returns a slice of nearby entities within a 3x3 grid centered around the given x, y coordinates.
+    /// The number of entities returned is limited by `ENTITY_SEARCH_LIMIT`. Returns an error if the
+    /// number of entities exceeds `ENTITY_SEARCH_LIMIT`.
     pub fn getNearbyEntities(self: *Grid, x: i32, y: i32) ![]*Entity {
-        var nearbyEntities: [main.ENTITY_COLLISION_LIMIT]*Entity = undefined;
+        var nearbyEntities: [main.ENTITY_SEARCH_LIMIT]*Entity = undefined;
         var count: usize = 0;
 
         const offsets = [_][2]i32{
-            [_]i32{ 0, 0 },
-            [_]i32{ -utils.SpatialHash.CellSize, 0 },
-            [_]i32{ utils.SpatialHash.CellSize, 0 },
-            [_]i32{ 0, -utils.SpatialHash.CellSize },
-            [_]i32{ 0, utils.SpatialHash.CellSize },
-            [_]i32{ -utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize },
-            [_]i32{ utils.SpatialHash.CellSize, utils.SpatialHash.CellSize },
-            [_]i32{ -utils.SpatialHash.CellSize, utils.SpatialHash.CellSize },
-            [_]i32{ utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize },
+            [_]i32{ 0, 0 }, // Central cell
+            [_]i32{ -utils.SpatialHash.CellSize, 0 }, // Left neighbor
+            [_]i32{ utils.SpatialHash.CellSize, 0 }, // Right neighbor
+            [_]i32{ 0, -utils.SpatialHash.CellSize }, // Top neighbor
+            [_]i32{ 0, utils.SpatialHash.CellSize }, // Bottom neighbor
+            [_]i32{ -utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize }, // Top-left
+            [_]i32{ utils.SpatialHash.CellSize, utils.SpatialHash.CellSize }, // Bottom-right
+            [_]i32{ -utils.SpatialHash.CellSize, utils.SpatialHash.CellSize }, // Bottom-left
+            [_]i32{ utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize }, // Top-right
         };
 
         for (offsets) |offset| {
@@ -637,7 +646,7 @@ pub const Grid = struct {
             const neighborKey = utils.SpatialHash.hash(offsetX, offsetY);
             if (self.cells.get(neighborKey)) |list| {
                 for (list.items) |entity| {
-                    if (count < main.ENTITY_COLLISION_LIMIT) {
+                    if (count < main.ENTITY_SEARCH_LIMIT) {
                         nearbyEntities[count] = entity;
                         count += 1;
                     } else {
@@ -646,6 +655,7 @@ pub const Grid = struct {
                 }
             }
         }
+        if (utils.perFrame(60)) std.debug.print("Searching for entities near {}, {}. Found {} entities within area from {},{} to {},{}.\n", .{ x, y, count, (x - utils.SpatialHash.CellSize), (y - utils.SpatialHash.CellSize), (x + utils.SpatialHash.CellSize), (y + utils.SpatialHash.CellSize) });
         return nearbyEntities[0..count];
     }
 

@@ -4,11 +4,12 @@ const utils = @import("utils.zig");
 const entity = @import("entity.zig");
 
 // Config
-pub const ENTITY_COLLISION_LIMIT = 400;
+pub const ENTITY_SEARCH_LIMIT = 400;
 pub const LOGIC_FRAMERATE = 60;
 pub const UPDATE_INTERVAL: f64 = 1.0 / @as(f64, @floatFromInt(LOGIC_FRAMERATE));
-const MAX_UPDATES_PER_FRAME = 4;
-var lastUpdateTime: f64 = 0.0;
+pub const MAX_UPDATES_PER_FRAME = 4;
+pub var prevUpdateTime: f64 = 0.0;
+pub var frameCount: i64 = 0;
 
 // Camera movement
 pub const SCROLL_SPEED: f16 = 25.0;
@@ -39,8 +40,8 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
-    rl.toggleFullscreen();
-    //rl.setTargetFPS(120);
+    // rl.toggleFullscreen();
+    rl.setTargetFPS(120);
 
     // Initialize utility
     //--------------------------------------------------------------------------------------
@@ -83,12 +84,11 @@ pub fn main() anyerror!void {
     allocator.free(startCoords); // Freeing starting positions
 
     // Testing/debugging
-    var count: i32 = 0; // debugging, for longer interval
     // try entity.structures.append(try entity.Structure.create(2500, 1500, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 3));
-    for (0..1000) |_| {
-        try entity.structures.append(try entity.Structure.create(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3)))));
-    }
+    //for (0..1000) |_| {
+    //    try entity.structures.append(try entity.Structure.create(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3)))));
+    //}
 
     defer entity.players.deinit();
     defer entity.units.deinit();
@@ -106,7 +106,7 @@ pub fn main() anyerror!void {
         //----------------------------------------------------------------------------------
 
         const currentTime: f64 = rl.getTime();
-        var elapsedTime: f64 = currentTime - lastUpdateTime;
+        var elapsedTime: f64 = currentTime - prevUpdateTime;
 
         var updatesPerformed: usize = 0;
 
@@ -124,11 +124,11 @@ pub fn main() anyerror!void {
             }
         }
 
-        lastUpdateTime += @as(f64, @floatFromInt(updatesPerformed)) * UPDATE_INTERVAL;
+        prevUpdateTime += @as(f64, @floatFromInt(updatesPerformed)) * UPDATE_INTERVAL;
+        frameCount += 1;
 
         // Debugging/testing
-        if (@mod(count, 100) == 0) utils.printTotalEntitiesOnGrid(&gameGrid);
-        count += 1;
+        if (utils.perFrame(120)) utils.printTotalEntitiesOnGrid(&gameGrid);
 
         // Drawing
         //----------------------------------------------------------------------------------

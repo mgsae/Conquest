@@ -13,8 +13,13 @@ pub fn assert(condition: bool, failureMsg: []const u8) void {
     }
 }
 
+/// Prints the number of key-value pairs stored in grid cells hash.
 pub fn printTotalEntitiesOnGrid(grid: *entity.Grid) void {
     std.debug.print("Entities on grid: {}\n", .{grid.cells.count()});
+}
+
+pub fn perFrame(frequency: i64) bool {
+    return @mod(main.frameCount, frequency) == 0;
 }
 
 // Data structures
