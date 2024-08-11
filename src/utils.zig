@@ -39,10 +39,11 @@ pub fn scaleToTickRate(float: f32) f32 { // Delta time capped to tickrate
 
 // Data structures
 //----------------------------------------------------------------------------------
+/// Iterate over the items in the ArrayList to find the index of the item matching ptr,
+/// swap with the last indexed item, then remove it from the last index.
 pub fn findAndSwapRemove(comptime T: type, list: *std.ArrayList(*T), ptr: *T) !void {
     var foundIndex: ?usize = null;
 
-    // Iterate over the items in the list to find the index of the item matching ptr
     for (list.items, 0..) |item, i| {
         if (item == ptr) { // Compare the pointer addresses
             foundIndex = i;
@@ -161,9 +162,9 @@ pub fn testHashFunction() void {
     const max_x: i32 = main.mapWidth;
     const min_y: i32 = 0;
     const max_y: i32 = main.mapHeight;
-    const step: i32 = 400; // Adjust step for more or less granularity
+    const step: i32 = 953; // Adjust step for more or less granularity
 
-    std.debug.print("Printing hash values for positions between min_x {}, max_x {}, min_y {}, max_y {}, with a step of {}.\n", .{ min_x, max_x, min_y, max_y, step });
+    std.log.info("Printing hash values for positions between min_x {}, max_x {}, min_y {}, max_y {}, with an increment of {}.\n", .{ min_x, max_x, min_y, max_y, step });
 
     var x: i32 = min_x;
     while (x <= max_x) : (x += step) {
@@ -173,7 +174,7 @@ pub fn testHashFunction() void {
             std.debug.print("({}, {}) = {}. ", .{ x, y, hash_value });
         }
     }
-    std.debug.print("\n Done printing hash values.\n", .{});
+    std.log.info("\n Done printing hash values.\n", .{});
 }
 
 pub fn isOnMap(x: i32, y: i32) bool {

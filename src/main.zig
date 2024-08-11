@@ -90,8 +90,6 @@ pub fn main() anyerror!void {
     //    try entity.structures.append(try entity.Structure.create(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3)))));
     //}
 
-    utils.testHashFunction();
-
     defer entity.players.deinit();
     defer entity.units.deinit();
     defer entity.structures.deinit();
