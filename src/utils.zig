@@ -13,13 +13,28 @@ pub fn assert(condition: bool, failureMsg: []const u8) void {
     }
 }
 
-/// Prints the number of key-value pairs stored in grid cells hash.
-pub fn printTotalEntitiesOnGrid(grid: *entity.Grid) void {
-    std.debug.print("Entities on grid: {}\n", .{grid.cells.count()});
+/// Prints the number of key-value pairs stored across all grid cells.
+pub fn printGridEntities(grid: *entity.Grid) void {
+    var total_entities: usize = 0;
+    var it = grid.cells.iterator();
+    while (it.next()) |entry| {
+        total_entities += entry.value_ptr.items.len;
+    }
+    std.debug.print("Total entities on the grid: {}.\n", .{total_entities});
+}
+
+/// Prints the number of cells currently stored in the grid hash map, corresponding to the
+/// number of distinct cells that contain one or more entities.
+pub fn printGridCells(grid: *entity.Grid) void {
+    std.debug.print("Currently active cells on the grid: {}.\n", .{grid.cells.count()});
 }
 
 pub fn perFrame(frequency: i64) bool {
     return @mod(main.frameCount, frequency) == 0;
+}
+
+pub fn scaleToTickRate(float: f32) f32 { // Delta time capped to tickrate
+    return (float * (@max(@as(f32, @floatCast(main.TICK_DURATION)), rl.getFrameTime()))) * main.TICKRATE;
 }
 
 // Data structures
@@ -40,6 +55,10 @@ pub fn findAndSwapRemove(comptime T: type, list: *std.ArrayList(*T), ptr: *T) !v
     } else {
         return error.ItemNotFound;
     }
+}
+
+pub fn ticksFromSecs(seconds: f16) u16 {
+    return @as(u16, @intFromFloat(seconds * main.TICKRATE));
 }
 
 // RNG
@@ -84,10 +103,6 @@ pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
     const divResult = @divTrunc(numerator, denominator);
     const remainder = @rem(numerator, denominator);
     return if (remainder != 0) divResult + 1 else divResult;
-}
-
-pub fn scaleToFrameRate(float: f32) f32 { // Delta time capped at 60 fps
-    return (float * (@max(@as(f32, @floatCast(main.UPDATE_INTERVAL)), rl.getFrameTime()))) * main.LOGIC_FRAMERATE;
 }
 
 // Map Coordinates
@@ -140,6 +155,26 @@ pub const HashContext = struct {
         return a == b;
     }
 };
+
+pub fn testHashFunction() void {
+    const min_x: i32 = 0;
+    const max_x: i32 = main.mapWidth;
+    const min_y: i32 = 0;
+    const max_y: i32 = main.mapHeight;
+    const step: i32 = 400; // Adjust step for more or less granularity
+
+    std.debug.print("Printing hash values for positions between min_x {}, max_x {}, min_y {}, max_y {}, with a step of {}.\n", .{ min_x, max_x, min_y, max_y, step });
+
+    var x: i32 = min_x;
+    while (x <= max_x) : (x += step) {
+        var y: i32 = min_y; // Reset y for each new x
+        while (y <= max_y) : (y += step) {
+            const hash_value = SpatialHash.hash(x, y);
+            std.debug.print("({}, {}) = {}. ", .{ x, y, hash_value });
+        }
+    }
+    std.debug.print("\n Done printing hash values.\n", .{});
+}
 
 pub fn isOnMap(x: i32, y: i32) bool {
     return x >= 0 and x < main.mapWidth and y >= 0 and y <= main.mapHeight;

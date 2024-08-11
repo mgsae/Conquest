@@ -16,7 +16,7 @@ const EntityType = enum {
 
 const Entity = struct {
     entityType: EntityType,
-    entity: union(EntityType) { // Stores the actual entity data
+    entity: union(EntityType) { // Stores pointer to the actual data
         Player: *Player,
         Unit: *Unit,
         Structure: *Structure,
@@ -91,7 +91,7 @@ pub const Player = struct {
         const oldY = self.y;
         var canMoveX = true;
         var canMoveY = true;
-        const speed = utils.scaleToFrameRate(self.speed);
+        const speed = utils.scaleToTickRate(self.speed);
 
         if ((keyInput & (1 << 0)) != 0) { // key_w
             newY = utils.mapClampY(utils.i32SubFloat(f32, self.y, speed), self.height);
@@ -119,7 +119,7 @@ pub const Player = struct {
             if (canMoveY) self.y = newY.?;
         }
 
-        if ((newX != null and canMoveX) or (newY != null and canMoveY)) {
+        if ((newX != null and newX.? != oldX and canMoveX) or (newY != null and newY.? != oldY and canMoveY)) {
             //std.debug.print("Updating player entity with oldX, oldY: {},{} to newX, newY: {},{} )\n", .{ oldX, oldY, self.x, self.y });
             main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
         }
@@ -347,7 +347,7 @@ pub const Structure = struct {
     class: u8,
     color: rl.Color,
     life: u16,
-    pulse: u16,
+    pulse: f16,
     elapsed: u16 = 0,
 
     pub fn draw(self: *const Structure) void {
@@ -356,8 +356,9 @@ pub const Structure = struct {
 
     pub fn update(self: *Structure) void {
         self.elapsed += 1;
-        if (self.elapsed >= self.pulse) {
-            self.elapsed -= self.pulse; // Subtracting interval accounts for possible overshoot
+        const pulseTicks = utils.ticksFromSecs(self.pulse);
+        if (self.elapsed >= pulseTicks) {
+            self.elapsed -= pulseTicks; // Subtracting interval accounts for possible overshoot
             self.spawnUnit() catch return;
         }
     }
@@ -413,15 +414,15 @@ pub const Structure = struct {
         width: u16,
         height: u16,
         life: u16,
-        pulse: u16,
+        pulse: f16,
     };
 
     pub fn classProperties(class: u8) StructureProperties {
         return switch (class) {
-            0 => StructureProperties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 5000, .pulse = 180 },
-            1 => StructureProperties{ .color = rl.Color.blue, .width = 175, .height = 175, .life = 6000, .pulse = 320 },
-            2 => StructureProperties{ .color = rl.Color.dark_blue, .width = 150, .height = 150, .life = 7000, .pulse = 240 },
-            3 => StructureProperties{ .color = rl.Color.violet, .width = 125, .height = 125, .life = 8000, .pulse = 120 },
+            0 => StructureProperties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 5000, .pulse = 300.0 },
+            1 => StructureProperties{ .color = rl.Color.blue, .width = 175, .height = 175, .life = 6000, .pulse = 5.5 },
+            2 => StructureProperties{ .color = rl.Color.dark_blue, .width = 150, .height = 150, .life = 7000, .pulse = 4.0 },
+            3 => StructureProperties{ .color = rl.Color.violet, .width = 125, .height = 125, .life = 8000, .pulse = 2.0 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -555,21 +556,59 @@ pub const Grid = struct {
         const y = newY orelse entityY(entity);
         const key = utils.SpatialHash.hash(x, y);
 
+        std.log.info("Adding entity {} to grid cell at {},{}.\n", .{ @intFromPtr(entity), x, y });
+
         const result = try self.cells.getOrPut(key);
-        if (!result.found_existing) { // If cell was newly created, adds it as arraylist of entities
+        if (!result.found_existing) {
             result.value_ptr.* = std.ArrayList(*Entity).init(self.allocator);
-            std.debug.print("Added entity to new cell with hash {}\n", .{key});
         } else {
-            // Ensure the entity is not already in the cell to avoid duplicates
             for (result.value_ptr.*.items) |existing_entity| {
-                if (existing_entity == entity) {
-                    std.log.err("Entity already exists in cell with hash {}, skipping add\n", .{key});
+                if (@intFromPtr(existing_entity) == @intFromPtr(entity)) {
+                    std.log.err("Entity {} already exists in cell with hash {}, skipping add\n", .{ @intFromPtr(existing_entity), key });
                     return;
                 }
             }
-            std.debug.print("Adding entity to existing cell with hash {}\n", .{key});
         }
+        std.debug.print("Added entity {} to cell {}\n", .{ @intFromPtr(entity), key });
         try result.value_ptr.*.append(entity);
+    }
+
+    pub fn removeEntityOld(self: *Grid, entity: *Entity, oldX: ?i32, oldY: ?i32) !void {
+        const x = std.math.clamp(oldX orelse entityX(entity), 0, main.mapWidth);
+        const y = std.math.clamp(oldY orelse entityY(entity), 0, main.mapHeight);
+        const key = utils.SpatialHash.hash(x, y);
+
+        std.log.info("Removing entity {} from grid cell at {},{}.\n", .{ @intFromPtr(entity), x, y });
+
+        // Fetch the ArrayListAligned of entities for the given cell key
+        if (self.cells.get(key)) |*list| {
+            var mutable_list = @constCast(list); // Ensure we have mutable access to the list
+
+            var removed = false;
+
+            // Iterate and remove the entity from the ArrayListAligned
+            for (mutable_list.items, 0..) |e, index| {
+                if (e == entity) {
+                    _ = mutable_list.swapRemove(index); // Use swapRemove directly on the ArrayListAligned
+                    removed = true;
+                    break;
+                }
+            }
+
+            if (!removed) {
+                @panic("Failed to find entity in cell for removal!");
+            }
+
+            // If the ArrayListAligned is empty after removal, remove the cell from the grid
+            if (mutable_list.items.len == 0) {
+                _ = self.cells.remove(key);
+                std.debug.print("Cell {} is now empty and removed from grid.\n", .{key});
+            }
+
+            std.debug.print("Removed entity {} from cell {}\n", .{ @intFromPtr(entity), key });
+        } else {
+            @panic("Attempted to remove entity from non-existent cell!");
+        }
     }
 
     pub fn removeEntity(self: *Grid, entity: *Entity, oldX: ?i32, oldY: ?i32) !void {
@@ -577,32 +616,37 @@ pub const Grid = struct {
         const y = std.math.clamp(oldY orelse entityY(entity), 0, main.mapHeight);
         const key = utils.SpatialHash.hash(x, y);
 
-        std.debug.print("Attempting to remove entity with ptr {} from cell {} at position ({}, {}).\n", .{ @intFromPtr(entity), key, x, y });
+        std.log.info("Removing entity {} from grid cell at {},{}.\n", .{ @intFromPtr(entity), x, y });
 
+        // Fetch the ArrayListAligned of entities for the given cell key
         if (self.cells.get(key)) |*list| {
-            var mutable_list = @constCast(list); // Cast the list to mutable
-            std.debug.print("(Prior to removal) Cell contains entities: {any}.\n", .{mutable_list.items});
-
             var removed = false;
-            for (mutable_list.items, 0..) |e, index| {
-                if (@intFromPtr(e) == @intFromPtr(entity)) { // Compare pointers
-                    _ = mutable_list.swapRemove(index); // Use swapRemove on the mutable ArrayList
+
+            // Iterate and remove the entity from the ArrayListAligned
+            for (0..list.items.len) |index| {
+                if (list.items[index] == entity) {
+                    _ = @constCast(list).swapRemove(index);
                     removed = true;
-                    std.debug.print("Entity successfully removed from cell {}.\n", .{key});
-                    std.debug.print("(After removal) Cell contains entities: {any}.\n", .{mutable_list.items});
                     break;
                 }
             }
 
             if (!removed) {
-                std.log.err("Failed to find entity with pointer {} in cell {} for removal.\n", .{ @intFromPtr(entity), key });
+                @panic("Entity was not found in the list! This should never happen.");
             }
 
-            if (mutable_list.items.len == 0) {
-                _ = self.cells.remove(key); // Safely remove the entry from the map
+            // If the ArrayListAligned is empty after removal, remove the cell from the grid
+            if (list.items.len == 0) {
+                const result = self.cells.remove(key);
+                if (!result) {
+                    @panic("Failed to remove cell from grid! This should never happen.");
+                }
+                std.debug.print("Cell {} is now empty and removed from grid.\n", .{key});
             }
+
+            std.debug.print("Removed entity {} from cell {}\n", .{ @intFromPtr(entity), key });
         } else {
-            std.debug.print("Cell {} not found for entity removal.\n", .{key});
+            @panic("Attempted to remove entity from a non-existent cell! This should never happen.");
         }
     }
 
@@ -611,13 +655,26 @@ pub const Grid = struct {
         const newKey = utils.SpatialHash.hash(std.math.clamp(entityX(entity), 0, main.mapWidth), std.math.clamp(entityY(entity), 0, main.mapHeight));
 
         if (oldKey != newKey) {
-            std.debug.print("Grid updateEntity, moving entity from cell hash {} to cell hash {}.\n", .{ oldKey, newKey });
-            //std.debug.print("Cell {} before removal: {?}\n", .{ oldKey, self.cells.get(oldKey) });
-            self.removeEntity(entity, oldX, oldY) catch @panic("Failed to remove entity from grid");
-            //std.debug.print("Cell {} after removal: {?}\n", .{ oldKey, self.cells.get(oldKey) });
-            self.addEntity(entity, null, null) catch @panic("Failed to add entity to grid");
+            std.debug.print("Grid updateEntity, moving entity with ptr {} from cell hash {} to cell hash {}.\n", .{ @intFromPtr(entity), oldKey, newKey });
+
+            // Enforce removal before addition
+            self.removeEntity(entity, oldX, oldY) catch |err| {
+                std.log.err("Failed to remove entity {} from old cell {}, error: {}\n", .{ @intFromPtr(entity), oldKey, err });
+                return;
+            };
+
+            // Proceed to add only after successful removal
+            self.addEntity(entity, null, null) catch |err| {
+                std.log.err("Failed to add entity {} to new cell {}, error: {}\n", .{ @intFromPtr(entity), newKey, err });
+            };
+
+            std.debug.print("Grid state after adding/removing entity: \n", .{});
+            var it2 = self.cells.iterator();
+            while (it2.next()) |entry| {
+                std.debug.print("Cell {any} contains entities: {any}\n", .{ entry.key_ptr, entry.value_ptr.items });
+            }
         } else {
-            //std.debug.print("Entity remains in the same cell {}\n", .{oldKey});
+            if (utils.perFrame(30)) std.debug.print("Entity with ptr {} remains in the same cell {}\n", .{ @intFromPtr(entity), oldKey });
         }
     }
 

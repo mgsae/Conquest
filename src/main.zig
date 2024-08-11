@@ -5,10 +5,10 @@ const entity = @import("entity.zig");
 
 // Config
 pub const ENTITY_SEARCH_LIMIT = 400;
-pub const LOGIC_FRAMERATE = 60;
-pub const UPDATE_INTERVAL: f64 = 1.0 / @as(f64, @floatFromInt(LOGIC_FRAMERATE));
-pub const MAX_UPDATES_PER_FRAME = 4;
-pub var prevUpdateTime: f64 = 0.0;
+pub const TICKRATE = 60;
+pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
+pub const MAX_TICKS_PER_FRAME = 4;
+pub var prevTickTime: f64 = 0.0;
 pub var frameCount: i64 = 0;
 
 // Camera movement
@@ -69,7 +69,7 @@ pub fn main() anyerror!void {
     entity.units = std.ArrayList(*entity.Unit).init(allocator);
     entity.structures = std.ArrayList(*entity.Structure).init(allocator);
 
-    const startCoords = try startingLocations(allocator, 3); // 3 players
+    const startCoords = try startingLocations(allocator, 1); // 1 player
     for (startCoords, 0..) |coord, i| {
         std.debug.print("Player starting at: ({}, {})\n", .{ coord.x, coord.y });
         if (i == 0) {
@@ -84,11 +84,13 @@ pub fn main() anyerror!void {
     allocator.free(startCoords); // Freeing starting positions
 
     // Testing/debugging
-    // try entity.structures.append(try entity.Structure.create(2500, 1500, 0));
-    //try entity.units.append(try entity.Unit.create(2500, 1500, 3));
+    try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
+    //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
     //for (0..1000) |_| {
     //    try entity.structures.append(try entity.Structure.create(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3)))));
     //}
+
+    utils.testHashFunction();
 
     defer entity.players.deinit();
     defer entity.units.deinit();
@@ -106,29 +108,32 @@ pub fn main() anyerror!void {
         //----------------------------------------------------------------------------------
 
         const currentTime: f64 = rl.getTime();
-        var elapsedTime: f64 = currentTime - prevUpdateTime;
+        var elapsedTime: f64 = currentTime - prevTickTime;
 
         var updatesPerformed: usize = 0;
 
         // Perform updates if enough time has elapsed
-        while (elapsedTime >= UPDATE_INTERVAL) {
+        while (elapsedTime >= TICK_DURATION) {
             try updateLogic(accumulatedMouseWheel, accumulatedKeyInput);
             accumulatedMouseWheel = 0.0;
             accumulatedKeyInput = 0;
 
-            elapsedTime -= UPDATE_INTERVAL;
+            elapsedTime -= TICK_DURATION;
             updatesPerformed += 1;
 
-            if (updatesPerformed >= MAX_UPDATES_PER_FRAME) {
+            if (updatesPerformed >= MAX_TICKS_PER_FRAME) {
                 break; // Prevent too much work per frame
             }
         }
 
-        prevUpdateTime += @as(f64, @floatFromInt(updatesPerformed)) * UPDATE_INTERVAL;
+        prevTickTime += @as(f64, @floatFromInt(updatesPerformed)) * TICK_DURATION;
         frameCount += 1;
 
         // Debugging/testing
-        if (utils.perFrame(120)) utils.printTotalEntitiesOnGrid(&gameGrid);
+        if (utils.perFrame(120)) {
+            utils.printGridEntities(&gameGrid);
+            utils.printGridCells(&gameGrid);
+        }
 
         // Drawing
         //----------------------------------------------------------------------------------
