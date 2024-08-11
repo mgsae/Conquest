@@ -4,10 +4,10 @@ const utils = @import("utils.zig");
 const entity = @import("entity.zig");
 
 // Config
-pub const ENTITY_SEARCH_LIMIT = 400;
 pub const TICKRATE = 60;
 pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
 pub const MAX_TICKS_PER_FRAME = 4;
+pub const ENTITY_SEARCH_LIMIT = 400; // Asserts that limit > #entities in 3x3 cells
 pub var prevTickTime: f64 = 0.0;
 pub var frameCount: i64 = 0;
 
@@ -40,7 +40,7 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
-    // rl.toggleFullscreen();
+    rl.toggleFullscreen();
     rl.setTargetFPS(120);
 
     // Initialize utility
@@ -66,8 +66,8 @@ pub fn main() anyerror!void {
     // Initialize entities
     //--------------------------------------------------------------------------------------
     entity.players = std.ArrayList(*entity.Player).init(allocator);
-    entity.units = std.ArrayList(*entity.Unit).init(allocator);
     entity.structures = std.ArrayList(*entity.Structure).init(allocator);
+    entity.units = std.ArrayList(*entity.Unit).init(allocator);
 
     const startCoords = try startingLocations(allocator, 1); // 1 player
     for (startCoords, 0..) |coord, i| {
@@ -84,15 +84,15 @@ pub fn main() anyerror!void {
     allocator.free(startCoords); // Freeing starting positions
 
     // Testing/debugging
-    try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
+    //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
-    //for (0..1000) |_| {
-    //    try entity.structures.append(try entity.Structure.create(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3)))));
-    //}
+    for (0..100) |_| {
+        _ = entity.Structure.build(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3))));
+    }
 
-    defer entity.players.deinit();
     defer entity.units.deinit();
     defer entity.structures.deinit();
+    defer entity.players.deinit();
 
     // Main game loop
     //--------------------------------------------------------------------------------------
@@ -272,9 +272,9 @@ pub fn drawMap() void {
 }
 
 fn drawEntities() void {
-    for (entity.players.items) |player| player.draw();
     for (entity.units.items) |unit| unit.draw();
     for (entity.structures.items) |structure| structure.draw();
+    for (entity.players.items) |player| player.draw();
 }
 
 /// Draws user interface

@@ -106,7 +106,26 @@ pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
     return if (remainder != 0) divResult + 1 else divResult;
 }
 
-// Map Coordinates
+// Geometry
+//----------------------------------------------------------------------------------
+pub fn dirDelta(dir: u8) [2]i8 {
+    var x: i8 = 0;
+    var y: i8 = 0;
+    switch (dir) {
+        2 => y += 1,
+        4 => x -= 1,
+        6 => x += 1,
+        8 => y -= 1,
+        else => return [2]i8{ 0, 0 },
+    }
+    return [2]i8{ x, y };
+}
+
+pub fn isHorz(dir: u8) bool {
+    return dir == 4 or dir == 6;
+}
+
+// Grid/spatial hashmap
 //----------------------------------------------------------------------------------
 pub const Point = struct {
     x: i32,
@@ -177,6 +196,8 @@ pub fn testHashFunction() void {
     std.log.info("\n Done printing hash values.\n", .{});
 }
 
+// Map Coordinates
+//----------------------------------------------------------------------------------
 pub fn isOnMap(x: i32, y: i32) bool {
     return x >= 0 and x < main.mapWidth and y >= 0 and y <= main.mapHeight;
 }
@@ -191,6 +212,31 @@ pub fn mapClampX(x: i32, width: i32) i32 {
 
 pub fn mapClampY(y: i32, height: i32) i32 {
     return @min(main.mapHeight - @divTrunc(height, 2), @max(y, @divTrunc(height, 2)));
+}
+
+pub fn dirOffset(x: i32, y: i32, dir: u8, offset: i32) [2]i32 {
+    var oX = x;
+    var oY = y;
+    switch (dir) {
+        2 => oY += offset,
+        4 => oX -= offset,
+        6 => oX += offset,
+        8 => oY -= offset,
+        else => return [2]i32{ x, y },
+    }
+    return [2]i32{ oX, oY };
+}
+
+pub fn closestNode(x: i32, y: i32) [2]i32 {
+    const closestX = @divTrunc((x + @divTrunc(main.GRID_CELL_SIZE, 2)), main.GRID_CELL_SIZE) * main.GRID_CELL_SIZE;
+    const closestY = @divTrunc((y + @divTrunc(main.GRID_CELL_SIZE, 2)), main.GRID_CELL_SIZE) * main.GRID_CELL_SIZE;
+    return [2]i32{ closestX, closestY };
+}
+
+pub fn closestNodeOffset(x: i32, y: i32, dir: u8, width: u16, height: u16) [2]i32 {
+    const delta = if (isHorz(dir)) width else height;
+    const offsetXy = dirOffset(x, y, dir, delta);
+    return closestNode(offsetXy[0], offsetXy[1]);
 }
 
 // Canvas

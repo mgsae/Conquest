@@ -61,8 +61,8 @@ pub const Player = struct {
     entity: *Entity,
     x: i32,
     y: i32,
-    width: i32,
-    height: i32,
+    width: u16,
+    height: u16,
     color: rl.Color,
     speed: f16 = 5,
     direction: u8 = 2,
@@ -132,30 +132,26 @@ pub const Player = struct {
 
         if ((keyInput & (1 << 4)) != 0) { // key_one
             const class = Structure.classProperties(0);
-            const clearX = if (dir == 4 or dir == 6) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else 0;
-            const clearY = if (dir == 2 or dir == 8) @divTrunc(class.height, 2) + @divTrunc(self.height, 2) else 0;
-            built = Structure.build(if (dir == 4) self.x - clearX else self.x + clearX, if (dir == 8) self.y - clearY else self.y + clearY, 0);
+            const xy = utils.closestNodeOffset(self.x, self.y, dir, @divTrunc(class.width, 2) + @divTrunc(self.width, 2), @divTrunc(class.height, 2) + @divTrunc(self.height, 2));
+            built = Structure.build(xy[0], xy[1], 0);
             buildAttempted = true;
         }
         if ((keyInput & (1 << 5)) != 0) { // key_two
             const class = Structure.classProperties(1);
-            const clearX = if (dir == 4 or dir == 6) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else 0;
-            const clearY = if (dir == 2 or dir == 8) @divTrunc(class.height, 2) + @divTrunc(self.height, 2) else 0;
-            built = Structure.build(if (dir == 4) self.x - clearX else self.x + clearX, if (dir == 8) self.y - clearY else self.y + clearY, 1);
+            const xy = utils.closestNodeOffset(self.x, self.y, dir, @divTrunc(class.width, 2) + @divTrunc(self.width, 2), @divTrunc(class.height, 2) + @divTrunc(self.height, 2));
+            built = Structure.build(xy[0], xy[1], 1);
             buildAttempted = true;
         }
         if ((keyInput & (1 << 6)) != 0) { // key_three
             const class = Structure.classProperties(2);
-            const clearX = if (dir == 4 or dir == 6) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else 0;
-            const clearY = if (dir == 2 or dir == 8) @divTrunc(class.height, 2) + @divTrunc(self.height, 2) else 0;
-            built = Structure.build(if (dir == 4) self.x - clearX else self.x + clearX, if (dir == 8) self.y - clearY else self.y + clearY, 2);
+            const xy = utils.closestNodeOffset(self.x, self.y, dir, @divTrunc(class.width, 2) + @divTrunc(self.width, 2), @divTrunc(class.height, 2) + @divTrunc(self.height, 2));
+            built = Structure.build(xy[0], xy[1], 2);
             buildAttempted = true;
         }
         if ((keyInput & (1 << 7)) != 0) { // key_four
             const class = Structure.classProperties(3);
-            const clearX = if (dir == 4 or dir == 6) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else 0;
-            const clearY = if (dir == 2 or dir == 8) @divTrunc(class.height, 2) + @divTrunc(self.height, 2) else 0;
-            built = Structure.build(if (dir == 4) self.x - clearX else self.x + clearX, if (dir == 8) self.y - clearY else self.y + clearY, 3);
+            const xy = utils.closestNodeOffset(self.x, self.y, dir, @divTrunc(class.width, 2) + @divTrunc(self.width, 2), @divTrunc(class.height, 2) + @divTrunc(self.height, 2));
+            built = Structure.build(xy[0], xy[1], 3);
             buildAttempted = true;
         }
 
@@ -258,10 +254,10 @@ pub const Unit = struct {
         const newX = utils.i32AddFloat(f16, oldX, (dx * self.speed));
         const newY = utils.i32AddFloat(f16, oldY, (dy * self.speed));
 
-        // Check collisions in nearby grid cells
-        const collides = false; // main.gameGrid.entityCollision(newX, newY, self.width, self.height, Unit.getEntity(self)) catch true;
+        // Idea: Have unit favor moving along grid. Only do "entityCollisionGeneral" if unit x,y is NOT on grid
+        // Otherwise, do a more performant (1-dimensional?) grid collision detection or similar
+        const collides = main.gameGrid.entityCollision(newX, newY, self.width, self.height, Unit.getEntity(self)) catch true;
 
-        // Apply movement
         if (!collides) {
             self.x = utils.mapClampX(newX, self.width);
             self.y = utils.mapClampY(newY, self.height);
@@ -323,10 +319,10 @@ pub const Unit = struct {
 
     pub fn classProperties(class: u8) UnitProperties {
         return switch (class) {
-            0 => UnitProperties{ .speed = 5, .color = rl.Color.sky_blue, .width = 25, .height = 25, .life = 2000 },
-            1 => UnitProperties{ .speed = 6, .color = rl.Color.blue, .width = 40, .height = 40, .life = 3000 },
-            2 => UnitProperties{ .speed = 4, .color = rl.Color.dark_blue, .width = 50, .height = 50, .life = 4000 },
-            3 => UnitProperties{ .speed = 6, .color = rl.Color.violet, .width = 35, .height = 35, .life = 5000 },
+            0 => UnitProperties{ .speed = 5, .color = rl.Color.sky_blue, .width = 44, .height = 44, .life = 2000 },
+            1 => UnitProperties{ .speed = 6, .color = rl.Color.blue, .width = 28, .height = 28, .life = 3000 },
+            2 => UnitProperties{ .speed = 4, .color = rl.Color.dark_blue, .width = 64, .height = 64, .life = 4000 },
+            3 => UnitProperties{ .speed = 6, .color = rl.Color.violet, .width = 32, .height = 32, .life = 5000 },
             else => @panic("Invalid unit class"),
         };
     }
@@ -400,11 +396,12 @@ pub const Structure = struct {
     }
 
     pub fn build(x: i32, y: i32, class: u8) ?*Structure {
-        const collision = main.gameGrid.entityCollision(x, y, 150, 150, Player.getEntity(main.gamePlayer)) catch return null;
-        if (collision or !utils.isInMap(x, y, classProperties(class).width, classProperties(class).height)) {
+        const nodeXy = utils.closestNode(x, y);
+        const collision = main.gameGrid.entityCollision(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height, null) catch return null;
+        if (collision or !utils.isInMap(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height)) {
             return null;
         }
-        const structure = Structure.create(x, y, class) catch return null;
+        const structure = Structure.create(nodeXy[0], nodeXy[1], class) catch return null;
         structures.append(structure) catch return null;
         return structure;
     }
@@ -419,10 +416,10 @@ pub const Structure = struct {
 
     pub fn classProperties(class: u8) StructureProperties {
         return switch (class) {
-            0 => StructureProperties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 5000, .pulse = 300.0 },
-            1 => StructureProperties{ .color = rl.Color.blue, .width = 175, .height = 175, .life = 6000, .pulse = 5.5 },
-            2 => StructureProperties{ .color = rl.Color.dark_blue, .width = 150, .height = 150, .life = 7000, .pulse = 4.0 },
-            3 => StructureProperties{ .color = rl.Color.violet, .width = 125, .height = 125, .life = 8000, .pulse = 2.0 },
+            0 => StructureProperties{ .color = rl.Color.sky_blue, .width = 160, .height = 160, .life = 5000, .pulse = 3.2 },
+            1 => StructureProperties{ .color = rl.Color.blue, .width = 192, .height = 192, .life = 6000, .pulse = 5.5 },
+            2 => StructureProperties{ .color = rl.Color.dark_blue, .width = 144, .height = 144, .life = 7000, .pulse = 4.0 },
+            3 => StructureProperties{ .color = rl.Color.violet, .width = 128, .height = 128, .life = 8000, .pulse = 2.0 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -629,8 +626,7 @@ pub const Grid = struct {
     }
 
     /// Returns a slice of nearby entities within a 3x3 grid centered around the given x, y coordinates.
-    /// The number of entities returned is limited by `ENTITY_SEARCH_LIMIT`. Returns an error if the
-    /// number of entities exceeds `ENTITY_SEARCH_LIMIT`.
+    /// Returns an error if the number of entities exceeds `ENTITY_SEARCH_LIMIT`.
     pub fn getNearbyEntities(self: *Grid, x: i32, y: i32) ![]*Entity {
         var nearbyEntities: [main.ENTITY_SEARCH_LIMIT]*Entity = undefined;
         var count: usize = 0;
@@ -647,22 +643,19 @@ pub const Grid = struct {
             [_]i32{ utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize }, // Top-right
         };
 
-        for (offsets) |offset| {
-            const offsetX = std.math.clamp(x + offset[0], 0, main.mapWidth);
-            const offsetY = std.math.clamp(y + offset[1], 0, main.mapHeight);
-            const neighborKey = utils.SpatialHash.hash(offsetX, offsetY);
+        for (offsets) |offset| { // For each neighbor cell
+            const neighborX = std.math.clamp(x + offset[0], 0, main.mapWidth);
+            const neighborY = std.math.clamp(y + offset[1], 0, main.mapHeight);
+            const neighborKey = utils.SpatialHash.hash(neighborX, neighborY);
             if (self.cells.get(neighborKey)) |list| {
-                for (list.items) |entity| {
-                    if (count < main.ENTITY_SEARCH_LIMIT) {
-                        nearbyEntities[count] = entity;
-                        count += 1;
-                    } else {
-                        return error.TooManyEntities;
-                    }
+                for (list.items) |entity| { // For each entity in the cell
+                    if (count >= main.ENTITY_SEARCH_LIMIT) return error.TooManyEntities;
+                    nearbyEntities[count] = entity;
+                    count += 1;
                 }
             }
         }
-        if (utils.perFrame(60)) std.debug.print("Searching for entities near {}, {}. Found {} entities within area from {},{} to {},{}.\n", .{ x, y, count, (x - utils.SpatialHash.CellSize), (y - utils.SpatialHash.CellSize), (x + utils.SpatialHash.CellSize), (y + utils.SpatialHash.CellSize) });
+        //if (utils.perFrame(60)) std.debug.print("Searching for entities near {}, {}. Found {} entities within area from {},{} to {},{}.\n", .{ x, y, count, (x - utils.SpatialHash.CellSize), (y - utils.SpatialHash.CellSize), (x + utils.SpatialHash.CellSize), (y + utils.SpatialHash.CellSize) });
         return nearbyEntities[0..count];
     }
 
