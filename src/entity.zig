@@ -87,6 +87,10 @@ pub const Player = struct {
     fn updateMoveInput(self: *Player, keyInput: u32) anyerror!void {
         var newX: ?i32 = null;
         var newY: ?i32 = null;
+        const oldX = self.x;
+        const oldY = self.y;
+        var canMoveX = true;
+        var canMoveY = true;
         const speed = utils.scaleToFrameRate(self.speed);
 
         if ((keyInput & (1 << 0)) != 0) { // key_w
@@ -107,20 +111,17 @@ pub const Player = struct {
         }
 
         if (newX != null) {
-            const canMoveX = !try main.gameGrid.entityCollision(newX.?, self.y, self.width, self.height, Player.getEntity(self));
-            if (canMoveX) {
-                const oldX = self.x;
-                self.x = newX.?;
-                main.gameGrid.updateEntity(getEntity(self), oldX, self.y);
-            }
+            canMoveX = !try main.gameGrid.entityCollision(newX.?, self.y, self.width, self.height, Player.getEntity(self));
+            if (canMoveX) self.x = newX.?;
         }
         if (newY != null) {
-            const canMoveY = !try main.gameGrid.entityCollision(self.x, newY.?, self.width, self.height, Player.getEntity(self));
-            if (canMoveY) {
-                const oldY = self.y;
-                self.y = newY.?;
-                main.gameGrid.updateEntity(getEntity(self), self.x, oldY);
-            }
+            canMoveY = !try main.gameGrid.entityCollision(self.x, newY.?, self.width, self.height, Player.getEntity(self));
+            if (canMoveY) self.y = newY.?;
+        }
+
+        if ((newX != null and canMoveX) or (newY != null and canMoveY)) {
+            std.debug.print("Updating player entity with oldX, oldY: {},{} to newX, newY: {},{} )\n", .{ oldX, oldY, self.x, self.y });
+            main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
         }
     }
 
@@ -258,7 +259,7 @@ pub const Unit = struct {
         const newY = utils.i32AddFloat(f16, oldY, (dy * self.speed));
 
         // Check collisions in nearby grid cells
-        const collides = main.gameGrid.entityCollision(newX, newY, self.width, self.height, Unit.getEntity(self)) catch true;
+        const collides = false; // main.gameGrid.entityCollision(newX, newY, self.width, self.height, Unit.getEntity(self)) catch true;
 
         // Apply movement
         if (!collides) {
@@ -550,13 +551,23 @@ pub const Grid = struct {
     }
 
     pub fn addEntity(self: *Grid, entity: *Entity, newX: ?i32, newY: ?i32) !void {
-        const x = std.math.clamp(newX orelse entityX(entity), 0, main.mapWidth);
-        const y = std.math.clamp(newY orelse entityY(entity), 0, main.mapHeight);
+        const x = newX orelse entityX(entity);
+        const y = newY orelse entityY(entity);
         const key = utils.SpatialHash.hash(x, y);
+
+        //std.debug.print("Adding entity to cell with hash {}\n", .{key});
 
         const result = try self.cells.getOrPut(key);
         if (!result.found_existing) {
             result.value_ptr.* = std.ArrayList(*Entity).init(self.allocator);
+        } else {
+            // Ensure the entity is not already in the cell to avoid duplicates
+            for (result.value_ptr.*.items) |existing_entity| {
+                if (existing_entity == entity) {
+                    std.log.err("Entity already exists in cell with hash {}, skipping add\n", .{key});
+                    return;
+                }
+            }
         }
         try result.value_ptr.*.append(entity);
     }
@@ -566,16 +577,26 @@ pub const Grid = struct {
         const y = std.math.clamp(oldY orelse entityY(entity), 0, main.mapHeight);
         const key = utils.SpatialHash.hash(x, y);
 
+        //std.debug.print("Attempting to remove entity from cell with hash {} at position ({}, {})\n", .{ key, x, y });
+
         if (self.cells.get(key)) |list| {
+            var removed = false;
             for (list.items, 0..) |e, index| {
                 if (e == entity) {
                     _ = @constCast(&list).swapRemove(index);
+                    removed = true;
+                    //std.debug.print("Entity successfully removed from cell with hash {}\n", .{key});
                     if (list.items.len == 0) {
                         _ = self.cells.remove(key); // Safely remove the entry from the map
                     }
-                    return;
+                    break;
                 }
             }
+            if (!removed) {
+                //std.log.err("Failed to find entity in cell with hash {} for removal\n", .{key});
+            }
+        } else {
+            //std.debug.print("Cell with hash {} not found for entity removal\n", .{key});
         }
     }
 
@@ -584,8 +605,13 @@ pub const Grid = struct {
         const newKey = utils.SpatialHash.hash(std.math.clamp(entityX(entity), 0, main.mapWidth), std.math.clamp(entityY(entity), 0, main.mapHeight));
 
         if (oldKey != newKey) {
+            //std.debug.print("Entity is moving from cell {} to cell {}\n", .{ oldKey, newKey });
+            //std.debug.print("Cell {} before removal: {?}\n", .{ oldKey, self.cells.get(oldKey) });
             self.removeEntity(entity, oldX, oldY) catch @panic("Failed to remove entity from grid");
+            //std.debug.print("Cell {} after removal: {?}\n", .{ oldKey, self.cells.get(oldKey) });
             self.addEntity(entity, null, null) catch @panic("Failed to add entity to grid");
+        } else {
+            //std.debug.print("Entity remains in the same cell {}\n", .{oldKey});
         }
     }
 

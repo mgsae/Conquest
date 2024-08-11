@@ -22,7 +22,7 @@ pub var maxZoomOut: f32 = 1.0; // Recalculated in setMapSize() for max map visib
 // Game map
 const STARTING_MAP_WIDTH = 1920 * 8;
 const STARTING_MAP_HEIGHT = 1080 * 8;
-pub const GRID_CELL_SIZE = 128;
+pub const GRID_CELL_SIZE = 256;
 pub var mapWidth: i32 = 0;
 pub var mapHeight: i32 = 0;
 pub var gameGrid: entity.Grid = undefined;
@@ -85,8 +85,8 @@ pub fn main() anyerror!void {
     // Testing/debugging
     var count: i32 = 0; // debugging, for longer interval
     // try entity.structures.append(try entity.Structure.create(2500, 1500, 0));
-    // try entity.units.append(try entity.Unit.create(2500, 1500, 0));
-    for (0..400) |_| {
+    //try entity.units.append(try entity.Unit.create(2500, 1500, 3));
+    for (0..1000) |_| {
         try entity.structures.append(try entity.Structure.create(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3)))));
     }
 

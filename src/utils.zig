@@ -7,6 +7,12 @@ var rng: std.Random.DefaultPrng = undefined;
 
 // Debug/analysis
 //----------------------------------------------------------------------------------
+pub fn assert(condition: bool, failureMsg: []const u8) void {
+    if (!condition) {
+        @panic(failureMsg);
+    }
+}
+
 pub fn printTotalEntitiesOnGrid(grid: *entity.Grid) void {
     std.debug.print("Entities on grid: {}\n", .{grid.cells.count()});
 }
@@ -112,7 +118,9 @@ pub const SpatialHash = struct {
     pub fn hash(x: i32, y: i32) u64 {
         const gridX = @divFloor(x, CellSize);
         const gridY = @divFloor(y, CellSize);
-        return @as(u64, @intCast(gridX)) << 32 | @as(u64, @intCast(gridY));
+        const hashValue = @as(u64, @intCast(gridX)) << 32 | @as(u64, @intCast(gridY));
+
+        return hashValue;
     }
 };
 
