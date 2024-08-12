@@ -93,19 +93,19 @@ pub const Player = struct {
         var collidesY: ?*Entity = null;
         const speed = utils.scaleToTickRate(self.speed);
 
-        if (utils.isKeyActive(keyInput, utils.Key.MoveUp)) {
+        if (main.keys.actionActive(keyInput, utils.Key.Action.MoveUp)) {
             newY = utils.mapClampY(utils.i32SubFloat(f32, self.y, speed), self.height);
             self.direction = 8; // Numpad direction
         }
-        if (utils.isKeyActive(keyInput, utils.Key.MoveLeft)) {
+        if (main.keys.actionActive(keyInput, utils.Key.Action.MoveLeft)) {
             newX = utils.mapClampX(utils.i32SubFloat(f32, self.x, speed), self.width);
             self.direction = 4; // Numpad direction
         }
-        if (utils.isKeyActive(keyInput, utils.Key.MoveDown)) {
+        if (main.keys.actionActive(keyInput, utils.Key.Action.MoveDown)) {
             newY = utils.mapClampY(utils.i32AddFloat(f32, self.y, speed), self.height);
             self.direction = 2; // Numpad direction
         }
-        if (utils.isKeyActive(keyInput, utils.Key.MoveRight)) {
+        if (main.keys.actionActive(keyInput, utils.Key.Action.MoveRight)) {
             newX = utils.mapClampX(utils.i32AddFloat(f32, self.x, speed), self.width);
             self.direction = 6; // Numpad direction
         }
@@ -131,28 +131,28 @@ pub const Player = struct {
         var built: ?*Structure = undefined;
         var buildAttempted: bool = false;
 
-        if (utils.isKeyActive(keyInput, utils.Key.BuildOne)) {
+        if (main.keys.actionActive(keyInput, utils.Key.Action.BuildOne)) {
             const class = Structure.classProperties(0);
             const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
             const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
             built = Structure.build(xy[0], xy[1], 0);
             buildAttempted = true;
         }
-        if (utils.isKeyActive(keyInput, utils.Key.BuildTwo)) {
+        if (main.keys.actionActive(keyInput, utils.Key.Action.BuildTwo)) {
             const class = Structure.classProperties(1);
             const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
             const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
             built = Structure.build(xy[0], xy[1], 1);
             buildAttempted = true;
         }
-        if (utils.isKeyActive(keyInput, utils.Key.BuildThree)) {
+        if (main.keys.actionActive(keyInput, utils.Key.Action.BuildThree)) {
             const class = Structure.classProperties(2);
             const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
             const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
             built = Structure.build(xy[0], xy[1], 2);
             buildAttempted = true;
         }
-        if (utils.isKeyActive(keyInput, utils.Key.BuildFour)) {
+        if (main.keys.actionActive(keyInput, utils.Key.Action.BuildFour)) {
             const class = Structure.classProperties(3);
             const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
             const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
@@ -532,11 +532,11 @@ pub const Projectile = struct {
 
 pub const Grid = struct {
     cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.HashContext, 80) = undefined,
-    allocator: std.mem.Allocator,
+    allocator: *std.mem.Allocator,
 
-    pub fn init(self: *Grid, allocator: std.mem.Allocator) !void {
+    pub fn init(self: *Grid, allocator: *std.mem.Allocator) !void {
         self.allocator = allocator;
-        self.cells = std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.HashContext, 80).init(allocator);
+        self.cells = std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.HashContext, 80).init(allocator.*);
     }
 
     pub fn deinit(self: *Grid) void {
@@ -556,7 +556,7 @@ pub const Grid = struct {
 
         const result = try self.cells.getOrPut(key);
         if (!result.found_existing) {
-            result.value_ptr.* = std.ArrayList(*Entity).init(self.allocator);
+            result.value_ptr.* = std.ArrayList(*Entity).init(self.allocator.*);
         } else {
             for (result.value_ptr.*.items) |existing_entity| {
                 if (@intFromPtr(existing_entity) == @intFromPtr(entity)) {

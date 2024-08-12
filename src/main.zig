@@ -10,8 +10,9 @@ pub const MAX_TICKS_PER_FRAME = 4;
 pub const ENTITY_SEARCH_LIMIT = 400; // Limit must exceed #entities in 3x3 cells
 pub var prevTickTime: f64 = 0.0;
 pub var frameCount: i64 = 0;
-pub var profileMode = true;
+pub var profileMode = false;
 pub var profileTimer = [4]f64{ 0, 0, 0, 0 };
+pub var keys: utils.Key = undefined; // Keybindings
 
 // Camera movement
 pub const SCROLL_SPEED: f16 = 25.0;
@@ -36,13 +37,13 @@ pub fn main() anyerror!void {
     // Memory initialization
     //--------------------------------------------------------------------------------------
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+    var allocator = gpa.allocator();
 
     // Initialize window
     //--------------------------------------------------------------------------------------
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
-    rl.toggleFullscreen();
+    //rl.toggleFullscreen();
     //rl.setTargetFPS(120);
 
     // Initialize utility
@@ -62,7 +63,7 @@ pub fn main() anyerror!void {
     std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ mapWidth, mapHeight, utils.Grid.CellSize });
 
     // Initialize the grid
-    try gameGrid.init(allocator);
+    try gameGrid.init(&allocator);
     defer gameGrid.deinit();
 
     // Initialize entities
@@ -71,7 +72,7 @@ pub fn main() anyerror!void {
     entity.structures = std.ArrayList(*entity.Structure).init(allocator);
     entity.units = std.ArrayList(*entity.Unit).init(allocator);
 
-    const startCoords = try startingLocations(allocator, 1); // 1 player
+    const startCoords = try startingLocations(&allocator, 1); // 1 player
     for (startCoords, 0..) |coord, i| {
         std.debug.print("Player starting at: ({}, {})\n", .{ coord.x, coord.y });
         if (i == 0) {
@@ -96,8 +97,9 @@ pub fn main() anyerror!void {
     defer entity.structures.deinit();
     defer entity.players.deinit();
 
-    // Initialize camera
+    // Initialize user interface
     //--------------------------------------------------------------------------------------
+    try keys.init(&allocator); // Initializes and activates default keybindings
     updateCanvasPosition(512); // Centers camera
 
     // Main game loop
@@ -168,20 +170,21 @@ pub fn main() anyerror!void {
 fn processInput(accumulatedMouseWheel: *f32, accumulatedKeyInput: *u32) void {
     accumulatedMouseWheel.* += rl.getMouseWheelMove();
 
-    // Build keys
-    if (rl.isKeyPressed(rl.KeyboardKey.key_one)) accumulatedKeyInput.* |= 1 << 1;
-    if (rl.isKeyPressed(rl.KeyboardKey.key_two)) accumulatedKeyInput.* |= 1 << 2;
-    if (rl.isKeyPressed(rl.KeyboardKey.key_three)) accumulatedKeyInput.* |= 1 << 3;
-    if (rl.isKeyPressed(rl.KeyboardKey.key_four)) accumulatedKeyInput.* |= 1 << 4;
+    // Build keys bitmasking
+    if (rl.isKeyPressed(rl.KeyboardKey.key_one)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.One);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_two)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Two);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_three)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Three);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_four)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Four);
 
-    // Move keys
-    if (rl.isKeyDown(rl.KeyboardKey.key_w) or rl.isKeyDown(rl.KeyboardKey.key_up)) accumulatedKeyInput.* |= 1 << 5;
-    if (rl.isKeyDown(rl.KeyboardKey.key_a) or rl.isKeyDown(rl.KeyboardKey.key_left)) accumulatedKeyInput.* |= 1 << 6;
-    if (rl.isKeyDown(rl.KeyboardKey.key_s) or rl.isKeyDown(rl.KeyboardKey.key_down)) accumulatedKeyInput.* |= 1 << 7;
-    if (rl.isKeyDown(rl.KeyboardKey.key_d) or rl.isKeyDown(rl.KeyboardKey.key_right)) accumulatedKeyInput.* |= 1 << 8;
+    // Move keys bitmasking
+    if (rl.isKeyDown(rl.KeyboardKey.key_w) or rl.isKeyDown(rl.KeyboardKey.key_up)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Up);
+    if (rl.isKeyDown(rl.KeyboardKey.key_a) or rl.isKeyDown(rl.KeyboardKey.key_left)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Left);
+    if (rl.isKeyDown(rl.KeyboardKey.key_s) or rl.isKeyDown(rl.KeyboardKey.key_down)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Down);
+    if (rl.isKeyDown(rl.KeyboardKey.key_d) or rl.isKeyDown(rl.KeyboardKey.key_right)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Right);
 
-    // Special keys
-    if (rl.isKeyDown(rl.KeyboardKey.key_space)) accumulatedKeyInput.* |= 1 << 9;
+    // Special keys bitmasking
+    if (rl.isKeyDown(rl.KeyboardKey.key_space)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Space);
+    if (rl.isKeyDown(rl.KeyboardKey.key_left_control) or rl.isKeyDown(rl.KeyboardKey.key_right_control)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Ctrl);
 }
 
 fn updateLogic(mouseWheelDelta: f32, keyInput: u32, profileFrame: bool) !void {
@@ -334,7 +337,7 @@ pub fn setMapSize(width: i32, height: i32) void {
 
 // Game conditions
 //----------------------------------------------------------------------------------
-pub fn startingLocations(allocator: std.mem.Allocator, playerAmount: u8) ![]utils.Point {
+pub fn startingLocations(allocator: *std.mem.Allocator, playerAmount: u8) ![]utils.Point {
     const offset = utils.Grid.CellSize * 3;
     const coordinates: [4]utils.Point = [_]utils.Point{
         utils.Point{ .x = offset, .y = offset },

@@ -77,22 +77,78 @@ pub fn ticksFromSecs(seconds: f16) u16 {
     return @as(u16, @intFromFloat(seconds * main.TICKRATE));
 }
 
-pub const Key = enum(u32) {
-    BuildOne = 1 << 1,
-    BuildTwo = 1 << 2,
-    BuildThree = 1 << 3,
-    BuildFour = 1 << 4,
-    MoveUp = 1 << 5,
-    MoveLeft = 1 << 6,
-    MoveDown = 1 << 7,
-    MoveRight = 1 << 8,
-    SpecialSpace = 1 << 9,
-};
+pub const Key = struct {
+    pub const InputValue = enum(u32) {
+        One = 1 << 1,
+        Two = 1 << 2,
+        Three = 1 << 3,
+        Four = 1 << 4,
+        Up = 1 << 5,
+        Left = 1 << 6,
+        Down = 1 << 7,
+        Right = 1 << 8,
+        Space = 1 << 9,
+        Ctrl = 1 << 10,
+    };
 
-/// Takes `KeyInput` and `KeyCode.code` and returns whether the corresponding key is activated.
-pub fn isKeyActive(keyInput: u32, keyCode: Key) bool {
-    return (keyInput & @intFromEnum(keyCode)) != 0;
-}
+    pub const Action = enum {
+        BuildOne,
+        BuildTwo,
+        BuildThree,
+        BuildFour,
+        MoveUp,
+        MoveLeft,
+        MoveDown,
+        MoveRight,
+        SpecialSpace,
+        SpecialCtrl,
+    };
+
+    pub const HashContext = struct {
+        pub fn hash(self: Key.HashContext, action: Action) u64 {
+            _ = self;
+            return @intCast(@intFromEnum(action));
+        }
+
+        pub fn eql(self: Key.HashContext, a: Key.Action, b: Key.Action) bool {
+            _ = self;
+            return @intFromEnum(a) == @intFromEnum(b);
+        }
+    };
+
+    const KeyBinding = std.HashMap(Action, InputValue, Key.HashContext, 80);
+    bindings: KeyBinding,
+
+    pub fn init(self: *Key, allocator: *std.mem.Allocator) !void {
+        self.bindings = KeyBinding.init(allocator.*);
+
+        // Initialize with default bindings
+        try self.bindings.put(Action.BuildOne, InputValue.One);
+        try self.bindings.put(Action.BuildTwo, InputValue.Two);
+        try self.bindings.put(Action.BuildThree, InputValue.Three);
+        try self.bindings.put(Action.BuildFour, InputValue.Four);
+        try self.bindings.put(Action.MoveUp, InputValue.Up);
+        try self.bindings.put(Action.MoveLeft, InputValue.Left);
+        try self.bindings.put(Action.MoveDown, InputValue.Down);
+        try self.bindings.put(Action.MoveRight, InputValue.Right);
+        try self.bindings.put(Action.SpecialSpace, InputValue.Space);
+    }
+
+    pub fn rebind(self: *Key, action: Action, newInput: InputValue) void {
+        try self.bindings.put(action, newInput);
+    }
+
+    /// Takes `Key.InputValue` and `Key.Action.codeword` arguments. Returns whether the key corresponding to `action` is registered as active.
+    /// Allows for rebindings with `Key.rebind` by changing links between `InputValue` and `Action`.
+    pub fn actionActive(self: *Key, keyInput: u32, action: Action) bool {
+        const inputValue = self.bindings.get(action);
+        if (inputValue) |input| {
+            return (keyInput & @intFromEnum(input)) != 0;
+        } else {
+            return false;
+        }
+    }
+};
 
 // RNG
 //----------------------------------------------------------------------------------
@@ -162,7 +218,7 @@ pub fn isHorz(dir: u8) bool {
     return dir == 4 or dir == 6;
 }
 
-// Grid (spatial hash)
+// Hashmap
 //----------------------------------------------------------------------------------
 
 pub const Grid = struct {
