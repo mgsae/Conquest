@@ -684,6 +684,10 @@ pub const Grid = struct {
             [_]i32{ utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize }, // Top-right
         };
 
+        if (main.gamePlayer.x >= x and main.gamePlayer.x < x + utils.SpatialHash.CellSize and main.gamePlayer.y >= y and main.gamePlayer.y < y + utils.SpatialHash.CellSize) {
+            nearbyEntities[count] = main.gamePlayer.getEntity();
+        }
+
         for (offsets) |offset| { // For each neighbor cell
             const neighborX = std.math.clamp(x + offset[0], 0, main.mapWidth);
             const neighborY = std.math.clamp(y + offset[1], 0, main.mapHeight);

@@ -8,7 +8,7 @@ pub const TICKRATE = 60;
 pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
 pub const MAX_TICKS_PER_FRAME = 1;
 pub const PLAYER_SEARCH_LIMIT = 1600; // Limit must exceed #entities in 3x3 cells
-pub const UNIT_SEARCH_LIMIT = 256;
+pub const UNIT_SEARCH_LIMIT = 1600;
 pub var prevTickTime: f64 = 0.0;
 pub var frameCount: i64 = 0;
 pub var profileMode = false;
@@ -88,7 +88,7 @@ pub fn main() anyerror!void {
     allocator.free(startCoords); // Freeing starting positions
 
     // Testing/debugging
-    const SPREAD = 50; // PERCENTAGE
+    const SPREAD = 20; // PERCENTAGE
     const rangeX = @divTrunc(mapWidth * SPREAD, 100);
     const rangeY = @divTrunc(mapHeight * SPREAD, 100);
 

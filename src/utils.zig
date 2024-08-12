@@ -38,7 +38,7 @@ pub fn printGridEntities(grid: *entity.Grid) void {
     std.debug.print("Total entities on the grid: {}.\n", .{total_entities});
 }
 
-/// Prints the number of cells currently stored in the grid hash map, corresponding to the
+/// Prints the number of cells currently stored in the hashmap, corresponding to the
 /// number of distinct cells that contain one or more entities.
 pub fn printGridCells(grid: *entity.Grid) void {
     std.debug.print("Currently active cells on the grid: {}.\n", .{grid.cells.count()});
