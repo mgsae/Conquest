@@ -7,6 +7,21 @@ var rng: std.Random.DefaultPrng = undefined;
 
 // Debug/analysis
 //----------------------------------------------------------------------------------
+
+/// Sets `main.profileTimer[timer]` and prints a message. Stop the timer with `utils.endTimer()`.
+pub fn startTimer(timer: usize, comptime startMsg: []const u8) void {
+    const msg = if (startMsg.len > 0 and startMsg[startMsg.len - 1] != '\n') startMsg ++ " " else startMsg;
+    std.debug.print(msg, .{});
+    main.profileTimer[timer] = rl.getTime();
+}
+
+/// Stops `main.profileTimer[timer]` and prints a message. Must write `{}` to add the result argument.
+pub fn endTimer(timer: usize, comptime endMsg: []const u8) void {
+    const result = rl.getTime() - main.profileTimer[timer];
+    std.debug.print(endMsg ++ " \n", .{result});
+    main.profileTimer[timer] = 0;
+}
+
 pub fn assert(condition: bool, failureMsg: []const u8) void {
     if (!condition) {
         @panic(failureMsg);
@@ -125,7 +140,7 @@ pub fn isHorz(dir: u8) bool {
     return dir == 4 or dir == 6;
 }
 
-// Grid/spatial hashmap
+// Grid (spatial hash)
 //----------------------------------------------------------------------------------
 pub const Point = struct {
     x: i32,
@@ -134,6 +149,7 @@ pub const Point = struct {
 
 pub const Grid = struct {
     pub const CellSize = main.GRID_CELL_SIZE;
+    pub const HalfCell: comptime_int = CellSize / 2;
 
     pub const GridCoord = struct {
         x: usize,
@@ -149,6 +165,18 @@ pub const Grid = struct {
             .x = @as(usize, @max(0, @min(iX, maxGridWidth))),
             .y = @as(usize, @max(0, @min(iY, maxGridHeight))),
         };
+    }
+
+    pub fn closestNode(x: i32, y: i32) [2]i32 {
+        const closestX = @divTrunc((x + HalfCell), CellSize) * CellSize;
+        const closestY = @divTrunc((y + HalfCell), CellSize) * CellSize;
+        return [2]i32{ closestX, closestY };
+    }
+
+    pub fn closestNodeOffset(x: i32, y: i32, dir: u8, width: u16, height: u16) [2]i32 {
+        const delta = if (isHorz(dir)) width else height;
+        const offsetXy = dirOffset(x, y, dir, delta);
+        return closestNode(offsetXy[0], offsetXy[1]);
     }
 };
 
@@ -225,18 +253,6 @@ pub fn dirOffset(x: i32, y: i32, dir: u8, offset: i32) [2]i32 {
         else => return [2]i32{ x, y },
     }
     return [2]i32{ oX, oY };
-}
-
-pub fn closestNode(x: i32, y: i32) [2]i32 {
-    const closestX = @divTrunc((x + @divTrunc(main.GRID_CELL_SIZE, 2)), main.GRID_CELL_SIZE) * main.GRID_CELL_SIZE;
-    const closestY = @divTrunc((y + @divTrunc(main.GRID_CELL_SIZE, 2)), main.GRID_CELL_SIZE) * main.GRID_CELL_SIZE;
-    return [2]i32{ closestX, closestY };
-}
-
-pub fn closestNodeOffset(x: i32, y: i32, dir: u8, width: u16, height: u16) [2]i32 {
-    const delta = if (isHorz(dir)) width else height;
-    const offsetXy = dirOffset(x, y, dir, delta);
-    return closestNode(offsetXy[0], offsetXy[1]);
 }
 
 // Canvas

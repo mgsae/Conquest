@@ -10,6 +10,8 @@ pub const MAX_TICKS_PER_FRAME = 4;
 pub const ENTITY_SEARCH_LIMIT = 400; // Asserts that limit > #entities in 3x3 cells
 pub var prevTickTime: f64 = 0.0;
 pub var frameCount: i64 = 0;
+pub var profileMode = true;
+pub var profileTimer = [4]f64{ 0, 0, 0, 0 };
 
 // Camera movement
 pub const SCROLL_SPEED: f16 = 25.0;
@@ -41,7 +43,7 @@ pub fn main() anyerror!void {
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
     rl.toggleFullscreen();
-    rl.setTargetFPS(120);
+    //rl.setTargetFPS(120);
 
     // Initialize utility
     //--------------------------------------------------------------------------------------
@@ -86,9 +88,9 @@ pub fn main() anyerror!void {
     // Testing/debugging
     //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
-    for (0..100) |_| {
-        _ = entity.Structure.build(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3))));
-    }
+    //for (0..400) |_| {
+    //    _ = entity.Structure.build(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3))));
+    //}
 
     defer entity.units.deinit();
     defer entity.structures.deinit();
@@ -97,13 +99,20 @@ pub fn main() anyerror!void {
     // Main game loop
     //--------------------------------------------------------------------------------------
     while (!rl.windowShouldClose()) { // Detect window close button or ESC key
+        // Setup
+        const profileFrame = (profileMode and utils.perFrame(60));
 
         // Input
         //----------------------------------------------------------------------------------
+        if (profileFrame) utils.startTimer(0, "INPUT PHASE.\n");
+
         processInput(&accumulatedMouseWheel, &accumulatedKeyInput);
+
+        if (profileFrame) utils.endTimer(0, "Input phase took {} seconds in total.\n");
 
         // Logic
         //----------------------------------------------------------------------------------
+        if (profileFrame) utils.startTimer(0, "LOGIC PHASE.\n");
 
         const currentTime: f64 = rl.getTime();
         var elapsedTime: f64 = currentTime - prevTickTime;
@@ -128,20 +137,31 @@ pub fn main() anyerror!void {
         frameCount += 1;
 
         // Debugging/testing
-        if (utils.perFrame(120)) {
+        if (utils.perFrame(70)) {
             utils.printGridEntities(&gameGrid);
             utils.printGridCells(&gameGrid);
         }
+        if (profileFrame) utils.endTimer(0, "Logic phase took {} seconds in total.\n");
 
         // Drawing
         //----------------------------------------------------------------------------------
+        if (profileFrame) utils.startTimer(0, "DRAWING PHASE.\n");
+
         rl.beginDrawing();
         defer rl.endDrawing();
 
         rl.clearBackground(rl.Color.white);
+        if (profileFrame) utils.startTimer(1, "Drawing map.");
         drawMap();
+        if (profileFrame) utils.endTimer(1, "Drawing map took {} seconds.");
+        if (profileFrame) utils.startTimer(1, "Drawing entities.");
         drawEntities();
+        if (profileFrame) utils.endTimer(1, "Drawing entities took {} seconds.");
+        if (profileFrame) utils.startTimer(1, "Drawing entities.");
         drawUI();
+        if (profileFrame) utils.endTimer(1, "Drawing entities took {} seconds.");
+
+        if (profileFrame) utils.endTimer(0, "Drawing phase took {} seconds in total.\n");
     }
 }
 
@@ -162,20 +182,28 @@ fn processInput(accumulatedMouseWheel: *f32, accumulatedKeyInput: *u32) void {
 }
 
 fn updateLogic(mouseWheelDelta: f32, keyInput: u32) !void {
+    const profileFrame = (profileMode and utils.perFrame(60));
 
     //Camera
     //----------------------------------------------------------------------------------
+    if (profileFrame) utils.startTimer(1, "Updating camera.");
     updateCanvasZoom(mouseWheelDelta);
     updateCanvasPosition(keyInput);
+    if (profileFrame) utils.endTimer(1, "Updating camera took {} seconds.");
 
     // Entities
     //----------------------------------------------------------------------------------
-    for (entity.structures.items) |structure| {
-        structure.update();
-    }
+    if (profileFrame) utils.startTimer(1, "Updating units.");
     for (entity.units.items) |unit| {
         unit.update();
     }
+    if (profileFrame) utils.endTimer(1, "Updating units took {} seconds.");
+    if (profileFrame) utils.startTimer(1, "Updating structures.");
+    for (entity.structures.items) |structure| {
+        structure.update();
+    }
+    if (profileFrame) utils.endTimer(1, "Updating structures took {} seconds.");
+    if (profileFrame) utils.startTimer(1, "Updating players.");
     for (entity.players.items) |player| {
         if (player == gamePlayer) {
             try player.update(keyInput);
@@ -183,6 +211,7 @@ fn updateLogic(mouseWheelDelta: f32, keyInput: u32) !void {
             try player.update(null);
         }
     }
+    if (profileFrame) utils.endTimer(1, "Updating players took {} seconds.");
 }
 
 pub fn updateCanvasZoom(mouseWheelDelta: f32) void {
@@ -220,6 +249,13 @@ pub fn updateCanvasPosition(keyInput: u32) void {
         // Space key centers camera on player
         canvasOffsetX = -(@as(f32, @floatFromInt(gamePlayer.x)) * canvasZoom) + (screenWidthF / 2);
         canvasOffsetY = -(@as(f32, @floatFromInt(gamePlayer.y)) * canvasZoom) + (screenHeightF / 2);
+
+        // Profiling
+
+        if (gameGrid.cells.get(1234)) |_| {}
+
+        // Profiling
+
     } else {
         // Mouse edge scrolls camera
         if (mouseX < edgeMarginW) {

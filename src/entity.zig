@@ -89,8 +89,8 @@ pub const Player = struct {
         const oldY = self.y;
         var newX: ?i32 = null;
         var newY: ?i32 = null;
-        var canMoveX = true;
-        var canMoveY = true;
+        var collidesX: ?*Entity = null;
+        var collidesY: ?*Entity = null;
         const speed = utils.scaleToTickRate(self.speed);
 
         if ((keyInput & (1 << 0)) != 0) { // key_w
@@ -111,15 +111,17 @@ pub const Player = struct {
         }
 
         if (newX != null) {
-            canMoveX = !try main.gameGrid.entityCollision(newX.?, self.y, self.width, self.height, Player.getEntity(self));
-            if (canMoveX) self.x = newX.?;
+            collidesX = try main.gameGrid.entityCollision(newX.?, self.y, self.width, self.height, Player.getEntity(self));
+            if (collidesX == null) self.x = newX.?;
         }
         if (newY != null) {
-            canMoveY = !try main.gameGrid.entityCollision(self.x, newY.?, self.width, self.height, Player.getEntity(self));
-            if (canMoveY) self.y = newY.?;
+            collidesY = try main.gameGrid.entityCollision(self.x, newY.?, self.width, self.height, Player.getEntity(self));
+            if (collidesY == null) self.y = newY.?;
         }
 
-        if ((newX != null and newX.? != oldX and canMoveX) or (newY != null and newY.? != oldY and canMoveY)) {
+        if ((newX != null and newX.? != oldX and collidesX == null) or
+            (newY != null and newY.? != oldY and collidesY == null))
+        {
             //std.debug.print("Updating player entity with oldX, oldY: {},{} to newX, newY: {},{} )\n", .{ oldX, oldY, self.x, self.y });
             main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
         }
@@ -128,29 +130,32 @@ pub const Player = struct {
     fn updateActionInput(self: *Player, keyInput: u32) anyerror!void {
         var built: ?*Structure = undefined;
         var buildAttempted: bool = false;
-        const dir = self.direction;
 
         if ((keyInput & (1 << 4)) != 0) { // key_one
             const class = Structure.classProperties(0);
-            const xy = utils.closestNodeOffset(self.x, self.y, dir, @divTrunc(class.width, 2) + @divTrunc(self.width, 2), @divTrunc(class.height, 2) + @divTrunc(self.height, 2));
+            const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
+            const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
             built = Structure.build(xy[0], xy[1], 0);
             buildAttempted = true;
         }
         if ((keyInput & (1 << 5)) != 0) { // key_two
             const class = Structure.classProperties(1);
-            const xy = utils.closestNodeOffset(self.x, self.y, dir, @divTrunc(class.width, 2) + @divTrunc(self.width, 2), @divTrunc(class.height, 2) + @divTrunc(self.height, 2));
+            const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
+            const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
             built = Structure.build(xy[0], xy[1], 1);
             buildAttempted = true;
         }
         if ((keyInput & (1 << 6)) != 0) { // key_three
             const class = Structure.classProperties(2);
-            const xy = utils.closestNodeOffset(self.x, self.y, dir, @divTrunc(class.width, 2) + @divTrunc(self.width, 2), @divTrunc(class.height, 2) + @divTrunc(self.height, 2));
+            const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
+            const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
             built = Structure.build(xy[0], xy[1], 2);
             buildAttempted = true;
         }
         if ((keyInput & (1 << 7)) != 0) { // key_four
             const class = Structure.classProperties(3);
-            const xy = utils.closestNodeOffset(self.x, self.y, dir, @divTrunc(class.width, 2) + @divTrunc(self.width, 2), @divTrunc(class.height, 2) + @divTrunc(self.height, 2));
+            const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
+            const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
             built = Structure.build(xy[0], xy[1], 3);
             buildAttempted = true;
         }
@@ -256,9 +261,9 @@ pub const Unit = struct {
 
         // Idea: Have unit favor moving along grid. Only do "entityCollisionGeneral" if unit x,y is NOT on grid
         // Otherwise, do a more performant (1-dimensional?) grid collision detection or similar
-        const collides = main.gameGrid.entityCollision(newX, newY, self.width, self.height, Unit.getEntity(self)) catch true;
+        const collides = main.gameGrid.entityCollision(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
 
-        if (!collides) {
+        if (collides == null) {
             self.x = utils.mapClampX(newX, self.width);
             self.y = utils.mapClampY(newY, self.height);
             main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
@@ -396,9 +401,9 @@ pub const Structure = struct {
     }
 
     pub fn build(x: i32, y: i32, class: u8) ?*Structure {
-        const nodeXy = utils.closestNode(x, y);
-        const collision = main.gameGrid.entityCollision(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height, null) catch return null;
-        if (collision or !utils.isInMap(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height)) {
+        const nodeXy = utils.Grid.closestNode(x, y);
+        const collides = main.gameGrid.entityCollision(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height, null) catch return null;
+        if (collides != null or !utils.isInMap(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height)) {
             return null;
         }
         const structure = Structure.create(nodeXy[0], nodeXy[1], class) catch return null;
@@ -468,7 +473,7 @@ pub const Structure = struct {
                 else => @panic("Unrecognized side"),
             }
 
-            if (!try main.gameGrid.entityCollision(spawnX, spawnY, unitWidth, unitHeight, null) and utils.isInMap(spawnX, spawnY, unitWidth, unitHeight)) {
+            if (try main.gameGrid.entityCollision(spawnX, spawnY, unitWidth, unitHeight, null) == null and utils.isInMap(spawnX, spawnY, unitWidth, unitHeight)) {
                 return [2]i32{ spawnX, spawnY };
             }
         }
@@ -647,6 +652,7 @@ pub const Grid = struct {
             const neighborX = std.math.clamp(x + offset[0], 0, main.mapWidth);
             const neighborY = std.math.clamp(y + offset[1], 0, main.mapHeight);
             const neighborKey = utils.SpatialHash.hash(neighborX, neighborY);
+
             if (self.cells.get(neighborKey)) |list| {
                 for (list.items) |entity| { // For each entity in the cell
                     if (count >= main.ENTITY_SEARCH_LIMIT) return error.TooManyEntities;
@@ -659,7 +665,8 @@ pub const Grid = struct {
         return nearbyEntities[0..count];
     }
 
-    pub fn entityCollision(self: *Grid, x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !bool {
+    /// Finds entities in a 3x3 cell radius and performs a bounding box check. Returns any colliding entity.
+    pub fn entityCollision(self: *Grid, x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !?*Entity {
         const halfWidth = @divTrunc(width, 2);
         const halfHeight = @divTrunc(height, 2);
 
@@ -672,7 +679,7 @@ pub const Grid = struct {
 
         for (nearbyEntities) |entity| {
             if (currentEntity) |cur| {
-                if (@intFromPtr(cur) == @intFromPtr(entity)) {
+                if (cur == entity) {
                     continue; // Skip current entity
                 }
             }
@@ -688,9 +695,9 @@ pub const Grid = struct {
             if ((left < entityRight) and (right > entityLeft) and
                 (top < entityBottom) and (bottom > entityTop))
             {
-                return true;
+                return entity; // Returns colliding entity
             }
         }
-        return false;
+        return null;
     }
 };
