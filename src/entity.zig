@@ -93,19 +93,19 @@ pub const Player = struct {
         var collidesY: ?*Entity = null;
         const speed = utils.scaleToTickRate(self.speed);
 
-        if ((keyInput & (1 << 0)) != 0) { // key_w
+        if (utils.isKeyActive(keyInput, utils.Key.MoveUp)) {
             newY = utils.mapClampY(utils.i32SubFloat(f32, self.y, speed), self.height);
             self.direction = 8; // Numpad direction
         }
-        if ((keyInput & (1 << 1)) != 0) { // key_a
+        if (utils.isKeyActive(keyInput, utils.Key.MoveLeft)) {
             newX = utils.mapClampX(utils.i32SubFloat(f32, self.x, speed), self.width);
             self.direction = 4; // Numpad direction
         }
-        if ((keyInput & (1 << 2)) != 0) { // key_s
+        if (utils.isKeyActive(keyInput, utils.Key.MoveDown)) {
             newY = utils.mapClampY(utils.i32AddFloat(f32, self.y, speed), self.height);
             self.direction = 2; // Numpad direction
         }
-        if ((keyInput & (1 << 3)) != 0) { // key_d
+        if (utils.isKeyActive(keyInput, utils.Key.MoveRight)) {
             newX = utils.mapClampX(utils.i32AddFloat(f32, self.x, speed), self.width);
             self.direction = 6; // Numpad direction
         }
@@ -131,28 +131,28 @@ pub const Player = struct {
         var built: ?*Structure = undefined;
         var buildAttempted: bool = false;
 
-        if ((keyInput & (1 << 4)) != 0) { // key_one
+        if (utils.isKeyActive(keyInput, utils.Key.BuildOne)) {
             const class = Structure.classProperties(0);
             const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
             const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
             built = Structure.build(xy[0], xy[1], 0);
             buildAttempted = true;
         }
-        if ((keyInput & (1 << 5)) != 0) { // key_two
+        if (utils.isKeyActive(keyInput, utils.Key.BuildTwo)) {
             const class = Structure.classProperties(1);
             const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
             const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
             built = Structure.build(xy[0], xy[1], 1);
             buildAttempted = true;
         }
-        if ((keyInput & (1 << 6)) != 0) { // key_three
+        if (utils.isKeyActive(keyInput, utils.Key.BuildThree)) {
             const class = Structure.classProperties(2);
             const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
             const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
             built = Structure.build(xy[0], xy[1], 2);
             buildAttempted = true;
         }
-        if ((keyInput & (1 << 7)) != 0) { // key_four
+        if (utils.isKeyActive(keyInput, utils.Key.BuildFour)) {
             const class = Structure.classProperties(3);
             const delta = if (utils.isHorz(self.direction)) @divTrunc(class.width, 2) + @divTrunc(self.width, 2) else @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
             const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
@@ -529,10 +529,6 @@ pub const Projectile = struct {
 
 // Map Geometry
 //----------------------------------------------------------------------------------
-
-const GridCell = struct {
-    entities: std.ArrayList(*Entity) = undefined,
-};
 
 pub const Grid = struct {
     cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.HashContext, 80) = undefined,

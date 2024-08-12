@@ -7,7 +7,7 @@ const entity = @import("entity.zig");
 pub const TICKRATE = 60;
 pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
 pub const MAX_TICKS_PER_FRAME = 4;
-pub const ENTITY_SEARCH_LIMIT = 400; // Asserts that limit > #entities in 3x3 cells
+pub const ENTITY_SEARCH_LIMIT = 400; // Limit must exceed #entities in 3x3 cells
 pub var prevTickTime: f64 = 0.0;
 pub var frameCount: i64 = 0;
 pub var profileMode = true;
@@ -25,7 +25,7 @@ pub var maxZoomOut: f32 = 1.0; // Recalculated in setMapSize() for max map visib
 // Game map
 const STARTING_MAP_WIDTH = 1920 * 8;
 const STARTING_MAP_HEIGHT = 1080 * 8;
-pub const GRID_CELL_SIZE = 256;
+pub const GRID_CELL_SIZE = 512;
 pub var mapWidth: i32 = 0;
 pub var mapHeight: i32 = 0;
 pub var gameGrid: entity.Grid = undefined;
@@ -88,13 +88,17 @@ pub fn main() anyerror!void {
     // Testing/debugging
     //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
-    //for (0..400) |_| {
-    //    _ = entity.Structure.build(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3))));
-    //}
+    for (0..500) |_| {
+        _ = entity.Structure.build(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3))));
+    }
 
     defer entity.units.deinit();
     defer entity.structures.deinit();
     defer entity.players.deinit();
+
+    // Initialize camera
+    //--------------------------------------------------------------------------------------
+    updateCanvasPosition(512); // Centers camera
 
     // Main game loop
     //--------------------------------------------------------------------------------------
@@ -163,16 +167,19 @@ pub fn main() anyerror!void {
 
 fn processInput(accumulatedMouseWheel: *f32, accumulatedKeyInput: *u32) void {
     accumulatedMouseWheel.* += rl.getMouseWheelMove();
-    // Move keys
-    if (rl.isKeyDown(rl.KeyboardKey.key_w) or rl.isKeyDown(rl.KeyboardKey.key_up)) accumulatedKeyInput.* |= 1 << 0;
-    if (rl.isKeyDown(rl.KeyboardKey.key_a) or rl.isKeyDown(rl.KeyboardKey.key_left)) accumulatedKeyInput.* |= 1 << 1;
-    if (rl.isKeyDown(rl.KeyboardKey.key_s) or rl.isKeyDown(rl.KeyboardKey.key_down)) accumulatedKeyInput.* |= 1 << 2;
-    if (rl.isKeyDown(rl.KeyboardKey.key_d) or rl.isKeyDown(rl.KeyboardKey.key_right)) accumulatedKeyInput.* |= 1 << 3;
+
     // Build keys
-    if (rl.isKeyPressed(rl.KeyboardKey.key_one)) accumulatedKeyInput.* |= 1 << 4;
-    if (rl.isKeyPressed(rl.KeyboardKey.key_two)) accumulatedKeyInput.* |= 1 << 5;
-    if (rl.isKeyPressed(rl.KeyboardKey.key_three)) accumulatedKeyInput.* |= 1 << 6;
-    if (rl.isKeyPressed(rl.KeyboardKey.key_four)) accumulatedKeyInput.* |= 1 << 7;
+    if (rl.isKeyPressed(rl.KeyboardKey.key_one)) accumulatedKeyInput.* |= 1 << 1;
+    if (rl.isKeyPressed(rl.KeyboardKey.key_two)) accumulatedKeyInput.* |= 1 << 2;
+    if (rl.isKeyPressed(rl.KeyboardKey.key_three)) accumulatedKeyInput.* |= 1 << 3;
+    if (rl.isKeyPressed(rl.KeyboardKey.key_four)) accumulatedKeyInput.* |= 1 << 4;
+
+    // Move keys
+    if (rl.isKeyDown(rl.KeyboardKey.key_w) or rl.isKeyDown(rl.KeyboardKey.key_up)) accumulatedKeyInput.* |= 1 << 5;
+    if (rl.isKeyDown(rl.KeyboardKey.key_a) or rl.isKeyDown(rl.KeyboardKey.key_left)) accumulatedKeyInput.* |= 1 << 6;
+    if (rl.isKeyDown(rl.KeyboardKey.key_s) or rl.isKeyDown(rl.KeyboardKey.key_down)) accumulatedKeyInput.* |= 1 << 7;
+    if (rl.isKeyDown(rl.KeyboardKey.key_d) or rl.isKeyDown(rl.KeyboardKey.key_right)) accumulatedKeyInput.* |= 1 << 8;
+
     // Special keys
     if (rl.isKeyDown(rl.KeyboardKey.key_space)) accumulatedKeyInput.* |= 1 << 9;
 }
@@ -253,7 +260,6 @@ pub fn updateCanvasPosition(keyInput: u32) void {
     const effectiveScrollSpeed: f32 = @as(f32, @floatCast(SCROLL_SPEED)) / @max(1, canvasZoom * 0.1);
 
     if ((keyInput & (1 << 9)) != 0) {
-
         // Space key centers camera on player
         canvasOffsetX = -(@as(f32, @floatFromInt(gamePlayer.x)) * canvasZoom) + (screenWidthF / 2);
         canvasOffsetY = -(@as(f32, @floatFromInt(gamePlayer.y)) * canvasZoom) + (screenHeightF / 2);

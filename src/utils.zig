@@ -77,6 +77,23 @@ pub fn ticksFromSecs(seconds: f16) u16 {
     return @as(u16, @intFromFloat(seconds * main.TICKRATE));
 }
 
+pub const Key = enum(u32) {
+    BuildOne = 1 << 1,
+    BuildTwo = 1 << 2,
+    BuildThree = 1 << 3,
+    BuildFour = 1 << 4,
+    MoveUp = 1 << 5,
+    MoveLeft = 1 << 6,
+    MoveDown = 1 << 7,
+    MoveRight = 1 << 8,
+    SpecialSpace = 1 << 9,
+};
+
+/// Takes `KeyInput` and `KeyCode.code` and returns whether the corresponding key is activated.
+pub fn isKeyActive(keyInput: u32, keyCode: Key) bool {
+    return (keyInput & @intFromEnum(keyCode)) != 0;
+}
+
 // RNG
 //----------------------------------------------------------------------------------
 pub fn rngInit() void {
@@ -123,6 +140,11 @@ pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
 
 // Geometry
 //----------------------------------------------------------------------------------
+pub const Point = struct {
+    x: i32,
+    y: i32,
+};
+
 pub fn dirDelta(dir: u8) [2]i8 {
     var x: i8 = 0;
     var y: i8 = 0;
@@ -142,10 +164,6 @@ pub fn isHorz(dir: u8) bool {
 
 // Grid (spatial hash)
 //----------------------------------------------------------------------------------
-pub const Point = struct {
-    x: i32,
-    y: i32,
-};
 
 pub const Grid = struct {
     pub const CellSize = main.GRID_CELL_SIZE;
