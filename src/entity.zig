@@ -110,38 +110,41 @@ pub const Player = struct {
             self.direction = 6; // Numpad direction
         }
 
-        if (newX != null) { // Horz input
+        if (newX != null) {
             collidesX = main.gameGrid.collidesWithPlayer(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
+        }
+
+        if (newY != null) {
+            collidesY = main.gameGrid.collidesWithPlayer(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
+        }
+
+        if (newX != null) {
             if (collidesX == null) {
                 self.x = newX.?;
-            } else if (collidesX.?.entityType == EntityType.Unit) { // If unit collider, try pushing
+            } else if (newY == null and collidesX.?.entityType == EntityType.Unit) { // If unit collider, try pushing horizontally
                 const resistance = 0.5; // maybe depend on size relation
                 newX = oldX + @as(i32, @intFromFloat(@as(f32, @floatFromInt(newX.? - oldX)) * resistance));
-                if (collidesX.?.entity.Unit.moved(self.direction, speed * resistance)) {
+                if (collidesX.?.entity.Unit.moved(self.direction, speed * resistance)) { // True if push went through
                     collidesX = main.gameGrid.collidesWithPlayer(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
                     if (collidesX == null) self.x = newX.?;
                 }
             }
         }
 
-        if (newY != null) { // Vert input
-            collidesY = main.gameGrid.collidesWithPlayer(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
+        if (newY != null) {
             if (collidesY == null) {
                 self.y = newY.?;
-            } else if (collidesY.?.entityType == EntityType.Unit) { // If unit collider, try pushing
+            } else if (newX == null and collidesY.?.entityType == EntityType.Unit) { // If unit collider, try pushing vertically
                 const resistance = 0.5; // maybe depend on size relation
                 newY = oldY + @as(i32, @intFromFloat(@as(f32, @floatFromInt(newY.? - oldY)) * resistance));
-                if (collidesY.?.entity.Unit.moved(self.direction, speed * resistance)) {
+                if (collidesY.?.entity.Unit.moved(self.direction, speed * resistance)) { // True if push went through
                     collidesY = main.gameGrid.collidesWithPlayer(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
                     if (collidesY == null) self.y = newY.?;
                 }
             }
         }
 
-        if ((newX != null and newX.? != oldX and (collidesX == null or (collidesX != null and collidesX.?.entityType == EntityType.Unit))) or
-            (newY != null and newY.? != oldY and (collidesY == null or (collidesY != null and collidesY.?.entityType == EntityType.Unit))))
-        {
-            //std.debug.print("Updating player entity with oldX, oldY: {},{} to newX, newY: {},{} )\n", .{ oldX, oldY, self.x, self.y });
+        if ((newX != null and newX.? != oldX) or (newY != null and newY.? != oldY)) {
             main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
         }
     }

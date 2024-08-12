@@ -44,7 +44,7 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
-    rl.toggleFullscreen();
+    //rl.toggleFullscreen();
     //rl.setTargetFPS(120);
 
     // Initialize utility
@@ -94,7 +94,7 @@ pub fn main() anyerror!void {
 
     //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
-    for (0..3000) |_| {
+    for (0..9001) |_| {
         try entity.units.append(try entity.Unit.create(utils.randomInt(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomInt(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomInt(3)))));
     }
     //for (0..500) |_| {
