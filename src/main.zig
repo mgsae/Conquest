@@ -99,8 +99,15 @@ pub fn main() anyerror!void {
     // Main game loop
     //--------------------------------------------------------------------------------------
     while (!rl.windowShouldClose()) { // Detect window close button or ESC key
-        // Setup
+
+        // Profiling
+        //----------------------------------------------------------------------------------
         const profileFrame = (profileMode and utils.perFrame(60));
+        if (profileFrame) {
+            utils.printGridEntities(&gameGrid);
+            utils.printGridCells(&gameGrid);
+            utils.startTimer(3, "STARTING FRAME.\n\n");
+        }
 
         // Input
         //----------------------------------------------------------------------------------
@@ -121,7 +128,7 @@ pub fn main() anyerror!void {
 
         // Perform updates if enough time has elapsed
         while (elapsedTime >= TICK_DURATION) {
-            try updateLogic(accumulatedMouseWheel, accumulatedKeyInput);
+            try updateLogic(accumulatedMouseWheel, accumulatedKeyInput, profileFrame);
             accumulatedMouseWheel = 0.0;
             accumulatedKeyInput = 0;
 
@@ -136,11 +143,6 @@ pub fn main() anyerror!void {
         prevTickTime += @as(f64, @floatFromInt(updatesPerformed)) * TICK_DURATION;
         frameCount += 1;
 
-        // Debugging/testing
-        if (utils.perFrame(70)) {
-            utils.printGridEntities(&gameGrid);
-            utils.printGridCells(&gameGrid);
-        }
         if (profileFrame) utils.endTimer(0, "Logic phase took {} seconds in total.\n");
 
         // Drawing
@@ -151,17 +153,11 @@ pub fn main() anyerror!void {
         defer rl.endDrawing();
 
         rl.clearBackground(rl.Color.white);
-        if (profileFrame) utils.startTimer(1, "Drawing map.");
-        drawMap();
-        if (profileFrame) utils.endTimer(1, "Drawing map took {} seconds.");
-        if (profileFrame) utils.startTimer(1, "Drawing entities.");
-        drawEntities();
-        if (profileFrame) utils.endTimer(1, "Drawing entities took {} seconds.");
-        if (profileFrame) utils.startTimer(1, "Drawing entities.");
-        drawUI();
-        if (profileFrame) utils.endTimer(1, "Drawing entities took {} seconds.");
-
+        draw(profileFrame);
         if (profileFrame) utils.endTimer(0, "Drawing phase took {} seconds in total.\n");
+
+        // Profiling
+        if (profileFrame) utils.endTimer(3, "END OF FRAME. Frame took {} seconds in total.\n");
     }
 }
 
@@ -181,29 +177,28 @@ fn processInput(accumulatedMouseWheel: *f32, accumulatedKeyInput: *u32) void {
     if (rl.isKeyDown(rl.KeyboardKey.key_space)) accumulatedKeyInput.* |= 1 << 9;
 }
 
-fn updateLogic(mouseWheelDelta: f32, keyInput: u32) !void {
-    const profileFrame = (profileMode and utils.perFrame(60));
+fn updateLogic(mouseWheelDelta: f32, keyInput: u32, profileFrame: bool) !void {
 
     //Camera
     //----------------------------------------------------------------------------------
-    if (profileFrame) utils.startTimer(1, "Updating camera.");
+    if (profileFrame) utils.startTimer(1, "- Updating camera.");
     updateCanvasZoom(mouseWheelDelta);
     updateCanvasPosition(keyInput);
     if (profileFrame) utils.endTimer(1, "Updating camera took {} seconds.");
 
     // Entities
     //----------------------------------------------------------------------------------
-    if (profileFrame) utils.startTimer(1, "Updating units.");
+    if (profileFrame) utils.startTimer(1, "- Updating units.");
     for (entity.units.items) |unit| {
         unit.update();
     }
     if (profileFrame) utils.endTimer(1, "Updating units took {} seconds.");
-    if (profileFrame) utils.startTimer(1, "Updating structures.");
+    if (profileFrame) utils.startTimer(1, "- Updating structures.");
     for (entity.structures.items) |structure| {
         structure.update();
     }
     if (profileFrame) utils.endTimer(1, "Updating structures took {} seconds.");
-    if (profileFrame) utils.startTimer(1, "Updating players.");
+    if (profileFrame) utils.startTimer(1, "- Updating players.");
     for (entity.players.items) |player| {
         if (player == gamePlayer) {
             try player.update(keyInput);
@@ -212,6 +207,18 @@ fn updateLogic(mouseWheelDelta: f32, keyInput: u32) !void {
         }
     }
     if (profileFrame) utils.endTimer(1, "Updating players took {} seconds.");
+}
+
+fn draw(profileFrame: bool) void {
+    if (profileFrame) utils.startTimer(1, "- Drawing map.");
+    drawMap();
+    if (profileFrame) utils.endTimer(1, "Drawing map took {} seconds.");
+    if (profileFrame) utils.startTimer(1, "- Drawing entities.");
+    drawEntities();
+    if (profileFrame) utils.endTimer(1, "Drawing entities took {} seconds.");
+    if (profileFrame) utils.startTimer(1, "- Drawing UI.");
+    drawUI();
+    if (profileFrame) utils.endTimer(1, "Drawing UI took {} seconds.");
 }
 
 pub fn updateCanvasZoom(mouseWheelDelta: f32) void {
@@ -246,16 +253,10 @@ pub fn updateCanvasPosition(keyInput: u32) void {
     const effectiveScrollSpeed: f32 = @as(f32, @floatCast(SCROLL_SPEED)) / @max(1, canvasZoom * 0.1);
 
     if ((keyInput & (1 << 9)) != 0) {
+
         // Space key centers camera on player
         canvasOffsetX = -(@as(f32, @floatFromInt(gamePlayer.x)) * canvasZoom) + (screenWidthF / 2);
         canvasOffsetY = -(@as(f32, @floatFromInt(gamePlayer.y)) * canvasZoom) + (screenHeightF / 2);
-
-        // Profiling
-
-        if (gameGrid.cells.get(1234)) |_| {}
-
-        // Profiling
-
     } else {
         // Mouse edge scrolls camera
         if (mouseX < edgeMarginW) {

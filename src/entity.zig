@@ -421,10 +421,10 @@ pub const Structure = struct {
 
     pub fn classProperties(class: u8) StructureProperties {
         return switch (class) {
-            0 => StructureProperties{ .color = rl.Color.sky_blue, .width = 160, .height = 160, .life = 5000, .pulse = 3.2 },
-            1 => StructureProperties{ .color = rl.Color.blue, .width = 192, .height = 192, .life = 6000, .pulse = 5.5 },
-            2 => StructureProperties{ .color = rl.Color.dark_blue, .width = 144, .height = 144, .life = 7000, .pulse = 4.0 },
-            3 => StructureProperties{ .color = rl.Color.violet, .width = 128, .height = 128, .life = 8000, .pulse = 2.0 },
+            0 => StructureProperties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 5000, .pulse = 3.2 },
+            1 => StructureProperties{ .color = rl.Color.blue, .width = 100, .height = 100, .life = 6000, .pulse = 5.5 },
+            2 => StructureProperties{ .color = rl.Color.dark_blue, .width = 200, .height = 200, .life = 7000, .pulse = 4.0 },
+            3 => StructureProperties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 8000, .pulse = 2.0 },
             else => @panic("Invalid structure class"),
         };
     }
