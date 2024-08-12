@@ -6,8 +6,9 @@ const entity = @import("entity.zig");
 // Config
 pub const TICKRATE = 60;
 pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
-pub const MAX_TICKS_PER_FRAME = 4;
-pub const ENTITY_SEARCH_LIMIT = 400; // Limit must exceed #entities in 3x3 cells
+pub const MAX_TICKS_PER_FRAME = 1;
+pub const PLAYER_SEARCH_LIMIT = 1600; // Limit must exceed #entities in 3x3 cells
+pub const UNIT_SEARCH_LIMIT = 256;
 pub var prevTickTime: f64 = 0.0;
 pub var frameCount: i64 = 0;
 pub var profileMode = false;
@@ -26,7 +27,7 @@ pub var maxZoomOut: f32 = 1.0; // Recalculated in setMapSize() for max map visib
 // Game map
 const STARTING_MAP_WIDTH = 1920 * 8;
 const STARTING_MAP_HEIGHT = 1080 * 8;
-pub const GRID_CELL_SIZE = 512;
+pub const GRID_CELL_SIZE = 800; //512;
 pub var mapWidth: i32 = 0;
 pub var mapHeight: i32 = 0;
 pub var gameGrid: entity.Grid = undefined;
@@ -43,7 +44,7 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
-    //rl.toggleFullscreen();
+    rl.toggleFullscreen();
     //rl.setTargetFPS(120);
 
     // Initialize utility
@@ -87,11 +88,18 @@ pub fn main() anyerror!void {
     allocator.free(startCoords); // Freeing starting positions
 
     // Testing/debugging
+    const SPREAD = 50; // PERCENTAGE
+    const rangeX = @divTrunc(mapWidth * SPREAD, 100);
+    const rangeY = @divTrunc(mapHeight * SPREAD, 100);
+
     //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
-    for (0..500) |_| {
-        _ = entity.Structure.build(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3))));
+    for (0..3000) |_| {
+        try entity.units.append(try entity.Unit.create(utils.randomInt(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomInt(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomInt(3)))));
     }
+    //for (0..500) |_| {
+    //    _ = entity.Structure.build(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3))));
+    //}
 
     defer entity.units.deinit();
     defer entity.structures.deinit();
@@ -100,7 +108,7 @@ pub fn main() anyerror!void {
     // Initialize user interface
     //--------------------------------------------------------------------------------------
     try keys.init(&allocator); // Initializes and activates default keybindings
-    updateCanvasPosition(512); // Centers camera
+    utils.canvasOnPlayer(); // Centers camera
 
     // Main game loop
     //--------------------------------------------------------------------------------------
@@ -110,9 +118,8 @@ pub fn main() anyerror!void {
         //----------------------------------------------------------------------------------
         const profileFrame = (profileMode and utils.perFrame(60));
         if (profileFrame) {
-            utils.printGridEntities(&gameGrid);
-            utils.printGridCells(&gameGrid);
-            utils.startTimer(3, "STARTING FRAME.\n\n");
+            utils.startTimer(3, "\nPROFILING FRAME :::");
+            std.debug.print("{}.\n\n", .{frameCount});
         }
 
         // Input
@@ -163,7 +170,12 @@ pub fn main() anyerror!void {
         if (profileFrame) utils.endTimer(0, "Drawing phase took {} seconds in total.\n");
 
         // Profiling
-        if (profileFrame) utils.endTimer(3, "END OF FRAME. Frame took {} seconds in total.\n");
+        if (profileFrame) {
+            utils.endTimer(3, "END OF FRAME. Frame took {} seconds in total.\n");
+            std.debug.print("Current FPS: {}.\n", .{rl.getFPS()});
+            utils.printGridEntities(&gameGrid);
+            utils.printGridCells(&gameGrid);
+        }
     }
 }
 
@@ -184,17 +196,18 @@ fn processInput(accumulatedMouseWheel: *f32, accumulatedKeyInput: *u32) void {
 
     // Special keys bitmasking
     if (rl.isKeyDown(rl.KeyboardKey.key_space)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Space);
-    if (rl.isKeyDown(rl.KeyboardKey.key_left_control) or rl.isKeyDown(rl.KeyboardKey.key_right_control)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Ctrl);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_left_control) or rl.isKeyPressed(rl.KeyboardKey.key_right_control)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Ctrl);
 }
 
 fn updateLogic(mouseWheelDelta: f32, keyInput: u32, profileFrame: bool) !void {
 
-    //Camera
+    // Controls
     //----------------------------------------------------------------------------------
-    if (profileFrame) utils.startTimer(1, "- Updating camera.");
+    if (profileFrame) utils.startTimer(1, "- Updating controls.");
     updateCanvasZoom(mouseWheelDelta);
     updateCanvasPosition(keyInput);
-    if (profileFrame) utils.endTimer(1, "Updating camera took {} seconds.");
+    if (keys.actionActive(keyInput, utils.Key.Action.SpecialCtrl)) profileMode = !profileMode; // Ctrl toggles profile mode (verbose logs)
+    if (profileFrame) utils.endTimer(1, "Updating controls took {} seconds.");
 
     // Entities
     //----------------------------------------------------------------------------------

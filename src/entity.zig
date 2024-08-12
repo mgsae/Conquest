@@ -84,14 +84,14 @@ pub const Player = struct {
         }
     }
 
-    fn updateMoveInput(self: *Player, keyInput: u32) anyerror!void {
+    fn updateMoveInput(self: *Player, keyInput: u32) !void {
         const oldX = self.x;
         const oldY = self.y;
+        const speed = utils.scaleToTickRate(self.speed);
         var newX: ?i32 = null;
         var newY: ?i32 = null;
         var collidesX: ?*Entity = null;
         var collidesY: ?*Entity = null;
-        const speed = utils.scaleToTickRate(self.speed);
 
         if (main.keys.actionActive(keyInput, utils.Key.Action.MoveUp)) {
             newY = utils.mapClampY(utils.i32SubFloat(f32, self.y, speed), self.height);
@@ -110,24 +110,43 @@ pub const Player = struct {
             self.direction = 6; // Numpad direction
         }
 
-        if (newX != null) {
-            collidesX = try main.gameGrid.entityCollision(newX.?, self.y, self.width, self.height, Player.getEntity(self));
-            if (collidesX == null) self.x = newX.?;
-        }
-        if (newY != null) {
-            collidesY = try main.gameGrid.entityCollision(self.x, newY.?, self.width, self.height, Player.getEntity(self));
-            if (collidesY == null) self.y = newY.?;
+        if (newX != null) { // Horz input
+            collidesX = main.gameGrid.collidesWithPlayer(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
+            if (collidesX == null) {
+                self.x = newX.?;
+            } else if (collidesX.?.entityType == EntityType.Unit) { // If unit collider, try pushing
+                const resistance = 0.5; // maybe depend on size relation
+                newX = oldX + @as(i32, @intFromFloat(@as(f32, @floatFromInt(newX.? - oldX)) * resistance));
+                if (collidesX.?.entity.Unit.moved(self.direction, speed * resistance)) {
+                    collidesX = main.gameGrid.collidesWithPlayer(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
+                    if (collidesX == null) self.x = newX.?;
+                }
+            }
         }
 
-        if ((newX != null and newX.? != oldX and collidesX == null) or
-            (newY != null and newY.? != oldY and collidesY == null))
+        if (newY != null) { // Vert input
+            collidesY = main.gameGrid.collidesWithPlayer(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
+            if (collidesY == null) {
+                self.y = newY.?;
+            } else if (collidesY.?.entityType == EntityType.Unit) { // If unit collider, try pushing
+                const resistance = 0.5; // maybe depend on size relation
+                newY = oldY + @as(i32, @intFromFloat(@as(f32, @floatFromInt(newY.? - oldY)) * resistance));
+                if (collidesY.?.entity.Unit.moved(self.direction, speed * resistance)) {
+                    collidesY = main.gameGrid.collidesWithPlayer(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
+                    if (collidesY == null) self.y = newY.?;
+                }
+            }
+        }
+
+        if ((newX != null and newX.? != oldX and (collidesX == null or (collidesX != null and collidesX.?.entityType == EntityType.Unit))) or
+            (newY != null and newY.? != oldY and (collidesY == null or (collidesY != null and collidesY.?.entityType == EntityType.Unit))))
         {
             //std.debug.print("Updating player entity with oldX, oldY: {},{} to newX, newY: {},{} )\n", .{ oldX, oldY, self.x, self.y });
             main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
         }
     }
 
-    fn updateActionInput(self: *Player, keyInput: u32) anyerror!void {
+    fn updateActionInput(self: *Player, keyInput: u32) !void {
         var built: ?*Structure = undefined;
         var buildAttempted: bool = false;
 
@@ -242,9 +261,9 @@ pub const Unit = struct {
     }
 
     pub fn update(self: *Unit) void {
-        const dx = @as(f16, @floatFromInt(utils.randomInt(2) - 1)); // Test
-        const dy = @as(f16, @floatFromInt(utils.randomInt(2) - 1)); // Test
-        self.move(dx, dy);
+        const dx = @as(f16, @floatFromInt(utils.randomInt(2) - 1)) * 0.2; // Test
+        const dy = @as(f16, @floatFromInt(utils.randomInt(2) - 1)) * 0.2; // Test
+        _ = self.move(dx, dy);
 
         // move, determine movement based on AI logic
         // act, determine ability use based on AI logic
@@ -259,15 +278,33 @@ pub const Unit = struct {
         const newX = utils.i32AddFloat(f16, oldX, (dx * self.speed));
         const newY = utils.i32AddFloat(f16, oldY, (dy * self.speed));
 
-        // Idea: Have unit favor moving along grid. Only do "entityCollisionGeneral" if unit x,y is NOT on grid
+        // Idea: Have unit favor moving along grid. Only do "collidesWithGeneral" if unit x,y is NOT on grid
         // Otherwise, do a more performant (1-dimensional?) grid collision detection or similar
-        const collides = main.gameGrid.entityCollision(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
+        const collides = main.gameGrid.collidesWithUnit(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
 
         if (collides == null) {
             self.x = utils.mapClampX(newX, self.width);
             self.y = utils.mapClampY(newY, self.height);
             main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
         }
+    }
+
+    pub fn moved(self: *Unit, dir: u8, distance: f32) bool {
+        const oldX = self.x;
+        const oldY = self.y;
+        const deltaXy = utils.dirDelta(dir);
+        const newX = self.x + @as(i32, @intFromFloat(distance * @as(f32, @floatFromInt(deltaXy[0]))));
+        const newY = self.y + @as(i32, @intFromFloat(distance * @as(f32, @floatFromInt(deltaXy[1]))));
+
+        const collides = main.gameGrid.collidesWithUnit(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
+
+        if (collides == null) {
+            self.x = utils.mapClampX(newX, self.width);
+            self.y = utils.mapClampY(newY, self.height);
+            main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
+            return true;
+        }
+        return false;
     }
 
     pub fn create(x: i32, y: i32, class: u8) !*Unit {
@@ -402,7 +439,7 @@ pub const Structure = struct {
 
     pub fn build(x: i32, y: i32, class: u8) ?*Structure {
         const nodeXy = utils.Grid.closestNode(x, y);
-        const collides = main.gameGrid.entityCollision(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height, null) catch return null;
+        const collides = main.gameGrid.collidesWithPlayer(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height, null) catch return null;
         if (collides != null or !utils.isInMap(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height)) {
             return null;
         }
@@ -473,7 +510,7 @@ pub const Structure = struct {
                 else => @panic("Unrecognized side"),
             }
 
-            if (try main.gameGrid.entityCollision(spawnX, spawnY, unitWidth, unitHeight, null) == null and utils.isInMap(spawnX, spawnY, unitWidth, unitHeight)) {
+            if (try main.gameGrid.collidesWithPlayer(spawnX, spawnY, unitWidth, unitHeight, null) == null and utils.isInMap(spawnX, spawnY, unitWidth, unitHeight)) {
                 return [2]i32{ spawnX, spawnY };
             }
         }
@@ -627,9 +664,9 @@ pub const Grid = struct {
     }
 
     /// Returns a slice of nearby entities within a 3x3 grid centered around the given x, y coordinates.
-    /// Returns an error if the number of entities exceeds `ENTITY_SEARCH_LIMIT`.
-    pub fn getNearbyEntities(self: *Grid, x: i32, y: i32) ![]*Entity {
-        var nearbyEntities: [main.ENTITY_SEARCH_LIMIT]*Entity = undefined;
+    /// Returns an error if the number of entities exceeds `UNIT_SEARCH_LIMIT`.
+    pub fn entitiesNearUnit(self: *Grid, x: i32, y: i32) ![]*Entity {
+        var nearbyEntities: [main.UNIT_SEARCH_LIMIT]*Entity = undefined;
         var count: usize = 0;
 
         const offsets = [_][2]i32{
@@ -651,7 +688,42 @@ pub const Grid = struct {
 
             if (self.cells.get(neighborKey)) |list| {
                 for (list.items) |entity| { // For each entity in the cell
-                    if (count >= main.ENTITY_SEARCH_LIMIT) return error.TooManyEntities;
+                    if (count >= main.UNIT_SEARCH_LIMIT) return error.TooManyEntities;
+                    nearbyEntities[count] = entity;
+                    count += 1;
+                }
+            }
+        }
+        //if (utils.perFrame(60)) std.debug.print("Searching for entities near {}, {}. Found {} entities within area from {},{} to {},{}.\n", .{ x, y, count, (x - utils.SpatialHash.CellSize), (y - utils.SpatialHash.CellSize), (x + utils.SpatialHash.CellSize), (y + utils.SpatialHash.CellSize) });
+        return nearbyEntities[0..count];
+    }
+
+    /// Returns a slice of nearby entities within a 3x3 grid centered around the given x, y coordinates.
+    /// Returns an error if the number of entities exceeds `PLAYER_SEARCH_LIMIT`.
+    pub fn entitiesNearPlayer(self: *Grid, x: i32, y: i32) ![]*Entity {
+        var nearbyEntities: [main.PLAYER_SEARCH_LIMIT]*Entity = undefined;
+        var count: usize = 0;
+
+        const offsets = [_][2]i32{
+            [_]i32{ 0, 0 }, // Central cell
+            [_]i32{ -utils.SpatialHash.CellSize, 0 }, // Left neighbor
+            [_]i32{ utils.SpatialHash.CellSize, 0 }, // Right neighbor
+            [_]i32{ 0, -utils.SpatialHash.CellSize }, // Top neighbor
+            [_]i32{ 0, utils.SpatialHash.CellSize }, // Bottom neighbor
+            [_]i32{ -utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize }, // Top-left
+            [_]i32{ utils.SpatialHash.CellSize, utils.SpatialHash.CellSize }, // Bottom-right
+            [_]i32{ -utils.SpatialHash.CellSize, utils.SpatialHash.CellSize }, // Bottom-left
+            [_]i32{ utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize }, // Top-right
+        };
+
+        for (offsets) |offset| { // For each neighbor cell
+            const neighborX = std.math.clamp(x + offset[0], 0, main.mapWidth);
+            const neighborY = std.math.clamp(y + offset[1], 0, main.mapHeight);
+            const neighborKey = utils.SpatialHash.hash(neighborX, neighborY);
+
+            if (self.cells.get(neighborKey)) |list| {
+                for (list.items) |entity| { // For each entity in the cell
+                    if (count >= main.PLAYER_SEARCH_LIMIT) return error.TooManyEntities;
                     nearbyEntities[count] = entity;
                     count += 1;
                 }
@@ -662,7 +734,7 @@ pub const Grid = struct {
     }
 
     /// Finds entities in a 3x3 cell radius and performs a bounding box check. Returns any colliding entity.
-    pub fn entityCollision(self: *Grid, x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !?*Entity {
+    pub fn collidesWithUnit(self: *Grid, x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !?*Entity {
         const halfWidth = @divTrunc(width, 2);
         const halfHeight = @divTrunc(height, 2);
 
@@ -671,7 +743,43 @@ pub const Grid = struct {
         const top = y - halfHeight;
         const bottom = y + halfHeight;
 
-        const nearbyEntities = try self.getNearbyEntities(x, y);
+        const nearbyEntities = try self.entitiesNearUnit(x, y);
+
+        for (nearbyEntities) |entity| {
+            if (currentEntity) |cur| {
+                if (cur == entity) {
+                    continue; // Skip current entity
+                }
+            }
+
+            const entityHalfWidth = @divTrunc(entityWidth(entity), 2);
+            const entityHalfHeight = @divTrunc(entityHeight(entity), 2);
+
+            const entityLeft = entityX(entity) - entityHalfWidth;
+            const entityRight = entityX(entity) + entityHalfWidth;
+            const entityTop = entityY(entity) - entityHalfHeight;
+            const entityBottom = entityY(entity) + entityHalfHeight;
+
+            if ((left < entityRight) and (right > entityLeft) and
+                (top < entityBottom) and (bottom > entityTop))
+            {
+                return entity; // Returns colliding entity
+            }
+        }
+        return null;
+    }
+
+    /// Finds entities in a 3x3 cell radius and performs a bounding box check. Returns any colliding entity.
+    pub fn collidesWithPlayer(self: *Grid, x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !?*Entity {
+        const halfWidth = @divTrunc(width, 2);
+        const halfHeight = @divTrunc(height, 2);
+
+        const left = x - halfWidth;
+        const right = x + halfWidth;
+        const top = y - halfHeight;
+        const bottom = y + halfHeight;
+
+        const nearbyEntities = try self.entitiesNearPlayer(x, y);
 
         for (nearbyEntities) |entity| {
             if (currentEntity) |cur| {

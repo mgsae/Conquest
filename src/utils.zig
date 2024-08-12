@@ -132,6 +132,7 @@ pub const Key = struct {
         try self.bindings.put(Action.MoveDown, InputValue.Down);
         try self.bindings.put(Action.MoveRight, InputValue.Right);
         try self.bindings.put(Action.SpecialSpace, InputValue.Space);
+        try self.bindings.put(Action.SpecialCtrl, InputValue.Ctrl);
     }
 
     pub fn rebind(self: *Key, action: Action, newInput: InputValue) void {
@@ -347,6 +348,13 @@ pub fn canvasY(posY: i32, offsetY: f32, zoom: f32) i32 {
 pub fn canvasScale(scale: i32, zoom: f32) i32 {
     const scaledValue = zoom * @as(f32, @floatFromInt(scale));
     return @as(i32, @intFromFloat(scaledValue));
+}
+
+pub fn canvasOnPlayer() void {
+    const screenWidthF = @as(f32, @floatFromInt(main.screenWidth));
+    const screenHeightF = @as(f32, @floatFromInt(main.screenHeight));
+    main.canvasOffsetX = -(@as(f32, @floatFromInt(main.gamePlayer.x)) * main.canvasZoom) + (screenWidthF / 2);
+    main.canvasOffsetY = -(@as(f32, @floatFromInt(main.gamePlayer.y)) * main.canvasZoom) + (screenHeightF / 2);
 }
 
 // Drawing
