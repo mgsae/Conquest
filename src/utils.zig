@@ -169,9 +169,17 @@ pub fn randomI16(max: u16) i16 {
 
 // Math
 //----------------------------------------------------------------------------------
-pub fn angleToVector(angle: f16) [2]f16 {
-    const radians = angle * math.pi / 180.0;
-    return [2]f16{ math.cos(radians), math.sin(radians) };
+pub fn angleToVector(angle: f32, magnitude: f32) [2]f32 {
+    const radians = angle * std.math.pi / 180.0;
+    return [2]f32{ magnitude * std.math.cos(radians), magnitude * std.math.sin(radians) };
+}
+
+pub fn deltaToAngle(dx: i32, dy: i32) f32 { // Supports fractional degrees
+    const dxF = @as(f32, @floatFromInt(dx));
+    const dyF = @as(f32, @floatFromInt(dy));
+    const angle_radians = @as(f32, std.math.atan2(dxF, dyF));
+    const angle_degrees = angle_radians * (180.0 / std.math.pi);
+    return if (angle_degrees < 0) angle_degrees + 360.0 else angle_degrees;
 }
 
 /// Equivalent to std.math.clamp
@@ -248,6 +256,18 @@ pub fn dirOffset(x: u16, y: u16, dir: u8, offset: u16) [2]u16 {
 
 pub fn isHorz(dir: u8) bool {
     return dir == 4 or dir == 6;
+}
+
+/// Returns 0 if size of area1 > area2. Returns 1 if size of area1 < area2. Otherwise returns 2.
+pub fn bigger(w1: u16, h1: u16, w2: u16, h2: u16) u2 {
+    if (w1 * h1 > w2 * h2) return 0 else if (w1 * h1 < w2 * h2) return 1 else return 2;
+}
+
+/// Compares area sizes, returning the factor of `w1` * `h1` and `w2` * `h2`.
+pub fn sizeFactor(w1: u16, h1: u16, w2: u16, h2: u16) f32 {
+    const area1 = @as(f32, w1) * @as(f32, h1);
+    const area2 = @as(f32, w2) * @as(f32, h2);
+    return area1 / area2;
 }
 
 // Hashmap

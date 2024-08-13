@@ -44,8 +44,9 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
-    rl.toggleFullscreen();
+    //rl.toggleFullscreen();
     //rl.setTargetFPS(120);
+    rl.toggleBorderlessWindowed();
 
     // Initialize utility
     //--------------------------------------------------------------------------------------
@@ -94,12 +95,12 @@ pub fn main() anyerror!void {
 
     //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
-    for (0..5000) |_| {
-        try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
-    }
-    //for (0..4000) |_| {
-    //    _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
+    //for (0..5000) |_| {
+    //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
+    for (0..4000) |_| {
+        _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
+    }
 
     defer entity.units.deinit();
     defer entity.structures.deinit();

@@ -55,6 +55,15 @@ fn entityY(entity: *Entity) u16 {
     };
 }
 
+/// Returns the bigger of two entities, or null if same size.
+pub fn biggerEntity(e1: *Entity, e2: *Entity) ?*Entity {
+    switch (utils.bigger(entityWidth(e1), entityHeight(e1), entityWidth(e2), entityHeight(e2))) {
+        0 => return e1,
+        1 => return e2,
+        2, 3 => return null,
+    }
+}
+
 // Player //
 //----------------------------------------------------------------------------------
 pub const Player = struct {
@@ -120,10 +129,13 @@ pub const Player = struct {
             if (obstacleX == null) {
                 self.x = newX.?;
             } else if (newY == null and obstacleX.?.entityType == EntityType.Unit) { // If unit obstacle, try pushing horizontally
-                const resistance = 0.5; // maybe depend on size relation
 
-                newX = oldX + @as(u16, @intFromFloat(@as(f32, @floatFromInt(newX.? - oldX)) * resistance));
-                if (obstacleX.?.entity.Unit.moved(self.direction, speed * resistance)) { // True if push went through
+                const resistance = 0.1; // maybe depend on size relation
+                const force = (1.0 - resistance);
+                const difference = @as(f64, @floatFromInt(@as(i32, newX.?) - @as(i32, oldX)));
+                newX = @as(u16, @intCast(@as(i32, oldX) + @as(i32, @intFromFloat(difference * force))));
+
+                if (obstacleX.?.entity.Unit.moved(self.direction, speed * force)) { // True if push went through
                     obstacleX = main.gameGrid.collidesWith(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
                     if (obstacleX == null) self.x = newX.?;
                 }
@@ -134,9 +146,13 @@ pub const Player = struct {
             if (obstacleY == null) {
                 self.y = newY.?;
             } else if (newX == null and obstacleY.?.entityType == EntityType.Unit) { // If unit collider, try pushing vertically
-                const resistance = 0.5; // maybe depend on size relation
-                newY = oldY + @as(u16, @intFromFloat(@as(f32, @floatFromInt(newY.? - oldY)) * resistance));
-                if (obstacleY.?.entity.Unit.moved(self.direction, speed * resistance)) { // True if push went through
+
+                const resistance = 0.1; // maybe depend on size relation
+                const force = (1.0 - resistance);
+                const difference = @as(f64, @floatFromInt(@as(i32, newY.?) - @as(i32, oldY)));
+                newY = @as(u16, @intCast(@as(i32, oldY) + @as(i32, @intFromFloat(difference * force))));
+
+                if (obstacleY.?.entity.Unit.moved(self.direction, speed * force)) { // True if push went through
                     obstacleY = main.gameGrid.collidesWith(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
                     if (obstacleY == null) self.y = newY.?;
                 }
@@ -273,6 +289,7 @@ pub const Unit = struct {
         if (self.life <= 0) self.die(null);
     }
 
+    /// Unit moving of its own accord. Searches for collision. If no obstacle is found, unit moves. If obstacle is found, unit moves away if equal to or smaller than the obstacle.
     pub fn move(self: *Unit, dx: f16, dy: f16) void {
         const oldX = self.x;
         const oldY = self.y;
@@ -288,17 +305,27 @@ pub const Unit = struct {
             if (obstacle == null) {
                 self.x = newX;
                 self.y = newY;
+
+                main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
+            } else if (biggerEntity(getEntity(self), obstacle.?) != getEntity(self)) { // Obstacle is bigger or equal
+                const diffX = @as(i32, self.x) - @as(i32, entityX(obstacle.?));
+                const diffY = @as(i32, self.y) - @as(i32, entityY(obstacle.?));
+                const angle = utils.deltaToAngle(diffX, diffY);
+                const vector = utils.angleToVector(angle, self.speed());
+                self.x = utils.u16AddFloat(f32, oldX, vector[0]);
+                self.y = utils.u16AddFloat(f32, oldY, vector[1]);
                 main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
             }
         }
     }
 
+    /// Unit is pushed by another entity. Searches for collision. If no obstacle is found, unit moves and returns `true`. Otherwise, returns `false`.
     pub fn moved(self: *Unit, dir: u8, distance: f32) bool {
         const oldX = self.x;
         const oldY = self.y;
         const deltaXy = utils.dirDelta(dir);
-        const newX = self.x + @as(u16, @intFromFloat(distance * @as(f32, @floatFromInt(deltaXy[0]))));
-        const newY = self.y + @as(u16, @intFromFloat(distance * @as(f32, @floatFromInt(deltaXy[1]))));
+        const newX = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + distance * @as(f32, @floatFromInt(deltaXy[0]))));
+        const newY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + distance * @as(f32, @floatFromInt(deltaXy[1]))));
 
         if (utils.isInMap(newX, newY, self.width, self.height)) {
             const obstacle = main.gameGrid.collidesWith(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
@@ -420,14 +447,11 @@ pub const Structure = struct {
     }
 
     pub fn spawnUnit(self: *Structure) !void {
-        _ = self;
-        //const unitClass = Structure.classToSpawnClass(self.class);
-        //const spawnPoint = getSpawnPoint(self.x, self.y, self.width, self.height, Unit.classProperties(unitClass).width, Unit.classProperties(unitClass).width) catch null;
-        //if (spawnPoint) |sp| { // If spawnPoint is not null, unwrap it
-        //    try units.append(try Unit.create(sp[0], sp[1], unitClass));
-        //} else {
-        // std.debug.print("Failed to find a spawn point.\n", .{});
-        //}
+        const unitClass = Structure.classToSpawnClass(self.class);
+        const spawnPoint = getSpawnPoint(self.x, self.y, self.width, self.height, Unit.classProperties(unitClass).width, Unit.classProperties(unitClass).width) catch null;
+        if (spawnPoint) |sp| { // If spawnPoint is not null, unwrap it
+            try units.append(try Unit.create(sp[0], sp[1], unitClass));
+        }
     }
 
     pub fn create(x: u16, y: u16, class: u8) !*Structure {
@@ -498,7 +522,7 @@ pub const Structure = struct {
     pub fn getSpawnPoint(x: u16, y: u16, structureWidth: u16, structureHeight: u16, unitWidth: u16, unitHeight: u16) ![2]u16 {
         var attempts: usize = 0;
         var sidesChecked = [_]bool{ false, false, false, false }; // Track which sides have been checked
-        while (attempts < 8) {
+        while (attempts < 4) {
             const sideIndex = @as(usize, @intCast(utils.randomU16(3)));
             if (sidesChecked[sideIndex]) {
                 continue; // Skip already checked sides
@@ -555,9 +579,9 @@ pub const Projectile = struct {
     class: u8,
 
     pub fn update(self: Projectile) void {
-        const delta = utils.angleToVector(self.angle);
-        self.x += delta[0] * self.speed;
-        self.y += delta[1] * self.speed;
+        const delta = utils.angleToVector(self.angle, self.speed);
+        self.x = utils.u16AddFloat(f32, self.x, delta[0]);
+        self.y = utils.u16AddFloat(f32, self.y, delta[1]);
         self.life -= 1;
         if (self.life <= 0) {
             self.destroy();
