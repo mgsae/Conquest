@@ -110,13 +110,11 @@ pub const Player = struct {
             self.direction = 6; // Numpad direction
         }
 
-        if (newX != null) {
-            collidesX = main.gameGrid.collidesWithPlayer(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
-        }
+        if (newX != null)
+            collidesX = main.gameGrid.collidesWith(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
 
-        if (newY != null) {
-            collidesY = main.gameGrid.collidesWithPlayer(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
-        }
+        if (newY != null)
+            collidesY = main.gameGrid.collidesWith(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
 
         if (newX != null) {
             if (collidesX == null) {
@@ -125,7 +123,7 @@ pub const Player = struct {
                 const resistance = 0.5; // maybe depend on size relation
                 newX = oldX + @as(i32, @intFromFloat(@as(f32, @floatFromInt(newX.? - oldX)) * resistance));
                 if (collidesX.?.entity.Unit.moved(self.direction, speed * resistance)) { // True if push went through
-                    collidesX = main.gameGrid.collidesWithPlayer(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
+                    collidesX = main.gameGrid.collidesWith(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
                     if (collidesX == null) self.x = newX.?;
                 }
             }
@@ -138,7 +136,7 @@ pub const Player = struct {
                 const resistance = 0.5; // maybe depend on size relation
                 newY = oldY + @as(i32, @intFromFloat(@as(f32, @floatFromInt(newY.? - oldY)) * resistance));
                 if (collidesY.?.entity.Unit.moved(self.direction, speed * resistance)) { // True if push went through
-                    collidesY = main.gameGrid.collidesWithPlayer(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
+                    collidesY = main.gameGrid.collidesWith(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
                     if (collidesY == null) self.y = newY.?;
                 }
             }
@@ -283,7 +281,7 @@ pub const Unit = struct {
 
         // Idea: Have unit favor moving along grid. Only do "collidesWithGeneral" if unit x,y is NOT on grid
         // Otherwise, do a more performant (1-dimensional?) grid collision detection or similar
-        const collides = main.gameGrid.collidesWithUnit(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
+        const collides = null; // main.gameGrid.collidesWith(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
 
         if (collides == null) {
             self.x = utils.mapClampX(newX, self.width);
@@ -299,7 +297,7 @@ pub const Unit = struct {
         const newX = self.x + @as(i32, @intFromFloat(distance * @as(f32, @floatFromInt(deltaXy[0]))));
         const newY = self.y + @as(i32, @intFromFloat(distance * @as(f32, @floatFromInt(deltaXy[1]))));
 
-        const collides = main.gameGrid.collidesWithUnit(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
+        const collides = main.gameGrid.collidesWith(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
 
         if (collides == null) {
             self.x = utils.mapClampX(newX, self.width);
@@ -441,8 +439,8 @@ pub const Structure = struct {
     }
 
     pub fn build(x: i32, y: i32, class: u8) ?*Structure {
-        const nodeXy = utils.Grid.closestNode(x, y);
-        const collides = main.gameGrid.collidesWithPlayer(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height, null) catch return null;
+        const nodeXy = utils.closestNexus(x, y);
+        const collides = main.gameGrid.collidesWith(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height, null) catch return null;
         if (collides != null or !utils.isInMap(nodeXy[0], nodeXy[1], classProperties(class).width, classProperties(class).height)) {
             return null;
         }
@@ -513,7 +511,7 @@ pub const Structure = struct {
                 else => @panic("Unrecognized side"),
             }
 
-            if (try main.gameGrid.collidesWithPlayer(spawnX, spawnY, unitWidth, unitHeight, null) == null and utils.isInMap(spawnX, spawnY, unitWidth, unitHeight)) {
+            if (try main.gameGrid.collidesWith(spawnX, spawnY, unitWidth, unitHeight, null) == null and utils.isInMap(spawnX, spawnY, unitWidth, unitHeight)) {
                 return [2]i32{ spawnX, spawnY };
             }
         }
@@ -571,12 +569,12 @@ pub const Projectile = struct {
 //----------------------------------------------------------------------------------
 
 pub const Grid = struct {
-    cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.HashContext, 80) = undefined,
+    cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.SpatialHash.Context, 80) = undefined,
     allocator: *std.mem.Allocator,
 
     pub fn init(self: *Grid, allocator: *std.mem.Allocator) !void {
         self.allocator = allocator;
-        self.cells = std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.HashContext, 80).init(allocator.*);
+        self.cells = std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.SpatialHash.Context, 80).init(allocator.*);
     }
 
     pub fn deinit(self: *Grid) void {
@@ -667,35 +665,26 @@ pub const Grid = struct {
     }
 
     /// Returns a slice of nearby entities within a 3x3 grid centered around the given x, y coordinates.
-    /// Returns an error if the number of entities exceeds `UNIT_SEARCH_LIMIT`.
-    pub fn entitiesNearUnit(self: *Grid, x: i32, y: i32) ![]*Entity {
-        var nearbyEntities: [main.UNIT_SEARCH_LIMIT]*Entity = undefined;
+    /// Returns an error if the number of nearby entities exceeds `limit`.
+    pub fn entitiesNear(self: *Grid, x: i32, y: i32, limit: comptime_int) ![]*Entity {
+        var nearbyEntities: [limit]*Entity = undefined;
         var count: usize = 0;
 
-        const offsets = [_][2]i32{
-            [_]i32{ 0, 0 }, // Central cell
-            [_]i32{ -utils.SpatialHash.CellSize, 0 }, // Left neighbor
-            [_]i32{ utils.SpatialHash.CellSize, 0 }, // Right neighbor
-            [_]i32{ 0, -utils.SpatialHash.CellSize }, // Top neighbor
-            [_]i32{ 0, utils.SpatialHash.CellSize }, // Bottom neighbor
-            [_]i32{ -utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize }, // Top-left
-            [_]i32{ utils.SpatialHash.CellSize, utils.SpatialHash.CellSize }, // Bottom-right
-            [_]i32{ -utils.SpatialHash.CellSize, utils.SpatialHash.CellSize }, // Bottom-left
-            [_]i32{ utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize }, // Top-right
-        };
+        const offsets = utils.Grid.getNeighborhood(); // Gets a 3x3 section of the grid
 
-        if (main.gamePlayer.x >= x and main.gamePlayer.x < x + utils.SpatialHash.CellSize and main.gamePlayer.y >= y and main.gamePlayer.y < y + utils.SpatialHash.CellSize) {
+        // Prioritizes player
+        if (main.gamePlayer.x >= x and main.gamePlayer.x < x + utils.Grid.CellSize and main.gamePlayer.y >= y and main.gamePlayer.y < y + utils.Grid.CellSize) {
             nearbyEntities[count] = main.gamePlayer.getEntity();
         }
 
-        for (offsets) |offset| { // For each neighbor cell
+        for (offsets) |offset| { // For each neighboring cell
             const neighborX = std.math.clamp(x + offset[0], 0, main.mapWidth);
             const neighborY = std.math.clamp(y + offset[1], 0, main.mapHeight);
             const neighborKey = utils.SpatialHash.hash(neighborX, neighborY);
 
-            if (self.cells.get(neighborKey)) |list| {
+            if (self.cells.get(neighborKey)) |list| { // Lists the cell contents
                 for (list.items) |entity| { // For each entity in the cell
-                    if (count >= main.UNIT_SEARCH_LIMIT) return error.TooManyEntities;
+                    if (count >= limit) return error.EntityAmountExceedsLimit;
                     nearbyEntities[count] = entity;
                     count += 1;
                 }
@@ -705,89 +694,15 @@ pub const Grid = struct {
         return nearbyEntities[0..count];
     }
 
-    /// Returns a slice of nearby entities within a 3x3 grid centered around the given x, y coordinates.
-    /// Returns an error if the number of entities exceeds `PLAYER_SEARCH_LIMIT`.
-    pub fn entitiesNearPlayer(self: *Grid, x: i32, y: i32) ![]*Entity {
-        var nearbyEntities: [main.PLAYER_SEARCH_LIMIT]*Entity = undefined;
-        var count: usize = 0;
-
-        const offsets = [_][2]i32{
-            [_]i32{ 0, 0 }, // Central cell
-            [_]i32{ -utils.SpatialHash.CellSize, 0 }, // Left neighbor
-            [_]i32{ utils.SpatialHash.CellSize, 0 }, // Right neighbor
-            [_]i32{ 0, -utils.SpatialHash.CellSize }, // Top neighbor
-            [_]i32{ 0, utils.SpatialHash.CellSize }, // Bottom neighbor
-            [_]i32{ -utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize }, // Top-left
-            [_]i32{ utils.SpatialHash.CellSize, utils.SpatialHash.CellSize }, // Bottom-right
-            [_]i32{ -utils.SpatialHash.CellSize, utils.SpatialHash.CellSize }, // Bottom-left
-            [_]i32{ utils.SpatialHash.CellSize, -utils.SpatialHash.CellSize }, // Top-right
-        };
-
-        for (offsets) |offset| { // For each neighbor cell
-            const neighborX = std.math.clamp(x + offset[0], 0, main.mapWidth);
-            const neighborY = std.math.clamp(y + offset[1], 0, main.mapHeight);
-            const neighborKey = utils.SpatialHash.hash(neighborX, neighborY);
-
-            if (self.cells.get(neighborKey)) |list| {
-                for (list.items) |entity| { // For each entity in the cell
-                    if (count >= main.PLAYER_SEARCH_LIMIT) return error.TooManyEntities;
-                    nearbyEntities[count] = entity;
-                    count += 1;
-                }
-            }
-        }
-        //if (utils.perFrame(60)) std.debug.print("Searching for entities near {}, {}. Found {} entities within area from {},{} to {},{}.\n", .{ x, y, count, (x - utils.SpatialHash.CellSize), (y - utils.SpatialHash.CellSize), (x + utils.SpatialHash.CellSize), (y + utils.SpatialHash.CellSize) });
-        return nearbyEntities[0..count];
-    }
-
-    /// Finds entities in a 3x3 cell radius and performs a bounding box check. Returns any colliding entity.
-    pub fn collidesWithUnit(self: *Grid, x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !?*Entity {
+    /// Finds entities in a 3x3 cell radius, then performs a bounding box check. Returns first colliding entity.
+    pub fn collidesWith(self: *Grid, x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !?*Entity {
         const halfWidth = @divTrunc(width, 2);
         const halfHeight = @divTrunc(height, 2);
-
         const left = x - halfWidth;
         const right = x + halfWidth;
         const top = y - halfHeight;
         const bottom = y + halfHeight;
-
-        const nearbyEntities = try self.entitiesNearUnit(x, y);
-
-        for (nearbyEntities) |entity| {
-            if (currentEntity) |cur| {
-                if (cur == entity) {
-                    continue; // Skip current entity
-                }
-            }
-
-            const entityHalfWidth = @divTrunc(entityWidth(entity), 2);
-            const entityHalfHeight = @divTrunc(entityHeight(entity), 2);
-
-            const entityLeft = entityX(entity) - entityHalfWidth;
-            const entityRight = entityX(entity) + entityHalfWidth;
-            const entityTop = entityY(entity) - entityHalfHeight;
-            const entityBottom = entityY(entity) + entityHalfHeight;
-
-            if ((left < entityRight) and (right > entityLeft) and
-                (top < entityBottom) and (bottom > entityTop))
-            {
-                return entity; // Returns colliding entity
-            }
-        }
-        return null;
-    }
-
-    /// Finds entities in a 3x3 cell radius and performs a bounding box check. Returns any colliding entity.
-    pub fn collidesWithPlayer(self: *Grid, x: i32, y: i32, width: i32, height: i32, currentEntity: ?*Entity) !?*Entity {
-        const halfWidth = @divTrunc(width, 2);
-        const halfHeight = @divTrunc(height, 2);
-
-        const left = x - halfWidth;
-        const right = x + halfWidth;
-        const top = y - halfHeight;
-        const bottom = y + halfHeight;
-
-        const nearbyEntities = try self.entitiesNearPlayer(x, y);
-
+        const nearbyEntities = if (currentEntity != null and currentEntity.?.entityType == EntityType.Unit) try self.entitiesNear(x, y, main.UNIT_SEARCH_LIMIT) else try self.entitiesNear(x, y, main.PLAYER_SEARCH_LIMIT);
         for (nearbyEntities) |entity| {
             if (currentEntity) |cur| {
                 if (cur == entity) {

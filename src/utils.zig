@@ -215,6 +215,19 @@ pub fn dirDelta(dir: u8) [2]i8 {
     return [2]i8{ x, y };
 }
 
+pub fn dirOffset(x: i32, y: i32, dir: u8, offset: i32) [2]i32 {
+    var oX = x;
+    var oY = y;
+    switch (dir) {
+        2 => oY += offset,
+        4 => oX -= offset,
+        6 => oX += offset,
+        8 => oY -= offset,
+        else => return [2]i32{ x, y },
+    }
+    return [2]i32{ oX, oY };
+}
+
 pub fn isHorz(dir: u8) bool {
     return dir == 4 or dir == 6;
 }
@@ -230,6 +243,20 @@ pub const Grid = struct {
         x: usize,
         y: usize,
     };
+
+    pub inline fn getNeighborhood() [9][2]i32 {
+        return [_][2]i32{
+            [_]i32{ 0, 0 }, // Central cell
+            [_]i32{ -CellSize, 0 }, // Left neighbor
+            [_]i32{ CellSize, 0 }, // Right neighbor
+            [_]i32{ 0, -CellSize }, // Top neighbor
+            [_]i32{ 0, CellSize }, // Bottom neighbor
+            [_]i32{ -CellSize, -CellSize }, // Top-left
+            [_]i32{ CellSize, CellSize }, // Bottom-right
+            [_]i32{ -CellSize, CellSize }, // Bottom-left
+            [_]i32{ CellSize, -CellSize }, // Top-right
+        };
+    }
 
     pub fn toGridCoord(x: i32, y: i32, gridWidth: usize, gridHeight: usize) GridCoord {
         const iX = @divFloor(x, CellSize);
@@ -256,27 +283,24 @@ pub const Grid = struct {
 };
 
 pub const SpatialHash = struct {
-    pub const CellSize = main.GRID_CELL_SIZE;
-
     pub fn hash(x: i32, y: i32) u64 {
-        const gridX = @divFloor(x, CellSize);
-        const gridY = @divFloor(y, CellSize);
+        const gridX = @divFloor(x, Grid.CellSize);
+        const gridY = @divFloor(y, Grid.CellSize);
         const hashValue = @as(u64, @intCast(gridX)) << 32 | @as(u64, @intCast(gridY));
 
         return hashValue;
     }
-};
+    pub const Context = struct {
+        pub fn hash(self: Context, key: u64) u64 {
+            _ = self;
+            return key;
+        }
 
-pub const HashContext = struct {
-    pub fn hash(self: HashContext, key: u64) u64 {
-        _ = self;
-        return key;
-    }
-
-    pub fn eql(self: HashContext, a: u64, b: u64) bool {
-        _ = self;
-        return a == b;
-    }
+        pub fn eql(self: Context, a: u64, b: u64) bool {
+            _ = self;
+            return a == b;
+        }
+    };
 };
 
 pub fn testHashFunction() void {
@@ -284,19 +308,36 @@ pub fn testHashFunction() void {
     const max_x: i32 = main.mapWidth;
     const min_y: i32 = 0;
     const max_y: i32 = main.mapHeight;
-    const step: i32 = 953; // Adjust step for more or less granularity
+    const step: i32 = 1;
 
-    std.log.info("Printing hash values for positions between min_x {}, max_x {}, min_y {}, max_y {}, with an increment of {}.\n", .{ min_x, max_x, min_y, max_y, step });
+    std.log.info("\nTesting hash function. Checking hash values for positions between {}, {} and {}, {}, with an increment of {}.", .{ min_x, min_y, max_x, max_y, step });
+
+    var seenHashes = std.hash_map.HashMap(u64, bool, SpatialHash.Context, 80).init(std.heap.page_allocator);
+    defer seenHashes.deinit();
+    var collisionCount: usize = 0;
 
     var x: i32 = min_x;
-    while (x <= max_x) : (x += step) {
+    while (x <= max_x) : (x += step * Grid.CellSize) {
         var y: i32 = min_y; // Reset y for each new x
-        while (y <= max_y) : (y += step) {
-            const hash_value = SpatialHash.hash(x, y);
-            std.debug.print("({}, {}) = {}. ", .{ x, y, hash_value });
+        while (y <= max_y) : (y += step * Grid.CellSize) {
+            const hashValue = SpatialHash.hash(x, y);
+
+            if (seenHashes.getOrPut(hashValue)) |existing| {
+                if (existing.found_existing) {
+                    collisionCount += 1;
+                    std.debug.print("Collision detected at ({}, {}) with hash value {}.\n", .{ x, y, hashValue });
+                }
+            } else |err| {
+                std.log.err("Error adding hash value {} to hashmap: {}.", .{ hashValue, err });
+            }
         }
     }
-    std.log.info("\n Done printing hash values.\n", .{});
+
+    if (collisionCount == 0) {
+        std.log.info("No collisions detected.\n", .{});
+    } else {
+        std.log.warn("Detected {} collisions in the hash function.\n", .{collisionCount});
+    }
 }
 
 // Map Coordinates
@@ -317,17 +358,12 @@ pub fn mapClampY(y: i32, height: i32) i32 {
     return @min(main.mapHeight - @divTrunc(height, 2), @max(y, @divTrunc(height, 2)));
 }
 
-pub fn dirOffset(x: i32, y: i32, dir: u8, offset: i32) [2]i32 {
-    var oX = x;
-    var oY = y;
-    switch (dir) {
-        2 => oY += offset,
-        4 => oX -= offset,
-        6 => oX += offset,
-        8 => oY -= offset,
-        else => return [2]i32{ x, y },
-    }
-    return [2]i32{ oX, oY };
+pub fn closestNexus(x: i32, y: i32) [2]i32 {
+    const quadSize = main.GRID_CELL_SIZE / 2;
+    const nexLength = quadSize / 2;
+    const closestX = @divTrunc(x, quadSize) * quadSize + nexLength;
+    const closestY = @divTrunc(y, quadSize) * quadSize + nexLength;
+    return [2]i32{ closestX, closestY };
 }
 
 // Canvas

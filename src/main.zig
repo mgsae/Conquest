@@ -8,7 +8,7 @@ pub const TICKRATE = 60;
 pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
 pub const MAX_TICKS_PER_FRAME = 1;
 pub const PLAYER_SEARCH_LIMIT = 1600; // Limit must exceed #entities in 3x3 cells
-pub const UNIT_SEARCH_LIMIT = 1600;
+pub const UNIT_SEARCH_LIMIT = 256;
 pub var prevTickTime: f64 = 0.0;
 pub var frameCount: i64 = 0;
 pub var profileMode = false;
@@ -44,7 +44,7 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
-    //rl.toggleFullscreen();
+    rl.toggleFullscreen();
     //rl.setTargetFPS(120);
 
     // Initialize utility
@@ -88,18 +88,19 @@ pub fn main() anyerror!void {
     allocator.free(startCoords); // Freeing starting positions
 
     // Testing/debugging
-    const SPREAD = 20; // PERCENTAGE
+    const SPREAD = 60; // PERCENTAGE
     const rangeX = @divTrunc(mapWidth * SPREAD, 100);
     const rangeY = @divTrunc(mapHeight * SPREAD, 100);
 
     //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
-    for (0..9001) |_| {
-        try entity.units.append(try entity.Unit.create(utils.randomInt(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomInt(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomInt(3)))));
-    }
-    //for (0..500) |_| {
-    //    _ = entity.Structure.build(utils.randomInt(mapWidth), utils.randomInt(mapHeight), @as(u8, @intCast(utils.randomInt(3))));
+    //for (0..5000) |_| {
+    //    try entity.units.append(try entity.Unit.create(utils.randomInt(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomInt(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomInt(3)))));
     //}
+    for (0..4000) |_| {
+        _ = entity.Structure.build(utils.randomInt(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomInt(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomInt(3))));
+    }
+    utils.testHashFunction();
 
     defer entity.units.deinit();
     defer entity.structures.deinit();
@@ -118,7 +119,7 @@ pub fn main() anyerror!void {
         //----------------------------------------------------------------------------------
         const profileFrame = (profileMode and utils.perFrame(60));
         if (profileFrame) {
-            utils.startTimer(3, "\nPROFILING FRAME :::");
+            utils.startTimer(3, "\nSTART OF FRAME :::");
             std.debug.print("{}.\n\n", .{frameCount});
         }
 
@@ -171,7 +172,7 @@ pub fn main() anyerror!void {
 
         // Profiling
         if (profileFrame) {
-            utils.endTimer(3, "END OF FRAME. Frame took {} seconds in total.\n");
+            utils.endTimer(3, "END OF FRAME ::: {} seconds in total.\n");
             std.debug.print("Current FPS: {}.\n", .{rl.getFPS()});
             utils.printGridEntities(&gameGrid);
             utils.printGridCells(&gameGrid);
