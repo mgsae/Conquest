@@ -8,7 +8,7 @@ pub const TICKRATE = 60;
 pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
 pub const MAX_TICKS_PER_FRAME = 1;
 pub const PLAYER_SEARCH_LIMIT = 1600; // Limit must exceed #entities in 3x3 cells
-pub const UNIT_SEARCH_LIMIT = 256;
+pub const UNIT_SEARCH_LIMIT = 2560;
 pub var prevTickTime: f64 = 0.0;
 pub var frameCount: i64 = 0;
 pub var profileMode = false;
@@ -44,9 +44,8 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
-    //rl.toggleFullscreen();
+    rl.toggleFullscreen();
     //rl.setTargetFPS(120);
-    rl.toggleBorderlessWindowed();
 
     // Initialize utility
     //--------------------------------------------------------------------------------------
@@ -65,8 +64,8 @@ pub fn main() anyerror!void {
     std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ mapWidth, mapHeight, utils.Grid.CellSize });
 
     // Initialize the grid
-    try gameGrid.init(&allocator);
-    defer gameGrid.deinit();
+    try gameGrid.init(&allocator, gridWidth, gridHeight);
+    defer gameGrid.deinit(&allocator);
 
     // Initialize entities
     //--------------------------------------------------------------------------------------
@@ -98,7 +97,7 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
-    for (0..4000) |_| {
+    for (0..2999) |_| {
         _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
     }
 
@@ -126,9 +125,12 @@ pub fn main() anyerror!void {
         // Input
         //----------------------------------------------------------------------------------
         if (profileFrame) utils.startTimer(0, "INPUT PHASE.\n");
-
+        if (profileFrame) utils.startTimer(1, "- Processing input.");
         processInput(&accumulatedMouseWheel, &accumulatedKeyInput);
-
+        if (profileFrame) utils.endTimer(1, "Processing input took {} seconds.");
+        if (profileFrame) utils.startTimer(1, "- Updating controls.");
+        updateControls(accumulatedMouseWheel, accumulatedKeyInput);
+        if (profileFrame) utils.endTimer(1, "Updating controls took {} seconds.");
         if (profileFrame) utils.endTimer(0, "Input phase took {} seconds in total.\n");
 
         // Logic
@@ -137,12 +139,14 @@ pub fn main() anyerror!void {
 
         const currentTime: f64 = rl.getTime();
         var elapsedTime: f64 = currentTime - prevTickTime;
-
         var updatesPerformed: usize = 0;
 
         // Perform updates if enough time has elapsed
         while (elapsedTime >= TICK_DURATION) {
-            try updateLogic(accumulatedMouseWheel, accumulatedKeyInput, profileFrame);
+            if (profileFrame) utils.startTimer(1, "- Updating cell signatures.");
+            gameGrid.updateCellSignatures(); // Updates gameGrid.signatures array
+            if (profileFrame) utils.endTimer(1, "Updating cell signatures took {} seconds.");
+            try updateLogic(accumulatedKeyInput, profileFrame);
             accumulatedMouseWheel = 0.0;
             accumulatedKeyInput = 0;
 
@@ -198,20 +202,16 @@ fn processInput(accumulatedMouseWheel: *f32, accumulatedKeyInput: *u32) void {
     // Special keys bitmasking
     if (rl.isKeyDown(rl.KeyboardKey.key_space)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Space);
     if (rl.isKeyPressed(rl.KeyboardKey.key_left_control) or rl.isKeyPressed(rl.KeyboardKey.key_right_control)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Ctrl);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_enter) or rl.isKeyPressed(rl.KeyboardKey.key_kp_enter)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Enter);
 }
 
-fn updateLogic(mouseWheelDelta: f32, keyInput: u32, profileFrame: bool) !void {
-
-    // Controls
-    //----------------------------------------------------------------------------------
-    if (profileFrame) utils.startTimer(1, "- Updating controls.");
+fn updateControls(mouseWheelDelta: f32, keyInput: u32) void {
     updateCanvasZoom(mouseWheelDelta);
     updateCanvasPosition(keyInput);
-    if (keys.actionActive(keyInput, utils.Key.Action.SpecialCtrl)) profileMode = !profileMode; // Ctrl toggles profile mode (verbose logs)
-    if (profileFrame) utils.endTimer(1, "Updating controls took {} seconds.");
+    if (keys.actionActive(keyInput, utils.Key.Action.SpecialEnter)) profileMode = !profileMode; // Enter toggles profile mode (verbose logs) for now
+}
 
-    // Entities
-    //----------------------------------------------------------------------------------
+fn updateLogic(keyInput: u32, profileFrame: bool) !void {
     if (profileFrame) utils.startTimer(1, "- Updating units.");
     for (entity.units.items) |unit| {
         unit.update();

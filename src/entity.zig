@@ -134,10 +134,10 @@ pub const Player = struct {
                 const force = (1.0 - resistance);
                 const difference = @as(f64, @floatFromInt(@as(i32, newX.?) - @as(i32, oldX)));
                 newX = @as(u16, @intCast(@as(i32, oldX) + @as(i32, @intFromFloat(difference * force))));
-
+                // Moves obstacle and checks for success
                 if (obstacleX.?.entity.Unit.moved(self.direction, speed * force)) { // True if push went through
                     obstacleX = main.gameGrid.collidesWith(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
-                    if (obstacleX == null) self.x = newX.?;
+                    if (obstacleX == null) self.x = newX.?; // If no collision now, repositions x
                 }
             }
         }
@@ -151,10 +151,10 @@ pub const Player = struct {
                 const force = (1.0 - resistance);
                 const difference = @as(f64, @floatFromInt(@as(i32, newY.?) - @as(i32, oldY)));
                 newY = @as(u16, @intCast(@as(i32, oldY) + @as(i32, @intFromFloat(difference * force))));
-
+                // Moves obstacle and checks for success
                 if (obstacleY.?.entity.Unit.moved(self.direction, speed * force)) { // True if push went through
                     obstacleY = main.gameGrid.collidesWith(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
-                    if (obstacleY == null) self.y = newY.?;
+                    if (obstacleY == null) self.y = newY.?; // If no collision now, repositions y
                 }
             }
         }
@@ -271,20 +271,19 @@ pub const Unit = struct {
     width: u16,
     height: u16,
     life: u16,
-    cellSignature: ?Grid.CellSignature,
+    cellSignature: Grid.CellSignature,
 
     pub fn draw(self: *Unit) void {
         utils.drawEntity(self.x, self.y, self.width, self.height, self.color());
     }
 
     pub fn update(self: *Unit) void {
-        const dx = @as(f16, @floatFromInt(utils.randomI16(2) - 1)) * 0.2; // Test
-        const dy = @as(f16, @floatFromInt(utils.randomI16(2) - 1)) * 0.2; // Test
+        const dx = @as(f16, @floatFromInt(utils.randomI16(2) - 1)) * 1; // Test
+        const dy = @as(f16, @floatFromInt(utils.randomI16(2) - 1)) * 1; // Test
         _ = self.move(dx, dy);
-
         // move, determine movement based on AI logic
+        self.updateCellSignature(); // Update after moving
         // act, determine based on AI logic
-
         self.life -= 1;
         if (self.life <= 0) self.die(null);
     }
@@ -300,26 +299,38 @@ pub const Unit = struct {
 
             // Idea: Have unit favor moving along halfgrid. Only do "collidesWithGeneral" if unit x,y is NOT on halfgrid
             // Otherwise, do a more performant (1-dimensional?) grid collision detection or similar
-            const obstacle = main.gameGrid.collidesWith(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
 
-            if (obstacle == null) {
-                self.x = newX;
-                self.y = newY;
+            // Other idea: Cell signatures for each hash map value update every frame, compare with entity's cached cell signature
+            // Only check for new obstacles if difference in signature
 
-                main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
-            } else if (biggerEntity(getEntity(self), obstacle.?) != getEntity(self)) { // Obstacle is bigger or equal
-                const diffX = @as(i32, self.x) - @as(i32, entityX(obstacle.?));
-                const diffY = @as(i32, self.y) - @as(i32, entityY(obstacle.?));
-                const angle = utils.deltaToAngle(diffX, diffY);
-                const vector = utils.angleToVector(angle, self.speed());
-                self.x = utils.u16AddFloat(f32, oldX, vector[0]);
-                self.y = utils.u16AddFloat(f32, oldY, vector[1]);
-                main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
+            if (self.cellSignature == main.gameGrid.getSignature(utils.Grid.gridX(self.x), utils.Grid.gridY(self.y))) {
+
+                // What to do here, when there's no update to cell signature since last frame ?
+
+            } else {
+                const obstacle = main.gameGrid.collidesWith(newX, newY, self.width, self.height, Unit.getEntity(self)) catch null;
+
+                if (obstacle == null) {
+                    self.x = newX;
+                    self.y = newY;
+                    main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
+                } else if (biggerEntity(getEntity(self), obstacle.?) != getEntity(self)) { // Obstacle is bigger or equal
+                    const diffX = @as(i32, self.x) - @as(i32, entityX(obstacle.?));
+                    const diffY = @as(i32, self.y) - @as(i32, entityY(obstacle.?));
+                    const angle = utils.deltaToAngle(diffX, diffY);
+                    const vector = utils.angleToVector(angle, self.speed());
+                    self.x = utils.u16AddFloat(f32, oldX, vector[0]);
+                    self.y = utils.u16AddFloat(f32, oldY, vector[1]);
+                    main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
+                }
             }
         }
+
+        // else { Not inside map }
     }
 
     /// Unit is pushed by another entity. Searches for collision. If no obstacle is found, unit moves and returns `true`. Otherwise, returns `false`.
+    // (Actually, should then in turn push that entity.)
     pub fn moved(self: *Unit, dir: u8, distance: f32) bool {
         const oldX = self.x;
         const oldY = self.y;
@@ -353,7 +364,7 @@ pub const Unit = struct {
             .life = fromClass.life,
             .x = x,
             .y = y,
-            .cellSignature = main.gameGrid.getCellSignature(utils.Grid.gridX(x), utils.Grid.gridX(y)),
+            .cellSignature = 0,
         };
 
         entityUnit.* = Entity{
@@ -362,6 +373,7 @@ pub const Unit = struct {
         };
 
         try main.gameGrid.addEntity(entityUnit, null, null);
+        unit.updateCellSignature();
         return unit;
     }
 
@@ -394,16 +406,16 @@ pub const Unit = struct {
     /// Unit property distribution templates.
     pub fn classProperties(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .speed = 5, .color = rl.Color.sky_blue, .width = 44, .height = 44, .life = 2000 },
-            1 => Properties{ .speed = 6, .color = rl.Color.blue, .width = 28, .height = 28, .life = 3000 },
-            2 => Properties{ .speed = 4, .color = rl.Color.dark_blue, .width = 64, .height = 64, .life = 4000 },
-            3 => Properties{ .speed = 6, .color = rl.Color.violet, .width = 32, .height = 32, .life = 5000 },
+            0 => Properties{ .speed = 4, .color = rl.Color.sky_blue, .width = 44, .height = 44, .life = 2000 },
+            1 => Properties{ .speed = 5, .color = rl.Color.blue, .width = 28, .height = 28, .life = 3000 },
+            2 => Properties{ .speed = 3, .color = rl.Color.dark_blue, .width = 64, .height = 64, .life = 4000 },
+            3 => Properties{ .speed = 5, .color = rl.Color.violet, .width = 32, .height = 32, .life = 5000 },
             else => @panic("Invalid unit class"),
         };
     }
 
     pub fn updateCellSignature(self: *Unit) void {
-        self.cellSignature = main.gameGrid.getCellSignature(utils.Grid.gridX(self.x), utils.Grid.gridY(self.y));
+        self.cellSignature = main.gameGrid.getFreshSignature(self.x, self.y) orelse 0;
     }
 
     pub fn speed(self: *Unit) f16 {
@@ -628,22 +640,41 @@ pub const Projectile = struct {
 //----------------------------------------------------------------------------------
 
 pub const Grid = struct {
-    cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.SpatialHash.Context, 80) = undefined,
     allocator: *std.mem.Allocator,
+    cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.SpatialHash.Context, 80) = undefined,
+    signatures: []u32, // A slice into a contiguous block of memory
+    columns: usize,
+    rows: usize,
 
     const CellSignature = u32;
 
-    pub fn init(self: *Grid, allocator: *std.mem.Allocator) !void {
+    pub fn init(self: *Grid, allocator: *std.mem.Allocator, columns: usize, rows: usize) !void {
         self.allocator = allocator;
         self.cells = std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.SpatialHash.Context, 80).init(allocator.*);
+
+        self.columns = columns;
+        self.rows = rows;
+        self.signatures = try allocator.alloc(u32, columns * rows);
+        // Not initializing values
     }
 
-    pub fn deinit(self: *Grid) void {
+    pub fn deinit(self: *Grid, allocator: *std.mem.Allocator) void {
         var it = self.cells.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.*.deinit(); // Dereference value_ptr to access and deinitialize the value
         }
         self.cells.deinit();
+        allocator.free(self.signatures);
+    }
+
+    /// Retrieves `CellSignature` of cell. Expects `x`,`y` grid coordinates, not world coordinates.
+    pub fn getSignature(self: *Grid, x: usize, y: usize) u32 {
+        return self.signatures[y * self.columns + x];
+    }
+
+    /// Sets `CellSignature` of cell. Expects `x`,`y` grid coordinates, not world coordinates.
+    pub fn setSignature(self: *Grid, x: usize, y: usize, value: u32) void {
+        self.signatures[y * self.columns + x] = value;
     }
 
     pub fn addEntity(self: *Grid, entity: *Entity, newX: ?u16, newY: ?u16) !void {
@@ -720,7 +751,7 @@ pub const Grid = struct {
             };
 
             if (entity.entityType == EntityType.Unit) {
-                //entity.entity.Unit.updateCellSignature();
+                entity.entity.Unit.updateCellSignature();
             }
 
             // std.debug.print("(Grid update end) After adding/removing entity: \n", .{});
@@ -731,27 +762,42 @@ pub const Grid = struct {
         }
     }
 
-    pub fn getCellSignature(self: *Grid, cellX: u16, cellY: u16) ?CellSignature {
-        const key = utils.SpatialHash.hash(cellX, cellY);
-
-        // Retrieve the list of entities in the cell
+    /// Generates a fresh signature of the `x`,`y` coordinates. Returns `CellSignature` if cell value exists, otherwise returns `null`.
+    pub fn getFreshSignature(self: *Grid, x: u16, y: u16) ?CellSignature {
+        const key = utils.SpatialHash.hash(x, y);
         if (self.cells.get(key)) |entityList| {
-            var signature: CellSignature = 0;
-
-            // Encode the number of entities in the lowest 8 bits
-            const entityCount = @as(u32, @intCast(entityList.items.len));
-            signature |= entityCount & 0xFF;
-
-            // Optionally, encode entity type information in the higher bits
-            for (entityList.items) |entity| {
-                const entityTypeShift = @as(u32, @intFromEnum(entity.entityType)) + 16;
-                signature |= (@as(u32, 1) << @as(u5, @intCast(entityTypeShift)));
-            }
-
-            return signature;
+            return generateSignature(@constCast(&entityList));
         }
-        // If the cell is empty or doesn't exist, return null
         return null;
+    }
+
+    /// Iterates over the entire grid and generates a fresh `CellSignature` for each cell. Each signature is stored at `[y * self.columns + x]` in `signatures`.
+    pub fn updateCellSignatures(self: *Grid) void {
+        for (0..self.rows) |y| {
+            for (0..self.columns) |x| {
+                const key = utils.SpatialHash.hash(@truncate(x * utils.Grid.CellSize), @truncate(y * utils.Grid.CellSize));
+                if (self.cells.get(key)) |entityList| {
+                    const signature = generateSignature(@constCast(&entityList));
+                    self.signatures[y * self.columns + x] = signature;
+                } else {
+                    self.signatures[y * self.columns + x] = 0; // Clears the signature if the cell is empty
+                }
+            }
+        }
+    }
+
+    /// Generates a `CellSignature` (`u32`) for a given entity list.
+    pub fn generateSignature(entityList: *std.ArrayList(*Entity)) CellSignature {
+        var signature: CellSignature = 0;
+        const entityCount = @as(u32, @intCast(entityList.items.len)); // Encodes the number of entities in the lowest 8 bits
+        signature |= entityCount & 0xFF;
+
+        for (entityList.items) |entity| { // Encodes entity type information in the higher bits
+            const entityTypeShift = @as(u5, @intFromEnum(entity.entityType)) + 16;
+            signature |= (@as(u32, 1) << entityTypeShift);
+        }
+
+        return signature;
     }
 
     /// Returns a slice of nearby entities within a 3x3 grid centered around the given x, y coordinates.

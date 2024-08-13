@@ -89,6 +89,7 @@ pub const Key = struct {
         Right = 1 << 8,
         Space = 1 << 9,
         Ctrl = 1 << 10,
+        Enter = 1 << 11,
     };
 
     pub const Action = enum {
@@ -102,6 +103,7 @@ pub const Key = struct {
         MoveRight,
         SpecialSpace,
         SpecialCtrl,
+        SpecialEnter,
     };
 
     pub const HashContext = struct {
@@ -133,6 +135,7 @@ pub const Key = struct {
         try self.bindings.put(Action.MoveRight, InputValue.Right);
         try self.bindings.put(Action.SpecialSpace, InputValue.Space);
         try self.bindings.put(Action.SpecialCtrl, InputValue.Ctrl);
+        try self.bindings.put(Action.SpecialEnter, InputValue.Enter);
     }
 
     pub fn rebind(self: *Key, action: Action, newInput: InputValue) void {
@@ -357,8 +360,8 @@ pub const Grid = struct {
 
 pub const SpatialHash = struct {
     pub fn hash(x: u16, y: u16) u64 {
-        const gridX = @divFloor(@as(u64, @intCast(x)), Grid.CellSize);
-        const gridY = @divFloor(@as(u64, @intCast(y)), Grid.CellSize);
+        const gridX = @divFloor(@as(u64, @intCast(x)), Grid.CellSize); // Left cell edge
+        const gridY = @divFloor(@as(u64, @intCast(y)), Grid.CellSize); // Top cell edge
         const hashValue = (gridX << 32) | gridY;
 
         return hashValue;
