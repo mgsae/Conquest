@@ -25,11 +25,11 @@ pub var canvasZoom: f32 = 1.0;
 pub var maxZoomOut: f32 = 1.0; // Recalculated in setMapSize() for max map visibility
 
 // Game map
-const STARTING_MAP_WIDTH = 1920 * 8;
-const STARTING_MAP_HEIGHT = 1080 * 8;
+const STARTING_MAP_WIDTH = 1920 * 8; // Limit for u16 coordinates: 65535
+const STARTING_MAP_HEIGHT = 1080 * 8; // Limit for u16 coordinates: 65535
 pub const GRID_CELL_SIZE = 800; //512;
-pub var mapWidth: i32 = 0;
-pub var mapHeight: i32 = 0;
+pub var mapWidth: u16 = 0;
+pub var mapHeight: u16 = 0;
 pub var gameGrid: entity.Grid = undefined;
 pub var gamePlayer: *entity.Player = undefined;
 
@@ -89,18 +89,17 @@ pub fn main() anyerror!void {
 
     // Testing/debugging
     const SPREAD = 60; // PERCENTAGE
-    const rangeX = @divTrunc(mapWidth * SPREAD, 100);
-    const rangeY = @divTrunc(mapHeight * SPREAD, 100);
+    const rangeX: u16 = @intCast(@divTrunc(@as(i32, @intCast(mapWidth)) * SPREAD, 100));
+    const rangeY: u16 = @intCast(@divTrunc(@as(i32, @intCast(mapHeight)) * SPREAD, 100));
 
     //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
-    //for (0..5000) |_| {
-    //    try entity.units.append(try entity.Unit.create(utils.randomInt(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomInt(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomInt(3)))));
-    //}
-    for (0..4000) |_| {
-        _ = entity.Structure.build(utils.randomInt(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomInt(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomInt(3))));
+    for (0..5000) |_| {
+        try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     }
-    utils.testHashFunction();
+    //for (0..4000) |_| {
+    //    _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
+    //}
 
     defer entity.units.deinit();
     defer entity.structures.deinit();
@@ -342,10 +341,10 @@ pub fn drawUI() void {
     rl.drawFPS(40, 40);
 }
 
-pub fn setMapSize(width: i32, height: i32) void {
+pub fn setMapSize(width: u16, height: u16) void {
     mapWidth = width;
     mapHeight = height;
-    // Calculates max zoom out allowed without visibility transgressing map
+    // Calculates max zoom out allowed without canvas exceeding map limits
     maxZoomOut = if (screenWidth > screenHeight) @as(f32, @floatFromInt(screenWidth)) / @as(f32, @floatFromInt(mapWidth)) else @as(f32, @floatFromInt(screenHeight)) / @as(f32, @floatFromInt(mapHeight));
 }
 

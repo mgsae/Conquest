@@ -157,12 +157,14 @@ pub fn rngInit() void {
     rng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp()))); // Initialize rng
 }
 
-pub fn randomInt(max: i32) i32 {
-    if (max < 0) {
-        std.debug.panic("randomInt called with a negative max: {}", .{max});
-    }
+pub fn randomU16(max: u16) u16 {
     const random_value = rng.next() % @as(u64, @intCast(max + 1));
-    return @as(i32, @intCast(random_value));
+    return @as(u16, @truncate(random_value));
+}
+
+pub fn randomI16(max: u16) i16 {
+    const random_value = rng.next() % @as(u64, @intCast(max + 1));
+    return @as(i16, @intCast(random_value));
 }
 
 // Math
@@ -189,6 +191,22 @@ pub fn i32TimesFloat(comptime T: type, int: i32, floatValue: T) i32 {
     return @as(i32, @intFromFloat(@as(T, @floatFromInt(int)) * floatValue));
 }
 
+pub fn u16AddFloat(comptime T: type, int: u16, floatValue: T) u16 {
+    const floatyboy = @as(T, @floatFromInt(int));
+    const resultFloat = floatyboy + floatValue;
+    const clampedResult = @max(@as(T, 0), @min(@as(T, 65535), resultFloat));
+    return @as(u16, @intFromFloat(clampedResult));
+}
+
+pub fn u16SubFloat(comptime T: type, int: u16, floatValue: T) u16 {
+    const subValue = @as(u16, @intFromFloat(floatValue));
+    return if (int >= subValue) int - subValue else return 0; // Minimum 0
+}
+
+pub fn u16TimesFloat(comptime T: type, int: u16, floatValue: T) u16 {
+    return @as(u16, @intFromFloat(@as(T, @floatFromInt(int)) * floatValue));
+}
+
 pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
     const divResult = @divTrunc(numerator, denominator);
     const remainder = @rem(numerator, denominator);
@@ -198,8 +216,8 @@ pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
 // Geometry
 //----------------------------------------------------------------------------------
 pub const Point = struct {
-    x: i32,
-    y: i32,
+    x: u16,
+    y: u16,
 };
 
 pub fn dirDelta(dir: u8) [2]i8 {
@@ -215,7 +233,7 @@ pub fn dirDelta(dir: u8) [2]i8 {
     return [2]i8{ x, y };
 }
 
-pub fn dirOffset(x: i32, y: i32, dir: u8, offset: i32) [2]i32 {
+pub fn dirOffset(x: u16, y: u16, dir: u8, offset: u16) [2]u16 {
     var oX = x;
     var oY = y;
     switch (dir) {
@@ -223,9 +241,9 @@ pub fn dirOffset(x: i32, y: i32, dir: u8, offset: i32) [2]i32 {
         4 => oX -= offset,
         6 => oX += offset,
         8 => oY -= offset,
-        else => return [2]i32{ x, y },
+        else => return [2]u16{ x, y },
     }
-    return [2]i32{ oX, oY };
+    return [2]u16{ oX, oY };
 }
 
 pub fn isHorz(dir: u8) bool {
@@ -239,43 +257,78 @@ pub const Grid = struct {
     pub const CellSize = main.GRID_CELL_SIZE;
     pub const HalfCell: comptime_int = CellSize / 2;
 
-    pub const GridCoord = struct {
-        x: usize,
-        y: usize,
-    };
-
-    pub inline fn getNeighborhood() [9][2]i32 {
-        return [_][2]i32{
-            [_]i32{ 0, 0 }, // Central cell
-            [_]i32{ -CellSize, 0 }, // Left neighbor
-            [_]i32{ CellSize, 0 }, // Right neighbor
-            [_]i32{ 0, -CellSize }, // Top neighbor
-            [_]i32{ 0, CellSize }, // Bottom neighbor
-            [_]i32{ -CellSize, -CellSize }, // Top-left
-            [_]i32{ CellSize, CellSize }, // Bottom-right
-            [_]i32{ -CellSize, CellSize }, // Bottom-left
-            [_]i32{ CellSize, -CellSize }, // Top-right
+    pub inline fn getNeighborhood() [9][2]i16 {
+        return [_][2]i16{
+            [_]i16{ 0, 0 }, // Central cell
+            [_]i16{ -CellSize, 0 }, // Left neighbor
+            [_]i16{ CellSize, 0 }, // Right neighbor
+            [_]i16{ 0, -CellSize }, // Top neighbor
+            [_]i16{ 0, CellSize }, // Bottom neighbor
+            [_]i16{ -CellSize, -CellSize }, // Top-left
+            [_]i16{ CellSize, CellSize }, // Bottom-right
+            [_]i16{ -CellSize, CellSize }, // Bottom-left
+            [_]i16{ CellSize, -CellSize }, // Top-right
         };
     }
 
-    pub fn toGridCoord(x: i32, y: i32, gridWidth: usize, gridHeight: usize) GridCoord {
-        const iX = @divFloor(x, CellSize);
-        const iY = @divFloor(y, CellSize);
-        const maxGridWidth = @as(i32, @intCast(gridWidth - 1));
-        const maxGridHeight = @as(i32, @intCast(gridHeight - 1));
-        return GridCoord{
-            .x = @as(usize, @max(0, @min(iX, maxGridWidth))),
-            .y = @as(usize, @max(0, @min(iY, maxGridHeight))),
-        };
+    pub inline fn getValidNeighbors(x: u16, y: u16, mapWidth: u16, mapHeight: u16) []const [2]u16 {
+        var neighbors: [9][2]u16 = undefined;
+        var count: usize = 0;
+        neighbors[count] = [2]u16{ x, y }; // Always include the central cell
+        count += 1;
+
+        // Check and add left neighbors
+        if (x >= CellSize) {
+            neighbors[count] = [2]u16{ x - CellSize, y };
+            count += 1;
+            if (y >= CellSize) {
+                neighbors[count] = [2]u16{ x - CellSize, y - CellSize }; // Top-left
+                count += 1;
+            }
+            if (y + CellSize <= mapHeight) {
+                neighbors[count] = [2]u16{ x - CellSize, y + CellSize }; // Bottom-left
+                count += 1;
+            }
+        }
+        // Check and add right neighbors
+        if (x + CellSize <= mapWidth) {
+            neighbors[count] = [2]u16{ x + CellSize, y };
+            count += 1;
+            if (y >= CellSize) {
+                neighbors[count] = [2]u16{ x + CellSize, y - CellSize }; // Top-right
+                count += 1;
+            }
+            if (y + CellSize <= mapHeight) {
+                neighbors[count] = [2]u16{ x + CellSize, y + CellSize }; // Bottom-right
+                count += 1;
+            }
+        }
+        if (y >= CellSize) { // Check and add top neighbor
+            neighbors[count] = [2]u16{ x, y - CellSize };
+            count += 1;
+        }
+        if (y + CellSize <= mapHeight) { // Check and add bottom neighbor
+            neighbors[count] = [2]u16{ x, y + CellSize };
+            count += 1;
+        }
+        return neighbors[0..count];
     }
 
-    pub fn closestNode(x: i32, y: i32) [2]i32 {
+    pub fn gridX(x: u16) u16 {
+        return @divFloor(x, CellSize);
+    }
+
+    pub fn gridY(y: u16) u16 {
+        return @divFloor(y, CellSize);
+    }
+
+    pub fn closestNode(x: u16, y: u16) [2]u16 {
         const closestX = @divTrunc((x + HalfCell), CellSize) * CellSize;
         const closestY = @divTrunc((y + HalfCell), CellSize) * CellSize;
-        return [2]i32{ closestX, closestY };
+        return [2]u16{ closestX, closestY };
     }
 
-    pub fn closestNodeOffset(x: i32, y: i32, dir: u8, width: u16, height: u16) [2]i32 {
+    pub fn closestNodeOffset(x: u16, y: u16, dir: u8, width: u16, height: u16) [2]u16 {
         const delta = if (isHorz(dir)) width else height;
         const offsetXy = dirOffset(x, y, dir, delta);
         return closestNode(offsetXy[0], offsetXy[1]);
@@ -283,10 +336,10 @@ pub const Grid = struct {
 };
 
 pub const SpatialHash = struct {
-    pub fn hash(x: i32, y: i32) u64 {
-        const gridX = @divFloor(x, Grid.CellSize);
-        const gridY = @divFloor(y, Grid.CellSize);
-        const hashValue = @as(u64, @intCast(gridX)) << 32 | @as(u64, @intCast(gridY));
+    pub fn hash(x: u16, y: u16) u64 {
+        const gridX = @divFloor(@as(u64, @intCast(x)), Grid.CellSize);
+        const gridY = @divFloor(@as(u64, @intCast(y)), Grid.CellSize);
+        const hashValue = (gridX << 32) | gridY;
 
         return hashValue;
     }
@@ -304,11 +357,11 @@ pub const SpatialHash = struct {
 };
 
 pub fn testHashFunction() void {
-    const min_x: i32 = 0;
-    const max_x: i32 = main.mapWidth;
-    const min_y: i32 = 0;
-    const max_y: i32 = main.mapHeight;
-    const step: i32 = 1;
+    const min_x: u16 = 0;
+    const max_x: u16 = main.mapWidth;
+    const min_y: u16 = 0;
+    const max_y: u16 = main.mapHeight;
+    const step: u16 = 1;
 
     std.log.info("\nTesting hash function. Checking hash values for positions between {}, {} and {}, {}, with an increment of {}.", .{ min_x, min_y, max_x, max_y, step });
 
@@ -316,9 +369,9 @@ pub fn testHashFunction() void {
     defer seenHashes.deinit();
     var collisionCount: usize = 0;
 
-    var x: i32 = min_x;
+    var x: u16 = min_x;
     while (x <= max_x) : (x += step * Grid.CellSize) {
-        var y: i32 = min_y; // Reset y for each new x
+        var y: u16 = min_y; // Reset y for each new x
         while (y <= max_y) : (y += step * Grid.CellSize) {
             const hashValue = SpatialHash.hash(x, y);
 
@@ -342,28 +395,32 @@ pub fn testHashFunction() void {
 
 // Map Coordinates
 //----------------------------------------------------------------------------------
-pub fn isOnMap(x: i32, y: i32) bool {
+pub fn isOnMap(x: u16, y: u16) bool {
     return x >= 0 and x < main.mapWidth and y >= 0 and y <= main.mapHeight;
 }
 
-pub fn isInMap(x: i32, y: i32, width: i32, height: i32) bool {
+pub fn isInMap(x: u16, y: u16, width: u16, height: u16) bool {
     return x - @divTrunc(width, 2) >= 0 and x + @divTrunc(width, 2) < main.mapWidth and y - @divTrunc(height, 2) >= 0 and y + @divTrunc(height, 2) <= main.mapHeight;
 }
 
-pub fn mapClampX(x: i32, width: i32) i32 {
-    return @min(main.mapWidth - @divTrunc(width, 2), @max(x, @divTrunc(width, 2)));
+pub fn mapClampX(x: i16, width: u16) u16 {
+    const halfWidth = @as(i16, @intCast(@divTrunc(width, 2)));
+    const clampedX = @max(halfWidth, @min(x, @as(i16, @intCast(main.mapWidth)) - halfWidth));
+    return @as(u16, @intCast(clampedX));
 }
 
-pub fn mapClampY(y: i32, height: i32) i32 {
-    return @min(main.mapHeight - @divTrunc(height, 2), @max(y, @divTrunc(height, 2)));
+pub fn mapClampY(y: i16, height: u16) u16 {
+    const halfHeight = @as(i16, @intCast(@divTrunc(height, 2)));
+    const clampedY = @max(halfHeight, @min(y, @as(i16, @intCast(main.mapHeight)) - halfHeight));
+    return @as(u16, @intCast(clampedY));
 }
 
-pub fn closestNexus(x: i32, y: i32) [2]i32 {
+pub fn closestNexus(x: u16, y: u16) [2]u16 {
     const quadSize = main.GRID_CELL_SIZE / 2;
     const nexLength = quadSize / 2;
     const closestX = @divTrunc(x, quadSize) * quadSize + nexLength;
     const closestY = @divTrunc(y, quadSize) * quadSize + nexLength;
-    return [2]i32{ closestX, closestY };
+    return [2]u16{ closestX, closestY };
 }
 
 // Canvas
