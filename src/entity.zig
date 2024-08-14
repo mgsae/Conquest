@@ -102,6 +102,7 @@ pub const Player = struct {
         var obstacleX: ?*Entity = null;
         var obstacleY: ?*Entity = null;
 
+        // Processes movement input
         if (main.keys.actionActive(keyInput, utils.Key.Action.MoveUp)) {
             newY = utils.mapClampY(@truncate(utils.i32SubFloat(f32, self.y, speed)), self.height);
             self.direction = 8; // Numpad direction
@@ -119,12 +120,13 @@ pub const Player = struct {
             self.direction = 6; // Numpad direction
         }
 
+        // Gets potential obstacle entities
         if (newX != null)
             obstacleX = main.gameGrid.collidesWith(newX.?, self.y, self.width, self.height, Player.getEntity(self)) catch null;
-
         if (newY != null)
             obstacleY = main.gameGrid.collidesWith(self.x, newY.?, self.width, self.height, Player.getEntity(self)) catch null;
 
+        // Executes horizontal movement
         if (newX != null) {
             if (obstacleX == null) {
                 self.x = newX.?;
@@ -142,6 +144,7 @@ pub const Player = struct {
             }
         }
 
+        // Executes vertical movement
         if (newY != null) {
             if (obstacleY == null) {
                 self.y = newY.?;
@@ -159,6 +162,7 @@ pub const Player = struct {
             }
         }
 
+        // If new movement, updates game grid
         if ((newX != null and newX.? != oldX) or (newY != null and newY.? != oldY)) {
             main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
         }
@@ -278,12 +282,13 @@ pub const Unit = struct {
     }
 
     pub fn update(self: *Unit) void {
+        // Get move delta, determine movement based on AI logic
         const dx = @as(f16, @floatFromInt(utils.randomI16(2) - 1)) * 1; // Test
         const dy = @as(f16, @floatFromInt(utils.randomI16(2) - 1)) * 1; // Test
         _ = self.move(dx, dy);
-        // move, determine movement based on AI logic
         self.updateCellSignature(); // Update after moving
-        // act, determine based on AI logic
+        // Act, determine based on AI logic
+        // Drain life
         self.life -= 1;
         if (self.life <= 0) self.die(null);
     }
