@@ -185,6 +185,12 @@ pub fn deltaToAngle(dx: i32, dy: i32) f32 { // Supports fractional degrees
     return if (angle_degrees < 0) angle_degrees + 360.0 else angle_degrees;
 }
 
+pub fn vectorPoint(x: u16, y: u16, dX: f32, dY: f32) Point {
+    const endX: f32 = @max(0, @as(f32, @floatFromInt(x)) + dX);
+    const endY: f32 = @max(0, @as(f32, @floatFromInt(y)) + dY);
+    return Point.at(@as(u16, @intFromFloat(@round(endX))), @as(u16, @intFromFloat(@round(endY)))); // Ah, sweet zig syntax
+}
+
 /// Equivalent to std.math.clamp
 pub fn clamp(val: anytype, lower: anytype, upper: anytype) @TypeOf(val, lower, upper) {
     return @max(lower, @min(val, upper));
@@ -229,6 +235,13 @@ pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
 pub const Point = struct {
     x: u16,
     y: u16,
+
+    pub fn at(x: u16, y: u16) Point {
+        return Point{
+            .x = x,
+            .y = y,
+        };
+    }
 };
 
 pub fn dirDelta(dir: u8) [2]i8 {
@@ -268,8 +281,8 @@ pub fn bigger(w1: u16, h1: u16, w2: u16, h2: u16) u2 {
 
 /// Compares area sizes, returning the factor of `w1` * `h1` and `w2` * `h2`.
 pub fn sizeFactor(w1: u16, h1: u16, w2: u16, h2: u16) f32 {
-    const area1 = @as(f32, w1) * @as(f32, h1);
-    const area2 = @as(f32, w2) * @as(f32, h2);
+    const area1 = @as(f32, @floatFromInt(w1)) * @as(f32, @floatFromInt(h1));
+    const area2 = @as(f32, @floatFromInt(w2)) * @as(f32, @floatFromInt(h2));
     return area1 / area2;
 }
 
@@ -423,7 +436,13 @@ pub fn isOnMap(x: u16, y: u16) bool {
 }
 
 pub fn isInMap(x: u16, y: u16, width: u16, height: u16) bool {
-    return x - @divTrunc(width, 2) >= 0 and x + @divTrunc(width, 2) < main.mapWidth and y - @divTrunc(height, 2) >= 0 and y + @divTrunc(height, 2) <= main.mapHeight;
+    const halfWidth = @divTrunc(width, 2);
+    const halfHeight = @divTrunc(height, 2);
+
+    const xSigned = @as(i32, @intCast(x));
+    const ySigned = @as(i32, @intCast(y));
+
+    return xSigned - halfWidth >= 0 and xSigned + halfWidth < @as(i32, @intCast(main.mapWidth)) and ySigned - halfHeight >= 0 and ySigned + halfHeight <= @as(i32, @intCast(main.mapHeight));
 }
 
 pub fn mapClampX(x: i16, width: u16) u16 {
