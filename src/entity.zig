@@ -14,7 +14,7 @@ const EntityType = enum {
     Structure,
 };
 
-const Entity = struct {
+pub const Entity = struct {
     entityType: EntityType,
     entity: union(EntityType) { // Stores pointer to the actual data
         Player: *Player,
@@ -23,7 +23,7 @@ const Entity = struct {
     },
 };
 
-fn entityWidth(entity: *Entity) u16 {
+pub fn entityWidth(entity: *Entity) u16 {
     return switch (entity.entityType) {
         EntityType.Player => entity.entity.Player.width,
         EntityType.Unit => entity.entity.Unit.width,
@@ -31,7 +31,7 @@ fn entityWidth(entity: *Entity) u16 {
     };
 }
 
-fn entityHeight(entity: *Entity) u16 {
+pub fn entityHeight(entity: *Entity) u16 {
     return switch (entity.entityType) {
         EntityType.Player => entity.entity.Player.height,
         EntityType.Unit => entity.entity.Unit.height,
@@ -39,7 +39,7 @@ fn entityHeight(entity: *Entity) u16 {
     };
 }
 
-fn entityX(entity: *Entity) u16 {
+pub fn entityX(entity: *Entity) u16 {
     return switch (entity.entityType) {
         EntityType.Player => entity.entity.Player.x,
         EntityType.Unit => entity.entity.Unit.x,
@@ -47,7 +47,7 @@ fn entityX(entity: *Entity) u16 {
     };
 }
 
-fn entityY(entity: *Entity) u16 {
+pub fn entityY(entity: *Entity) u16 {
     return switch (entity.entityType) {
         EntityType.Player => entity.entity.Player.y,
         EntityType.Unit => entity.entity.Unit.y,
@@ -84,8 +84,13 @@ pub const Player = struct {
     pub fn update(self: *Player, keyInput: ?u32) anyerror!void {
         if (self.local) { // Local player
             if (keyInput) |input| {
-                try self.updateMoveInput(input);
-                try self.updateActionInput(input);
+                if (input > 0) {
+                    // std.debug.print("Key input!\n", .{});
+                    try self.updateMoveInput(input);
+                    try self.updateActionInput(input);
+                } else {
+                    // std.debug.print("No key input.\n", .{});
+                }
             }
         } else { // If AI or remote player
             // updateMoveEvent, determine movement based on network or AI logic
@@ -132,14 +137,13 @@ pub const Player = struct {
             if (obstacleX == null) {
                 self.x = newX.?;
             } else if (newY == null and obstacleX.?.entityType == EntityType.Unit) { // If unit obstacle, try pushing horizontally
-
                 const resistance = 0.1; // maybe depend on size relation
                 const force = (1.0 - resistance);
                 const difference = @as(f64, @floatFromInt(@as(i32, newX.?) - @as(i32, oldX)));
                 newX = @as(u16, @intCast(@as(i32, oldX) + @as(i32, @intFromFloat(difference * force))));
 
                 // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
-                const pushDistance = obstacleX.?.entity.Unit.moved(self.direction, speed * force);
+                const pushDistance = obstacleX.?.entity.Unit.moved(utils.angleFromDir(self.direction), speed * force);
                 if (pushDistance >= speed * force) {
                     obstacleX = main.gameGrid.collidesWith(newX.?, self.y, self.width, self.height, self.getEntity()) catch null;
                 } else {
@@ -155,14 +159,13 @@ pub const Player = struct {
             if (obstacleY == null) {
                 self.y = newY.?;
             } else if (newX == null and obstacleY.?.entityType == EntityType.Unit) { // If unit collider, try pushing vertically
-
                 const resistance = 0.1; // maybe depend on size relation
                 const force = (1.0 - resistance);
                 const difference = @as(f64, @floatFromInt(@as(i32, newY.?) - @as(i32, oldY)));
                 newY = @as(u16, @intCast(@as(i32, oldY) + @as(i32, @intFromFloat(difference * force))));
 
                 // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
-                const pushDistance = obstacleY.?.entity.Unit.moved(self.direction, speed * force);
+                const pushDistance = obstacleY.?.entity.Unit.moved(utils.angleFromDir(self.direction), speed * force);
                 if (pushDistance >= speed * force) {
                     obstacleY = main.gameGrid.collidesWith(self.x, newY.?, self.width, self.height, self.getEntity()) catch null;
                 } else {
@@ -306,7 +309,7 @@ pub const Unit = struct {
         if (self.life <= 0) self.die(null);
     }
 
-    /// Searches for collision. If no obstacle is found, sets position to `x`, `y`. If obstacle is found, unit escapes if equal to or smaller than the obstacle.
+    /// Searches for collision. If no obstacle is found, sets position to `x`, `y`. If obstacle of equal or smaller size is found, it is pushed out of the way.
     fn move(self: *Unit, x: u16, y: u16) void {
         const oldX = self.x;
         const oldY = self.y;
@@ -321,11 +324,24 @@ pub const Unit = struct {
             // Other idea: Cell signatures for each hash map value update every frame, compare with entity's cached cell signature
             // Only check for new obstacles if difference in signature
 
+            if (self.cellsign == main.gameGrid.getSignature(utils.Grid.gridX(self.x), utils.Grid.gridY(self.y))) {
+
+                // Does nothing here for now . . .
+
+            }
+
             const obstacle = main.gameGrid.collidesWith(newX, newY, self.width, self.height, self.getEntity()) catch null;
+
             if (obstacle == null) { // No obstacle, move
                 self.x = newX;
                 self.y = newY;
                 main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
+            } else if (biggerEntity(getEntity(self), obstacle.?) != obstacle.?) { // Unit is equal to or larger than obstacle (so same class = push each other)
+                if (obstacle.?.entityType == EntityType.Unit) {
+                    const obstacleUnit = obstacle.?.entity.Unit;
+                    // Pushes obstacle away, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
+                    _ = obstacleUnit.moved(utils.angleFromTo(self.x, self.y, obstacleUnit.x, obstacleUnit.y), self.speed());
+                }
             }
         }
 
@@ -334,30 +350,25 @@ pub const Unit = struct {
 
     /// Unit is an obstacle pushed by another entity. Searches for collision. If no collateral obstacle is found, unit moves `distance`.
     /// If collateral obstacle is another unit, moved unit pushes on the obstacle unit, then moves size-factored distance. Returns the actual moved distance.
-    pub fn moved(self: *Unit, dir: u8, distance: f32) f32 {
+    pub fn moved(self: *Unit, angle: f32, distance: f32) f32 {
         const oldX = self.x;
         const oldY = self.y;
-        const deltaXy = utils.dirDelta(dir);
-        const newX = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + distance * @as(f32, @floatFromInt(deltaXy[0]))));
-        const newY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + distance * @as(f32, @floatFromInt(deltaXy[1]))));
+        const deltaXy = utils.vectorToDelta(angle, distance);
+        const newX = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + deltaXy[0]));
+        const newY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + deltaXy[1]));
         var movedDistance: f32 = distance;
 
-        std.debug.print("Unit {} is being moved.\n", .{@intFromPtr(self)});
+        //std.debug.print("Unit {} is being moved.\n", .{@intFromPtr(self)});
 
-        // Squeeze to flag unit as being pushed and prevent function call circularity
-        if (utils.isHorz(dir)) {
-            self.height -= 1;
-            self.width += 1;
-        } else {
-            self.width -= 1;
-            self.height += 1;
-        }
+        // Squeeze to flag unit as a pushee, preventing function call circularity
+        self.width -= 1;
+        self.height -= 1;
 
         if (utils.isInMap(newX, newY, self.width, self.height)) {
             const obstacle = main.gameGrid.collidesWith(newX, newY, self.width, self.height, self.getEntity()) catch null;
 
             if (obstacle == null) { // Pushing doesn't collide with another obstacle
-                std.debug.print("Moved {} meets no obstacle.\n", .{@intFromPtr(self)});
+                //std.debug.print("Moved {} meets no obstacle.\n", .{@intFromPtr(self)});
                 self.x = newX;
                 self.y = newY;
                 main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
@@ -366,24 +377,25 @@ pub const Unit = struct {
                 const obstacleUnit = obstacle.?.entity.Unit;
 
                 if (obstacleUnit.width != classProperties(obstacleUnit.class).width or obstacleUnit.height != classProperties(obstacleUnit.class).height) {
-                    std.debug.print("Moved unit {} found an obstacle, unit {}. It is already being pushed, so stopping here.\n", .{ @intFromPtr(self), @intFromPtr(obstacleUnit) });
+                    //std.debug.print("Moved unit {} found an obstacle, unit {}. It is already being pushed, so stopping here.\n", .{ @intFromPtr(self), @intFromPtr(obstacleUnit) });
                     movedDistance = 0.0;
                 } else {
-                    movedDistance = moved(obstacleUnit, dir, @min(distance, distance * utils.sizeFactor(self.width, self.height, obstacleUnit.width, obstacleUnit.height)));
-                    std.debug.print("Moved unit {} found an obstacle, unit {}. Pushing it in turn, distance changed from {} to {}.\n", .{ @intFromPtr(self), @intFromPtr(obstacleUnit), distance, movedDistance });
+                    movedDistance = moved(obstacleUnit, angle, @min(distance, distance * utils.sizeFactor(self.width, self.height, obstacleUnit.width, obstacleUnit.height)));
+                    //std.debug.print("Moved unit {} found an obstacle, unit {}. Pushing it in turn, distance changed from {} to {}.\n", .{ @intFromPtr(self), @intFromPtr(obstacleUnit), distance, movedDistance });
 
-                    const pushNewX = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + movedDistance * @as(f32, @floatFromInt(deltaXy[0]))));
-                    const pushNewY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + movedDistance * @as(f32, @floatFromInt(deltaXy[1]))));
+                    const pushDeltaXy = utils.vectorToDelta(angle, movedDistance);
+                    const pushNewX = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + pushDeltaXy[0]));
+                    const pushNewY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + pushDeltaXy[1]));
 
                     // For now just moves, doesn't take into account collision at this new spot
                     self.x = pushNewX;
                     self.y = pushNewY;
                     main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
-                    std.debug.print("Pushing distance: {}.\n", .{movedDistance});
+                    //std.debug.print("Pushing distance: {}.\n", .{movedDistance});
                 }
             }
         }
-        // Resets dimensions to flag as ready for some pushin' again
+        // Resets dimensions to flag as ready for some future pushin'
         self.width = classProperties(self.class).width;
         self.height = classProperties(self.class).height;
         return movedDistance; // Returns effective moved distance
@@ -395,17 +407,20 @@ pub const Unit = struct {
         const prevTarget = self.target;
 
         self.target = utils.Point.at(x, y);
-        return prevTarget != self.target;
+        return prevTarget.x != self.target.x or prevTarget.y != self.target.y;
     }
 
     /// Calculates and returns the unit's immediate destination based on its current `target` and `cellsign`.
     fn getStep(self: *Unit) utils.Point {
         // do more stuff here for pathing
-        const dx = @as(i32, @intCast(self.x)) - @as(i32, @intCast(self.target.x));
-        const dy = @as(i32, @intCast(self.y)) - @as(i32, @intCast(self.target.y));
+        const dx = @as(i32, @intCast(self.target.x)) - @as(i32, @intCast(self.x));
+        const dy = @as(i32, @intCast(self.target.y)) - @as(i32, @intCast(self.y));
+        if (@abs(dx + dy) < @as(i32, @intFromFloat(self.speed()))) {
+            _ = self.retarget(utils.randomU16(main.mapWidth), utils.randomU16(main.mapHeight)); // <--- just testing
+        }
         const angle = utils.deltaToAngle(dx, dy);
-        const vector = utils.angleToVector(angle, self.speed());
-        return utils.vectorPoint(self.x, self.y, vector[0], vector[1]);
+        const vector = utils.vectorToDelta(angle, self.speed());
+        return utils.deltaPoint(self.x, self.y, vector[0], vector[1]);
     }
 
     pub fn create(x: u16, y: u16, class: u8) !*Unit {
@@ -464,10 +479,10 @@ pub const Unit = struct {
     /// Unit property distribution templates.
     pub fn classProperties(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .speed = 4, .color = rl.Color.sky_blue, .width = 44, .height = 44, .life = 2000 },
-            1 => Properties{ .speed = 5, .color = rl.Color.blue, .width = 28, .height = 28, .life = 3000 },
-            2 => Properties{ .speed = 3, .color = rl.Color.dark_blue, .width = 64, .height = 64, .life = 4000 },
-            3 => Properties{ .speed = 5, .color = rl.Color.violet, .width = 32, .height = 32, .life = 5000 },
+            0 => Properties{ .speed = 3, .color = rl.Color.sky_blue, .width = 30, .height = 30, .life = 3000 },
+            1 => Properties{ .speed = 3.5, .color = rl.Color.blue, .width = 25, .height = 25, .life = 4000 },
+            2 => Properties{ .speed = 2, .color = rl.Color.dark_blue, .width = 45, .height = 45, .life = 5000 },
+            3 => Properties{ .speed = 4, .color = rl.Color.violet, .width = 35, .height = 35, .life = 6000 },
             else => @panic("Invalid unit class"),
         };
     }
@@ -649,7 +664,7 @@ pub const Projectile = struct {
     class: u8,
 
     pub fn update(self: Projectile) void {
-        const delta = utils.angleToVector(self.angle, self.speed);
+        const delta = utils.vectorToDelta(self.angle, self.speed);
         self.x = utils.u16AddFloat(f32, self.x, delta[0]);
         self.y = utils.u16AddFloat(f32, self.y, delta[1]);
         self.life -= 1;

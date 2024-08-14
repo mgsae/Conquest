@@ -44,9 +44,8 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
-    //rl.toggleFullscreen();
-    rl.setWindowFocused();
-    //rl.setTargetFPS(120);
+    rl.toggleFullscreen();
+    //rl.setTargetFPS(60);
 
     // Initialize utility
     //--------------------------------------------------------------------------------------
@@ -129,9 +128,6 @@ pub fn main() anyerror!void {
         if (profileFrame) utils.startTimer(1, "- Processing input.");
         processInput(&accumulatedMouseWheel, &accumulatedKeyInput);
         if (profileFrame) utils.endTimer(1, "Processing input took {} seconds.");
-        if (profileFrame) utils.startTimer(1, "- Updating controls.");
-        updateControls(accumulatedMouseWheel, accumulatedKeyInput);
-        if (profileFrame) utils.endTimer(1, "Updating controls took {} seconds.");
         if (profileFrame) utils.endTimer(0, "Input phase took {} seconds in total.\n");
 
         // Logic
@@ -147,7 +143,10 @@ pub fn main() anyerror!void {
             if (profileFrame) utils.startTimer(1, "- Updating cell signatures.");
             gameGrid.updateCellSignatures(); // Updates gameGrid.signatures array
             if (profileFrame) utils.endTimer(1, "Updating cell signatures took {} seconds.");
+
             try updateLogic(accumulatedKeyInput, profileFrame);
+            updateControls(accumulatedMouseWheel, accumulatedKeyInput, profileFrame);
+
             accumulatedMouseWheel = 0.0;
             accumulatedKeyInput = 0;
 
@@ -206,10 +205,12 @@ fn processInput(accumulatedMouseWheel: *f32, accumulatedKeyInput: *u32) void {
     if (rl.isKeyPressed(rl.KeyboardKey.key_enter) or rl.isKeyPressed(rl.KeyboardKey.key_kp_enter)) accumulatedKeyInput.* |= @intFromEnum(utils.Key.InputValue.Enter);
 }
 
-fn updateControls(mouseWheelDelta: f32, keyInput: u32) void {
+fn updateControls(mouseWheelDelta: f32, keyInput: u32, profileFrame: bool) void {
+    if (profileFrame) utils.startTimer(1, "- Updating controls.");
     updateCanvasZoom(mouseWheelDelta);
     updateCanvasPosition(keyInput);
     if (keys.actionActive(keyInput, utils.Key.Action.SpecialEnter)) profileMode = !profileMode; // Enter toggles profile mode (verbose logs) for now
+    if (profileFrame) utils.endTimer(1, "Updating controls took {} seconds.");
 }
 
 fn updateLogic(keyInput: u32, profileFrame: bool) !void {
@@ -279,8 +280,9 @@ pub fn updateCanvasPosition(keyInput: u32) void {
 
     if ((keyInput & (1 << 9)) != 0) {
         // Space key centers camera on player
-        canvasOffsetX = -(@as(f32, @floatFromInt(gamePlayer.x)) * canvasZoom) + (screenWidthF / 2);
-        canvasOffsetY = -(@as(f32, @floatFromInt(gamePlayer.y)) * canvasZoom) + (screenHeightF / 2);
+        utils.canvasOnPlayer();
+        //canvasOffsetX = -(@as(f32, @floatFromInt(gamePlayer.x)) * canvasZoom) + (screenWidthF / 2);
+        //canvasOffsetY = -(@as(f32, @floatFromInt(gamePlayer.y)) * canvasZoom) + (screenHeightF / 2);
     } else {
         // Mouse edge scrolls camera
         if (mouseX < edgeMarginW) {

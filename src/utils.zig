@@ -172,24 +172,6 @@ pub fn randomI16(max: u16) i16 {
 
 // Math
 //----------------------------------------------------------------------------------
-pub fn angleToVector(angle: f32, magnitude: f32) [2]f32 {
-    const radians = angle * std.math.pi / 180.0;
-    return [2]f32{ magnitude * std.math.cos(radians), magnitude * std.math.sin(radians) };
-}
-
-pub fn deltaToAngle(dx: i32, dy: i32) f32 { // Supports fractional degrees
-    const dxF = @as(f32, @floatFromInt(dx));
-    const dyF = @as(f32, @floatFromInt(dy));
-    const angle_radians = @as(f32, std.math.atan2(dxF, dyF));
-    const angle_degrees = angle_radians * (180.0 / std.math.pi);
-    return if (angle_degrees < 0) angle_degrees + 360.0 else angle_degrees;
-}
-
-pub fn vectorPoint(x: u16, y: u16, dX: f32, dY: f32) Point {
-    const endX: f32 = @max(0, @as(f32, @floatFromInt(x)) + dX);
-    const endY: f32 = @max(0, @as(f32, @floatFromInt(y)) + dY);
-    return Point.at(@as(u16, @intFromFloat(@round(endX))), @as(u16, @intFromFloat(@round(endY)))); // Ah, sweet zig syntax
-}
 
 /// Equivalent to std.math.clamp
 pub fn clamp(val: anytype, lower: anytype, upper: anytype) @TypeOf(val, lower, upper) {
@@ -244,6 +226,10 @@ pub const Point = struct {
     }
 };
 
+pub fn deltaXy(x1: u16, y1: u16, x2: u16, y2: u16) [2]i16 {
+    return [2]i16{ @as(i16, @intCast(x1)) - @as(i16, @intCast(x2)), @as(i16, @intCast(y1)) - @as(i16, @intCast(y2)) };
+}
+
 pub fn dirDelta(dir: u8) [2]i8 {
     var x: i8 = 0;
     var y: i8 = 0;
@@ -270,8 +256,49 @@ pub fn dirOffset(x: u16, y: u16, dir: u8, offset: u16) [2]u16 {
     return [2]u16{ oX, oY };
 }
 
+pub fn angleFromDir(dir: u8) f32 {
+    return switch (dir) {
+        1 => 225.0,
+        2 => 270.0,
+        3 => 315.0,
+        4 => 180.0,
+        6 => 0.0,
+        7 => 135.0,
+        8 => 90.0,
+        9 => 45.0,
+        else => 270.0, // Defaults to down for invalid input
+    };
+}
+
 pub fn isHorz(dir: u8) bool {
     return dir == 4 or dir == 6;
+}
+
+/// Takes `angle` and `magnitude`, and returns the corresponding `x`,`y` coordinate offset from origin.
+pub fn vectorToDelta(angle: f32, magnitude: f32) [2]f32 {
+    const radians = angle * std.math.pi / 180.0;
+    return [2]f32{ magnitude * std.math.cos(radians), magnitude * std.math.sin(radians) };
+}
+
+/// Takes an `x`,`y` offset from origin, and returns the corresponding angle (`0.0 - 360.0`).
+pub fn deltaToAngle(dx: i32, dy: i32) f32 { // Supports fractional degrees
+    const dxF = @as(f32, @floatFromInt(dx));
+    const dyF = @as(f32, @floatFromInt(dy));
+    const angle_radians = @as(f32, std.math.atan2(dxF, dyF));
+    const angle_degrees = angle_radians * (180.0 / std.math.pi);
+    return if (angle_degrees < 0) angle_degrees + 360.0 else angle_degrees;
+}
+
+/// Takes an `x`,`y` origin coordinate and a `dX`,`dY` displacement. Returns the `Point` after translation.
+pub fn deltaPoint(x: u16, y: u16, dX: f32, dY: f32) Point {
+    const endX: f32 = @max(0, @as(f32, @floatFromInt(x)) + dX);
+    const endY: f32 = @max(0, @as(f32, @floatFromInt(y)) + dY);
+    return Point.at(@as(u16, @intFromFloat(@round(endX))), @as(u16, @intFromFloat(@round(endY)))); // Ah, sweet zig syntax
+}
+
+pub fn angleFromTo(x1: u16, y1: u16, x2: u16, y2: u16) f32 {
+    const delta = deltaXy(x1, y1, x2, y2);
+    return deltaToAngle(delta[0], delta[1]);
 }
 
 /// Returns 0 if size of area1 > area2. Returns 1 if size of area1 < area2. Otherwise returns 2.
