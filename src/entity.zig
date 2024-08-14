@@ -102,6 +102,7 @@ pub const Player = struct {
         var obstacleX: ?*Entity = null;
         var obstacleY: ?*Entity = null;
 
+        // Processes movement input
         if (main.keys.actionActive(keyInput, utils.Key.Action.MoveUp)) {
             newY = utils.mapClampY(@truncate(utils.i32SubFloat(f32, self.y, speed)), self.height);
             self.direction = 8; // Numpad direction
@@ -119,12 +120,14 @@ pub const Player = struct {
             self.direction = 6; // Numpad direction
         }
 
+        // Gets potential obstacle entities
         if (newX != null)
             obstacleX = main.gameGrid.collidesWith(newX.?, self.y, self.width, self.height, self.getEntity()) catch null;
 
         if (newY != null)
             obstacleY = main.gameGrid.collidesWith(self.x, newY.?, self.width, self.height, self.getEntity()) catch null;
 
+        // Executes horizontal movement
         if (newX != null) {
             if (obstacleX == null) {
                 self.x = newX.?;
@@ -147,6 +150,7 @@ pub const Player = struct {
             }
         }
 
+        // Executes vertical movement
         if (newY != null) {
             if (obstacleY == null) {
                 self.y = newY.?;
@@ -169,6 +173,7 @@ pub const Player = struct {
             }
         }
 
+        // If new movement, updates game grid
         if ((newX != null and newX.? != oldX) or (newY != null and newY.? != oldY)) {
             main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
         }
