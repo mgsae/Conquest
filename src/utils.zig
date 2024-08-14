@@ -258,15 +258,15 @@ pub fn dirOffset(x: u16, y: u16, dir: u8, offset: u16) [2]u16 {
 
 pub fn angleFromDir(dir: u8) f32 {
     return switch (dir) {
-        1 => 225.0,
-        2 => 270.0,
-        3 => 315.0,
-        4 => 180.0,
-        6 => 0.0,
-        7 => 135.0,
-        8 => 90.0,
-        9 => 45.0,
-        else => 270.0, // Defaults to down for invalid input
+        1 => 135.0, ////// Down-Left
+        2 => 90.0, /////// Down
+        3 => 45.0, /////// Down-Right
+        4 => 180.0, ////// Left
+        6 => 0.0, //////// Right
+        7 => 225.0, ////// Up-Left
+        8 => 270.0, ////// Up
+        9 => 315.0, ////// Up-Right
+        else => 90.0, //// Defaults to down for invalid input
     };
 }
 
@@ -513,10 +513,18 @@ pub fn canvasScale(scale: i32, zoom: f32) i32 {
 }
 
 pub fn canvasOnPlayer() void {
-    const screenWidthF = @as(f32, @floatFromInt(main.screenWidth));
-    const screenHeightF = @as(f32, @floatFromInt(main.screenHeight));
+    const screenWidthF = @as(f32, @floatFromInt(rl.getScreenWidth()));
+    const screenHeightF = @as(f32, @floatFromInt(rl.getScreenHeight()));
     main.canvasOffsetX = -(@as(f32, @floatFromInt(main.gamePlayer.x)) * main.canvasZoom) + (screenWidthF / 2);
     main.canvasOffsetY = -(@as(f32, @floatFromInt(main.gamePlayer.y)) * main.canvasZoom) + (screenHeightF / 2);
+}
+
+pub fn getMaxCanvasSize(screenWidth: i32, screenHeight: i32, mapWidth: u16, mapHeight: u16) f32 {
+    if (screenWidth > screenHeight) {
+        return @as(f32, @floatFromInt(screenWidth)) / @as(f32, @floatFromInt(mapWidth));
+    } else {
+        return @as(f32, @floatFromInt(screenHeight)) / @as(f32, @floatFromInt(mapHeight));
+    }
 }
 
 // Drawing

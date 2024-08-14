@@ -44,7 +44,27 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     rl.initWindow(screenWidth, screenHeight, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
-    rl.toggleFullscreen();
+
+    const flags = rl.ConfigFlags{
+        .fullscreen_mode = false,
+        .window_resizable = true,
+        .window_undecorated = false, // Removes window border
+        .window_transparent = false,
+        .msaa_4x_hint = false,
+        .vsync_hint = true,
+        .window_hidden = false,
+        .window_always_run = false,
+        .window_minimized = false,
+        .window_maximized = false,
+        .window_unfocused = false,
+        .window_topmost = false,
+        .window_highdpi = false,
+        .window_mouse_passthrough = false,
+        .borderless_windowed_mode = false,
+        .interlaced_hint = false,
+    };
+    rl.setWindowState(flags);
+    //rl.setWindowSize(screenWidth, screenHeight);
     //rl.setTargetFPS(60);
 
     // Initialize utility
@@ -249,10 +269,10 @@ fn draw(profileFrame: bool) void {
 
 pub fn updateCanvasZoom(mouseWheelDelta: f32) void {
     const i = mouseWheelDelta;
+    maxZoomOut = utils.getMaxCanvasSize(screenWidth, screenHeight, mapWidth, mapHeight); // For window resizing
     if (i != 0) {
         const oldZoom: f32 = canvasZoom;
-
-        const zoomChange: f32 = 1 + (0.025 * i);
+        const zoomChange: f32 = 1 + (0.025 * i); // zoom rate
         canvasZoom = @min(@max(maxZoomOut, canvasZoom * zoomChange), 10.0); // From <1 (full map) to 10 (zoomed in)
 
         // Adjust offsets to zoom around the mouse position
@@ -272,8 +292,8 @@ pub fn updateCanvasZoom(mouseWheelDelta: f32) void {
 pub fn updateCanvasPosition(keyInput: u32) void {
     const mouseX = @as(f32, @floatFromInt(rl.getMouseX()));
     const mouseY = @as(f32, @floatFromInt(rl.getMouseY()));
-    const screenWidthF = @as(f32, @floatFromInt(screenWidth));
-    const screenHeightF = @as(f32, @floatFromInt(screenHeight));
+    const screenWidthF = @as(f32, @floatFromInt(rl.getScreenWidth()));
+    const screenHeightF = @as(f32, @floatFromInt(rl.getScreenHeight()));
     const edgeMarginW: f32 = screenWidthF / 10.0;
     const edgeMarginH: f32 = screenHeightF / 10.0;
     const effectiveScrollSpeed: f32 = @as(f32, @floatCast(SCROLL_SPEED)) / @max(1, canvasZoom * 0.1);
@@ -316,7 +336,7 @@ pub fn updateCanvasPosition(keyInput: u32) void {
 /// Draws map and grid markers relative to current canvas
 pub fn drawMap() void {
     // Draw the map area
-    utils.drawRect(0, 0, mapWidth, mapHeight, rl.Color.ray_white);
+    utils.drawRect(0, 0, mapWidth, mapHeight, rl.Color.dark_gray);
     // Draw grid lines
     var rowIndex: i32 = 1;
     while (rowIndex * utils.Grid.CellSize < mapHeight) : (rowIndex += 1) {
@@ -349,7 +369,7 @@ pub fn setMapSize(width: u16, height: u16) void {
     mapWidth = width;
     mapHeight = height;
     // Calculates max zoom out allowed without canvas exceeding map limits
-    maxZoomOut = if (screenWidth > screenHeight) @as(f32, @floatFromInt(screenWidth)) / @as(f32, @floatFromInt(mapWidth)) else @as(f32, @floatFromInt(screenHeight)) / @as(f32, @floatFromInt(mapHeight));
+    maxZoomOut = utils.getMaxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), mapWidth, mapHeight);
 }
 
 // Game conditions
