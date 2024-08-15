@@ -62,14 +62,6 @@ pub const Entity = struct {
             2, 3 => return null,
         }
     }
-
-    pub fn updateCellsign(self: *Entity) void {
-        switch (self.kind) {
-            Kind.Player => {}, // No action for Player (yet?)
-            Kind.Unit => self.content.Unit.updateCellsign(),
-            Kind.Structure => {}, // No action for Structure (yet?)
-        }
-    }
 };
 
 // Player //
@@ -143,8 +135,8 @@ pub const Player = struct {
         // std.debug.print("Player movement direction: {}. Delta to angle: {}. Angle from dir: {}. Vector to delta: {any}.\n", .{ self.direction, @as(i64, @intFromFloat(utils.deltaToAngle(deltaXy[0], deltaXy[1]))), utils.angleFromDir(self.direction), utils.vectorToDelta(utils.deltaToAngle(deltaXy[0], deltaXy[1]), speed) });
 
         // Gets potential obstacle entities on both axes
-        if (new_x != null) obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.getEntity()) catch null;
-        if (new_y != null) obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.getEntity()) catch null;
+        if (new_x != null) obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.entity) catch null;
+        if (new_y != null) obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.entity) catch null;
 
         // Executes horizontal movement
         if (new_x != null) {
@@ -161,10 +153,10 @@ pub const Player = struct {
                 const push_distance = obstacleX.?.content.Unit.pushed(utils.angleFromDir(self.direction), speed * force);
                 std.debug.print("Horizontal push distance: {}\n", .{push_distance});
                 if (push_distance >= speed * force) {
-                    obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.getEntity()) catch null;
+                    obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.entity) catch null;
                 } else {
                     new_x = @as(u16, @intCast(@as(i32, old_x) + @as(i32, @intFromFloat(push_distance)))); // Moves effective push distance and re-checks collision
-                    obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.getEntity()) catch null;
+                    obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.entity) catch null;
                 }
                 if (obstacleX == null) self.x = new_x.?; // If no collision now, repositions x
             }
@@ -185,10 +177,10 @@ pub const Player = struct {
                 const push_distance = obstacleY.?.content.Unit.pushed(utils.angleFromDir(self.direction), speed * force);
                 std.debug.print("Vertical push distance: {}\n", .{push_distance});
                 if (push_distance >= speed * force) {
-                    obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.getEntity()) catch null;
+                    obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.entity) catch null;
                 } else {
                     new_y = @as(u16, @intCast(@as(i32, old_y) + @as(i32, @intFromFloat(push_distance)))); // Moves effective push distance and re-checks collision
-                    obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.getEntity()) catch null;
+                    obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.entity) catch null;
                 }
                 if (obstacleY == null) self.y = new_y.?; // If no collision now, repositions y
             }
@@ -196,7 +188,7 @@ pub const Player = struct {
 
         // If new movement, updates game grid
         if ((new_x != null and new_x.? != old_x) or (new_y != null and new_y.? != old_y)) {
-            main.grid.updateEntity(getEntity(self), old_x, old_y);
+            main.grid.updateEntity(self.entity, old_x, old_y);
         }
     }
 
@@ -282,10 +274,6 @@ pub const Player = struct {
         try main.grid.addEntity(entity, null, null);
         return player;
     }
-
-    pub fn getEntity(self: *Player) *Entity {
-        return self.entity;
-    }
 };
 
 // Unit
@@ -298,81 +286,181 @@ pub const Unit = struct {
     width: u16,
     height: u16,
     life: u16,
-    cellsign: Grid.Cellsign,
     target: utils.Point,
+    cached_entities: ?[]*Entity, // Cached entities to check collision with
+    cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
 
     pub fn draw(self: *Unit) void {
         utils.drawEntity(self.x, self.y, self.width, self.height, self.color());
     }
 
-    pub fn update(self: *Unit) void {
+    pub fn update(self: *Unit) !void {
         const step = self.getStep();
-        self.move(step.x, step.y);
+        try self.move(step.x, step.y);
 
         // act, determine based on AI logic
-
         // move, determine movement based on AI logic
-        self.updateCellsign(); // Update after moving
-
         self.life -= 1;
         if (self.life <= 0) self.die(null);
     }
 
-    /// Searches for collision at `new_x`,`new_y`. If no obstacle is found, sets position to `x`, `y`. If obstacle is found, moves along its edge.
-    fn move(self: *Unit, new_x: u16, new_y: u16) void {
+    /// Searches for collision at `new_x`,`new_y`. If no obstacle is found, sets position to `x`, `y`. If obstacle is found, moves along edge.
+    fn move(self: *Unit, new_x: u16, new_y: u16) !void {
         const old_x = self.x;
         const old_y = self.y;
+        if (!utils.isInMap(new_x, new_y, self.width, self.height)) {
+            // Not on map, may want to make sure it's currently inside, too
+            return;
+        }
+        try self.refreshCachedEntities(&main.grid, new_x, new_y); // Updates cached_entities only if cellsigns have changed
 
-        if (utils.isInMap(new_x, new_y, self.width, self.height)) {
+        if (!self.tryMove(new_x, new_y, old_x, old_y)) { // Tries executing regular move
+            self.moveAlongAxis(new_x, new_y, old_x, old_y); // If collision, tries moving along either axis
+        }
+    }
 
-            // Idea: Have unit favor moving along halfgrid. Only do "collidesWithGeneral" if unit x,y is NOT on halfgrid
-            // Other idea: Cell signatures for each hash map value update every frame, compare with entity's cached cell signature
-            // Only add obstacles if difference in signature, but must then keep some sort of list...
+    fn tryMove(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) bool {
+        //const cache = self.cached_entities orelse return false;
+        //std.debug.print("Checking for collisions. Cached entity addresses:\n", .{});
+        //for (cache, 0..) |entity, i| {
+        //    std.debug.print("Entity {}: memory address = {}\n", .{ i, @intFromPtr(entity) });
+        //}
+        //std.debug.print("Current cached_cellsigns: {any}.\n", .{self.cached_cellsigns});
 
-            if (self.cellsign == main.grid.getCellsign(utils.Grid.x(self.x), utils.Grid.y(self.y))) {
+        const collision = self.checkCollision(new_x, new_y);
+        if (collision == null) { // No obstacle, move
+            self.x = new_x;
+            self.y = new_y;
+            main.grid.updateEntity(self.entity, old_x, old_y);
+            return true;
+        }
+        return false;
+    }
 
-                // Does nothing here for now . . . but should update cell "geometry" and feed that into collidesWith, make performant
+    fn moveAlongAxis(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) void {
+        const diffX: i32 = @as(i32, @intCast(new_x)) - @as(i32, @intCast(old_x));
+        const diffY: i32 = @as(i32, @intCast(new_y)) - @as(i32, @intCast(old_y));
 
+        if (@abs(diffX) > @abs(diffY)) { // Horizontal axis dominant
+            if (!self.tryMove(new_x, old_y, old_x, old_y)) {
+                _ = self.tryMove(old_x, new_y, old_x, old_y);
             }
+        } else { // Vertical axis dominant
+            if (!self.tryMove(old_x, new_y, old_x, old_y)) {
+                _ = self.tryMove(new_x, old_y, old_x, old_y);
+            }
+        }
+    }
 
-            var obstacle = main.grid.collidesWith(new_x, new_y, self.width, self.height, self.getEntity()) catch null;
+    /// Iterates through `cached_entites` and checks for AABB collisions. Returns the first colliding entity.
+    fn checkCollision(self: *Unit, x: u16, y: u16) ?*Entity {
+        if (self.cached_entities) |entities| {
+            //std.debug.print("Checking collision for {} entities.\n", .{entities.len});
+            for (entities) |entity| {
+                if (entity == self.entity) {
+                    continue;
+                }
+                //std.debug.print("Checking entity {} at memory address: {}.\n", .{ i, @intFromPtr(entity) });
+                const entity_half_width = @divTrunc(entity.width(), 2);
+                const entity_half_height = @divTrunc(entity.height(), 2);
+                //std.debug.print("Entity {}: half_width = {}, half_height = {}.\n", .{ i, entity_half_width, entity_half_height });
 
-            if (obstacle == null) { // No obstacle, move
-                self.x = new_x;
-                self.y = new_y;
-                main.grid.updateEntity(getEntity(self), old_x, old_y);
-            } else { // Obstacle, moves along its edge i.e. displacement along one axis only
-                const diffX: i32 = @as(i32, @intCast(new_x)) - @as(i32, @intCast(old_x));
-                const diffY: i32 = @as(i32, @intCast(new_y)) - @as(i32, @intCast(old_y));
-                if (@abs(diffX) > @abs(diffY)) { // Horizontal axis dominant, checks if x is free first, otherwise checks if y is free
-                    obstacle = main.grid.collidesWith(new_x, old_y, self.width, self.height, self.getEntity()) catch null;
-                    if (obstacle == null) { // No obstacle, move
-                        self.x = new_x;
-                        main.grid.updateEntity(getEntity(self), old_x, old_y);
-                    } else {
-                        obstacle = main.grid.collidesWith(old_x, new_y, self.width, self.height, self.getEntity()) catch null;
-                        if (obstacle == null) { // No obstacle, move
-                            self.y = new_y;
-                            main.grid.updateEntity(getEntity(self), old_x, old_y);
-                        }
-                    }
-                } else { // Vertical axis dominant, checks if y is free first, otherwise checks if x is free
-                    obstacle = main.grid.collidesWith(old_x, new_y, self.width, self.height, self.getEntity()) catch null;
-                    if (obstacle == null) { // No obstacle, move
-                        self.y = new_y;
-                        main.grid.updateEntity(getEntity(self), old_x, old_y);
-                    } else {
-                        obstacle = main.grid.collidesWith(new_x, old_y, self.width, self.height, self.getEntity()) catch null;
-                        if (obstacle == null) { // No obstacle, move
-                            self.x = new_x;
-                            main.grid.updateEntity(getEntity(self), old_x, old_y);
-                        }
-                    }
+                const entity_left = @max(entity_half_width, entity.x()) - entity_half_width;
+                const entity_right = entity.x() + entity_half_width;
+                const entity_top = @max(entity_half_height, entity.y()) - entity_half_height;
+                const entity_bottom = entity.y() + entity_half_height;
+
+                const half_width = @divTrunc(self.width, 2);
+                const half_height = @divTrunc(self.height, 2);
+                const left = @max(half_width, x) - half_width;
+                const right = x + half_width;
+                const top = @max(half_height, y) - half_height;
+                const bottom = y + half_height;
+
+                if ((left < entity_right) and (right > entity_left) and
+                    (top < entity_bottom) and (bottom > entity_top))
+                {
+                    //std.debug.print("Colliding with entity {}.\n", .{i});
+                    return entity; // Return the first colliding entity
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Checks the current cellsigns of 3x3 surrounding cells against the cached ones to see if an update is needed. If so, refreshes the
+    /// cached_entities list with the relevant entities from the grid by calling `Grid.entitiesNear`.
+    fn refreshCachedEntities(self: *Unit, grid: *Grid, new_x: u16, new_y: u16) !void {
+        var needs_update = false;
+        const cell_x = utils.Grid.x(new_x);
+        const cell_y = utils.Grid.y(new_y);
+
+        for (0..3) |dy| {
+            for (0..3) |dx| {
+                const nx = if (cell_x + dx >= 1) cell_x + dx - 1 else 0;
+                const ny = if (cell_y + dy >= 1) cell_y + dy - 1 else 0;
+                if (nx >= grid.columns or ny >= grid.rows) continue;
+
+                const cellsign = grid.getCellsign(nx, ny);
+                const index = dy * 3 + dx;
+
+                if (cellsign != self.cached_cellsigns[index]) {
+                    needs_update = true;
+                    self.cached_cellsigns[index] = cellsign; // Update the cached cellsign
                 }
             }
         }
 
-        // else { Not inside map }
+        if (needs_update) {
+            const entities = self.entitiesNear(&main.grid, new_x, new_y, main.UNIT_SEARCH_LIMIT) catch |err| {
+                std.debug.print("Error refreshing cached entities: {}\n", .{err});
+                return;
+            };
+
+            const allocator = grid.allocator;
+            if (self.cached_entities) |cache| {
+                if (cache.len != entities.len) {
+                    allocator.free(cache); // If length changed, reallocate memory
+                    self.cached_entities = try allocator.alloc(*Entity, entities.len);
+                }
+            } else { // Allocate memory if new
+                self.cached_entities = try allocator.alloc(*Entity, entities.len);
+            }
+
+            // Copy the entities into cached_entities
+            if (self.cached_entities) |cache| {
+                for (entities, 0..) |entity, i| {
+                    cache[i] = entity;
+                }
+                //std.debug.print("Cached entities count: {any}.\n", .{entities.len});
+            }
+        }
+    }
+
+    /// Checks 3x3 cells in the spatial hash and returns a list of nearby entities. Excludes the `self` unit.
+    fn entitiesNear(self: *Unit, grid: *Grid, x: u16, y: u16, limit: comptime_int) ![]*Entity {
+        var nearby_entities: [limit]*Entity = undefined;
+        var count: usize = 0;
+
+        const offsets = utils.Grid.getValidNeighbors(x, y, main.map_width, main.map_height);
+
+        for (offsets) |offset| { // For each neighboring cell
+            const neighbor_x = offset[0];
+            const neighbor_y = offset[1];
+            const neighbor_key = utils.SpatialHash.hash(neighbor_x, neighbor_y);
+
+            if (grid.cells.get(neighbor_key)) |list| { // Lists the cell contents
+                for (list.items) |entity| { // For each entity in the cell
+                    if (entity != self.entity) { // Exclude the current unit itself
+                        if (count >= limit) return error.EntityAmountExceedsLimit;
+                        nearby_entities[count] = entity;
+                        count += 1;
+                    }
+                }
+            }
+        }
+        //std.debug.print("{} entities found by entitiesNear: {any}.\n", .{ count, nearby_entities[0..count] });
+        return nearby_entities[0..count];
     }
 
     /// Unit is an obstacle pushed by another entity. Searches for collision. If no new obstacle is found, unit moves `distance`.
@@ -384,39 +472,33 @@ pub const Unit = struct {
 
         var moved_distance: f32 = distance;
 
-        //std.debug.print("Unit {} is being moved.\n", .{@intFromPtr(self)});
-
         // Squeeze to flag unit as a pushee, preventing circularity from recursive call -- need a different way to do this
         self.width = preset(self.class).width - 1;
         self.height = preset(self.class).height - 1;
 
         if (!utils.isInMap(new_x, new_y, self.width, self.height)) return moved_distance;
 
-        const obstacle = main.grid.collidesWith(new_x, new_y, self.width, self.height, self.getEntity()) catch null;
+        const obstacle = main.grid.collidesWith(new_x, new_y, self.width, self.height, self.entity) catch null;
 
         if (obstacle == null) { // Pushing doesn't collide with another obstacle
-            //std.debug.print("Moved {} meets no obstacle.\n", .{@intFromPtr(self)});
             self.x = new_x;
             self.y = new_y;
-            main.grid.updateEntity(getEntity(self), old_x, old_y);
+            main.grid.updateEntity(self.entity, old_x, old_y);
         } else if (obstacle.?.kind == Kind.Unit) { // Pushed unit collides with another unit
 
-            const obstacleUnit = obstacle.?.content.Unit;
+            const obstacle_unit = obstacle.?.content.Unit;
 
-            // Checks that obstacleUnit isn't already a pushee
-            if (obstacleUnit.width != preset(obstacleUnit.class).width or obstacleUnit.height != preset(obstacleUnit.class).height) {
-                //std.debug.print("Moved unit {} found an obstacle, unit {}. It is already being pushed, so stopping here.\n", .{ @intFromPtr(self), @intFromPtr(obstacleUnit) });
+            // Checks that obstacle_unit isn't already a pushee
+            if (obstacle_unit.width != preset(obstacle_unit.class).width or obstacle_unit.height != preset(obstacle_unit.class).height) {
                 moved_distance = moved_distance / 2;
             } else {
-                moved_distance = pushed(obstacleUnit, angle, @min(distance, distance * utils.sizeFactor(self.width, self.height, obstacleUnit.width, obstacleUnit.height)));
-                //std.debug.print("Moved unit {} found an obstacle, unit {}. Pushing it in turn, distance changed from {} to {}.\n", .{ @intFromPtr(self), @intFromPtr(obstacleUnit), distance, movedDistance });
+                moved_distance = pushed(obstacle_unit, angle, @min(distance, distance * utils.sizeFactor(self.width, self.height, obstacle_unit.width, obstacle_unit.height)));
 
-                const pushDeltaXy = utils.vectorToDelta(angle, moved_distance);
-                const pushNewX = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + pushDeltaXy[0]));
-                const pushNewY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + pushDeltaXy[1]));
+                const push_delta_xy = utils.vectorToDelta(angle, moved_distance);
+                const push_new_x = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + push_delta_xy[0]));
+                const push_new_yY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + push_delta_xy[1]));
 
-                self.move(pushNewX, pushNewY); // Re-checks for collision and updates grid here
-                //std.debug.print("Pushing distance: {}.\n", .{moved_distance});
+                self.move(push_new_x, push_new_yY) catch return 0; // Re-checks for collision and updates grid here
             }
         }
 
@@ -472,8 +554,9 @@ pub const Unit = struct {
             .life = from_class.life,
             .x = x,
             .y = y,
-            .cellsign = 0,
             .target = utils.Point.at(utils.randomU16(main.map_width), utils.randomU16(main.map_height)), // <--- just testing
+            .cached_entities = null,
+            .cached_cellsigns = [_]u32{0} ** 9,
         };
 
         entity.* = Entity{
@@ -482,12 +565,11 @@ pub const Unit = struct {
         };
 
         try main.grid.addEntity(entity, null, null);
-        unit.updateCellsign();
         return unit;
     }
 
     pub fn destroy(self: *Unit) !void {
-        try main.grid.removeEntity(self.getEntity(), null, null);
+        try main.grid.removeEntity(self.entity, null, null);
         try utils.findAndSwapRemove(Unit, &units, self);
     }
 
@@ -523,20 +605,12 @@ pub const Unit = struct {
         };
     }
 
-    pub fn updateCellsign(self: *Unit) void {
-        self.cellsign = main.grid.getFreshCellsign(self.x, self.y) orelse 0;
-    }
-
     pub fn speed(self: *Unit) f16 {
         return Unit.preset(self.class).speed;
     }
 
     pub fn color(self: *Unit) rl.Color {
         return Unit.preset(self.class).color;
-    }
-
-    pub fn getEntity(self: *Unit) *Entity {
-        return self.entity;
     }
 };
 
@@ -642,56 +716,49 @@ pub const Structure = struct {
     }
 
     pub fn spawnPoint(self: *Structure, unit_width: u16, unit_height: u16) ![2]u16 {
-        var attempts: usize = 0;
-        var sides_checked = [_]bool{ false, false, false, false }; // Tracking checked sides
-        while (attempts < 16) { // Generally spawns if any side is available
-            const side_index = @as(usize, @intCast(utils.randomU16(3)));
-            if (sides_checked[side_index]) {
-                continue; // Skip already checked sides
-            }
-            sides_checked[side_index] = true;
-            attempts += 1;
+        var side_indices = [_]usize{ 0, 1, 2, 3 }; // Indices representing the 4 sides
+        utils.shuffleArray(usize, &side_indices); // Shuffles indices to randomize check order
 
+        const offset_x = @divTrunc(self.width, 2) + @divTrunc(unit_width, 2);
+        const offset_y = @divTrunc(self.height, 2) + @divTrunc(unit_height, 2);
+
+        // Checking side availability
+        for (side_indices) |side_index| {
             var spawn_x: u16 = 0;
             var spawn_y: u16 = 0;
 
             switch (side_index) {
                 0 => { // Bottom side
                     spawn_x = self.x;
-                    spawn_y = self.y + (@divTrunc(self.height, 2) + @divTrunc(unit_height, 2));
+                    spawn_y = if (self.y + offset_y < main.map_height) self.y + offset_y else self.y - offset_y;
                 },
                 1 => { // Left side
-                    spawn_x = self.x - (@divTrunc(self.width, 2) + @divTrunc(unit_width, 2));
+                    spawn_x = if (self.x >= offset_x) self.x - offset_x else self.x + offset_x;
                     spawn_y = self.y;
                 },
                 2 => { // Right side
-                    spawn_x = self.x + (@divTrunc(self.width, 2) + @divTrunc(unit_width, 2));
+                    spawn_x = if (self.x + offset_x < main.map_width) self.x + offset_x else self.x - offset_x;
                     spawn_y = self.y;
                 },
                 3 => { // Top side
                     spawn_x = self.x;
-                    spawn_y = self.y - (@divTrunc(self.height, 2) + @divTrunc(unit_height, 2));
+                    spawn_y = if (self.y >= offset_y) self.y - offset_y else self.y + offset_y;
                 },
                 else => @panic("Unrecognized side"),
             }
-
+            // Check if the calculated spawn point is valid
             if (try main.grid.collidesWith(spawn_x, spawn_y, unit_width, unit_height, null) == null and utils.isInMap(spawn_x, spawn_y, unit_width, unit_height)) {
                 return [2]u16{ spawn_x, spawn_y };
             }
         }
-
         return error.NoValidSpawnPoint;
-    }
-
-    pub fn getEntity(self: *Structure) *Entity {
-        return self.entity;
     }
 };
 
 // Projectile
 //----------------------------------------------------------------------------------
 pub const Projectile = struct {
-    entity: *Projectile,
+    entity: *Entity,
     x: u16,
     y: u16,
     angle: f16,
@@ -727,22 +794,18 @@ pub const Projectile = struct {
         };
     }
 
-    pub fn draw(self: Projectile) void {
+    pub fn draw(self: *Projectile) void {
         utils.drawEntity(self.x, self.y, self.width, self.height, preset(self.class).color);
     }
 
-    pub fn impact(self: Projectile) void {
+    pub fn impact(self: *Projectile) void {
         // Effect when projectile hits entity; subtract life
         self.destroy();
     }
 
-    pub fn destroy(self: Projectile) !void {
-        try main.grid.removeEntity(getEntity(@constCast(&self)), null, null);
+    pub fn destroy(self: *Projectile) !void {
+        try main.grid.removeEntity(self.entity, null, null);
         // no array list of Projectiles, otherwise: try utils.findAndSwapRemove(Projectile, &projectiles, @constCast(&self));
-    }
-
-    pub fn getEntity(self: *Projectile) *Entity {
-        return self.entity;
     }
 };
 
@@ -859,14 +922,6 @@ pub const Grid = struct {
             self.addEntity(entity, null, null) catch |err| {
                 std.log.err("Failed to add entity {} to new cell {}, error: {}\n", .{ @intFromPtr(entity), newKey, err });
             };
-
-            entity.updateCellsign();
-
-            // std.debug.print("(Grid update end) After adding/removing entity: \n", .{});
-            // var it2 = self.cells.iterator();
-            // while (it2.next()) |entry| {
-            //     std.debug.print("Cell {any} contains entities: {any}\n", .{ entry.key_ptr, entry.value_ptr.items });
-            // }
         }
     }
 
@@ -919,7 +974,7 @@ pub const Grid = struct {
 
         // Prioritizes player if in central cell
         if (utils.Grid.x(main.player.x) == offsets[0][0] and utils.Grid.y(main.player.y) == offsets[0][1]) {
-            nearby_entities[count] = main.player.getEntity();
+            nearby_entities[count] = main.player.entity;
             count += 1;
         }
 

@@ -27,7 +27,7 @@ pub var canvas_max: f32 = 1.0; // Recalculated in setMapSize() for max map visib
 // World
 const STARTING_MAP_WIDTH = 1920 * 8; // Limit for u16 coordinates: 65535
 const STARTING_MAP_HEIGHT = 1080 * 8; // Limit for u16 coordinates: 65535
-pub const GRID_CELL_SIZE = 800; //512;
+pub const GRID_CELL_SIZE = 400; //512;
 pub var map_width: u16 = 0;
 pub var map_height: u16 = 0;
 pub var grid: entity.Grid = undefined;
@@ -46,7 +46,7 @@ pub fn main() anyerror!void {
     defer rl.closeWindow(); // Close window and OpenGL context
 
     const flags = rl.ConfigFlags{
-        .fullscreen_mode = true,
+        .fullscreen_mode = false,
         .window_resizable = false,
         .window_undecorated = false, // Removes window border
         .window_transparent = false,
@@ -55,7 +55,7 @@ pub fn main() anyerror!void {
         .window_hidden = false,
         .window_always_run = false,
         .window_minimized = false,
-        .window_maximized = false,
+        .window_maximized = true,
         .window_unfocused = false,
         .window_topmost = false,
         .window_highdpi = false,
@@ -117,7 +117,7 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
-    for (0..2) |_| {
+    for (0..0) |_| {
         _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
     }
 
@@ -136,7 +136,7 @@ pub fn main() anyerror!void {
 
         // Profiling
         //----------------------------------------------------------------------------------
-        const profile_frame = (profile_mode and utils.perFrame(60));
+        const profile_frame = (profile_mode and utils.perFrame(1));
         if (profile_frame) {
             utils.startTimer(3, "\nSTART OF FRAME :::");
             std.debug.print("{}.\n\n", .{frame_count});
@@ -157,6 +157,8 @@ pub fn main() anyerror!void {
         const currentTime: f64 = rl.getTime();
         var elapsedTime: f64 = currentTime - last_tick_time;
         var updatesPerformed: usize = 0;
+
+        if (profile_frame and elapsedTime < TICK_DURATION) std.debug.print("- Elapsed time < tick duration, skipping logic update this frame.\n", .{});
 
         // Perform updates if enough time has elapsed
         while (elapsedTime >= TICK_DURATION) {
@@ -236,7 +238,7 @@ fn updateControls(mousewheel_delta: f32, key_input: u32, profile_frame: bool) vo
 fn updateLogic(key_input: u32, profile_frame: bool) !void {
     if (profile_frame) utils.startTimer(1, "- Updating units.");
     for (entity.units.items) |unit| {
-        unit.update();
+        try unit.update();
     }
     if (profile_frame) utils.endTimer(1, "Updating units took {} seconds.");
     if (profile_frame) utils.startTimer(1, "- Updating structures.");

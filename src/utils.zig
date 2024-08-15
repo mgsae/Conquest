@@ -199,6 +199,17 @@ pub fn randomI16(max: u16) i16 {
     return @as(i16, @intCast(random_value));
 }
 
+/// Fisher-Yates shuffle: iterates over the array and swaps each element with a randomly chosen element that comes after it (or itself).
+pub fn shuffleArray(comptime T: type, array: []T) void {
+    const len = u16Clamped(usize, array.len);
+    for (array, 0..) |_, i| {
+        const j = @as(usize, randomU16(@as(u16, @intCast(len - 1))));
+        const temp = array[i];
+        array[i] = array[j];
+        array[j] = temp;
+    }
+}
+
 // Math
 //----------------------------------------------------------------------------------
 
