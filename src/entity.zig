@@ -99,38 +99,44 @@ pub const Player = struct {
     }
 
     fn updateMoveInput(self: *Player, keyInput: u32) !void {
-        const oldX = self.x;
-        const oldY = self.y;
         const speed = utils.scaleToTickRate(self.speed);
-        var newX: ?u16 = null;
-        var newY: ?u16 = null;
-        var obstacleX: ?*Entity = null;
-        var obstacleY: ?*Entity = null;
+        var changedX: ?u16 = null;
+        var changedY: ?u16 = null;
 
         // Processes movement input
         if (main.keys.actionActive(keyInput, utils.Key.Action.MoveUp)) {
-            newY = utils.mapClampY(@truncate(utils.i32SubFloat(f32, self.y, speed)), self.height);
+            changedY = utils.mapClampY(@truncate(utils.i32SubFloat(f32, self.y, speed)), self.height);
             self.direction = 8; // Numpad direction
         }
         if (main.keys.actionActive(keyInput, utils.Key.Action.MoveLeft)) {
-            newX = utils.mapClampX(@truncate(utils.i32SubFloat(f32, self.x, speed)), self.width);
+            changedX = utils.mapClampX(@truncate(utils.i32SubFloat(f32, self.x, speed)), self.width);
             self.direction = 4; // Numpad direction
         }
         if (main.keys.actionActive(keyInput, utils.Key.Action.MoveDown)) {
-            newY = utils.mapClampY(@truncate(utils.i32AddFloat(f32, self.y, speed)), self.height);
+            changedY = utils.mapClampY(@truncate(utils.i32AddFloat(f32, self.y, speed)), self.height);
             self.direction = 2; // Numpad direction
         }
         if (main.keys.actionActive(keyInput, utils.Key.Action.MoveRight)) {
-            newX = utils.mapClampX(@truncate(utils.i32AddFloat(f32, self.x, speed)), self.width);
+            changedX = utils.mapClampX(@truncate(utils.i32AddFloat(f32, self.x, speed)), self.width);
             self.direction = 6; // Numpad direction
         }
 
-        // Gets potential obstacle entities
-        if (newX != null)
-            obstacleX = main.gameGrid.collidesWith(newX.?, self.y, self.width, self.height, self.getEntity()) catch null;
+        if (changedX != null or changedY != null) try executeMovement(self, changedX, changedY, speed);
+    }
 
-        if (newY != null)
-            obstacleY = main.gameGrid.collidesWith(self.x, newY.?, self.width, self.height, self.getEntity()) catch null;
+    fn executeMovement(self: *Player, changedX: ?u16, changedY: ?u16, speed: f32) !void {
+        const oldX = self.x;
+        const oldY = self.y;
+        var newX: ?u16 = changedX;
+        var newY: ?u16 = changedY;
+        var obstacleX: ?*Entity = null;
+        var obstacleY: ?*Entity = null;
+        const deltaXy = utils.deltaXy(oldX, oldY, newX orelse oldX, newY orelse oldY);
+        std.debug.print("Player movement direction: {}. Delta to angle: {}. Angle from dir: {}. Vector to delta: {any}.\n", .{ self.direction, @as(i64, @intFromFloat(utils.deltaToAngle(deltaXy[0], deltaXy[1]))), utils.angleFromDir(self.direction), utils.vectorToDelta(utils.deltaToAngle(deltaXy[0], deltaXy[1]), speed) });
+
+        // Gets potential obstacle entities on both axes
+        if (newX != null) obstacleX = main.gameGrid.collidesWith(newX.?, self.y, self.width, self.height, self.getEntity()) catch null;
+        if (newY != null) obstacleY = main.gameGrid.collidesWith(self.x, newY.?, self.width, self.height, self.getEntity()) catch null;
 
         // Executes horizontal movement
         if (newX != null) {
@@ -143,8 +149,9 @@ pub const Player = struct {
                 newX = @as(u16, @intCast(@as(i32, oldX) + @as(i32, @intFromFloat(@round(difference * force)))));
 
                 // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
-                const pushDistance = obstacleX.?.entity.Unit.moved(utils.angleFromDir(self.direction), speed * force);
-                std.debug.print("horizontal push distance: {}\n", .{pushDistance});
+                std.debug.print("Pushing horizontally, angle: {}, distance: {}\n", .{ utils.angleFromDir(self.direction), speed * force });
+                const pushDistance = obstacleX.?.entity.Unit.pushed(utils.angleFromDir(self.direction), speed * force);
+                std.debug.print("Horizontal push distance: {}\n", .{pushDistance});
                 if (pushDistance >= speed * force) {
                     obstacleX = main.gameGrid.collidesWith(newX.?, self.y, self.width, self.height, self.getEntity()) catch null;
                 } else {
@@ -160,15 +167,14 @@ pub const Player = struct {
             if (obstacleY == null) {
                 self.y = newY.?;
             } else if (newX == null and (obstacleY.?.entityType == EntityType.Unit)) { // If unit collider, try pushing vertically
-                std.debug.print("Attempting vertical push of obstacle. NewX was {?} but will recalculate.", .{newX});
                 const resistance = 0.1; // maybe depend on size relation
                 const force = (1.0 - resistance);
                 const difference = @as(f64, @floatFromInt(@as(i32, newY.?) - @as(i32, oldY)));
                 newY = @as(u16, @intCast(@as(i32, oldY) + @as(i32, @intFromFloat(@round(difference * force)))));
-                std.debug.print("Attempting vertical push of obstacle. New newX is {?}.", .{newX});
 
                 // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
-                const pushDistance = obstacleY.?.entity.Unit.moved(utils.angleFromDir(self.direction), speed * force);
+                std.debug.print("Pushing vertically, angle: {}, distance: {}\n", .{ utils.angleFromDir(self.direction), speed * force });
+                const pushDistance = obstacleY.?.entity.Unit.pushed(utils.angleFromDir(self.direction), speed * force);
                 std.debug.print("Vertical push distance: {}\n", .{pushDistance});
                 if (pushDistance >= speed * force) {
                     obstacleY = main.gameGrid.collidesWith(self.x, newY.?, self.width, self.height, self.getEntity()) catch null;
@@ -313,7 +319,7 @@ pub const Unit = struct {
         if (self.life <= 0) self.die(null);
     }
 
-    /// Searches for collision at `newX`,`newY`. If no obstacle is found, sets position to `x`, `y`. If obstacle of equal or smaller size is found, it is pushed out of the way.
+    /// Searches for collision at `newX`,`newY`. If no obstacle is found, sets position to `x`, `y`. If obstacle is found, moves along its edge.
     fn move(self: *Unit, newX: u16, newY: u16) void {
         const oldX = self.x;
         const oldY = self.y;
@@ -336,23 +342,7 @@ pub const Unit = struct {
                 self.x = newX;
                 self.y = newY;
                 main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
-            } else if (biggerEntity(getEntity(self), obstacle.?) != obstacle.?) { // Unit is equal to or larger than obstacle
-                if (obstacle.?.entityType == EntityType.Unit) {
-                    const obstacleUnit = obstacle.?.entity.Unit;
-                    // Pushes obstacle away
-                    _ = obstacleUnit.moved(utils.angleFromTo(self.x, self.y, obstacleUnit.x, obstacleUnit.y), self.speed());
-                    // Current unit potentially moves back same distance as well
-                    const pushbackXy = utils.vectorToDelta(utils.angleFromTo(obstacleUnit.x, obstacleUnit.y, self.x, self.y), self.speed());
-                    const pushbackPoint = utils.deltaPoint(self.x, self.y, pushbackXy[0], pushbackXy[1]);
-                    // Checks for new collision at pushback point
-                    obstacle = main.gameGrid.collidesWith(pushbackPoint.x, pushbackPoint.y, self.width, self.height, self.getEntity()) catch null;
-                    if (obstacle == null) { // No obstacle, move
-                        self.x = pushbackPoint.x;
-                        self.y = pushbackPoint.y;
-                        main.gameGrid.updateEntity(getEntity(self), oldX, oldY);
-                    }
-                }
-            } else { // Unit is smaller than obstacle, so moves along its edge i.e. displacement along one axis only
+            } else { // Obstacle, moves along its edge i.e. displacement along one axis only
                 const diffX: i32 = @as(i32, @intCast(newX)) - @as(i32, @intCast(oldX));
                 const diffY: i32 = @as(i32, @intCast(newY)) - @as(i32, @intCast(oldY));
                 if (@abs(diffX) > @abs(diffY)) { // Horizontal axis dominant, checks if x is free first, otherwise checks if y is free
@@ -388,18 +378,18 @@ pub const Unit = struct {
 
     /// Unit is an obstacle pushed by another entity. Searches for collision. If no collateral obstacle is found, unit moves `distance`.
     /// If collateral obstacle is another unit, moved unit pushes on the obstacle unit, then moves size-factored distance. Returns the actual moved distance.
-    pub fn moved(self: *Unit, angle: f32, distance: f32) f32 {
+    pub fn pushed(self: *Unit, angle: f32, distance: f32) f32 {
         const oldX = self.x;
         const oldY = self.y;
-        const newX: u16, const newY: u16 = calculateMovedPosition(self, angle, distance);
+        const newX: u16, const newY: u16 = calculatePushPosition(self, angle, distance);
 
         var movedDistance: f32 = distance;
 
         //std.debug.print("Unit {} is being moved.\n", .{@intFromPtr(self)});
 
-        // Squeeze to flag unit as a pushee, preventing circularity from recursive call
-        self.width -= 1;
-        self.height -= 1;
+        // Squeeze to flag unit as a pushee, preventing circularity from recursive call -- need a different way to do this
+        self.width = classProperties(self.class).width - 1;
+        self.height = classProperties(self.class).height - 1;
 
         if (!utils.isInMap(newX, newY, self.width, self.height)) return movedDistance;
 
@@ -417,9 +407,9 @@ pub const Unit = struct {
             // Checks that obstacleUnit isn't already a pushee
             if (obstacleUnit.width != classProperties(obstacleUnit.class).width or obstacleUnit.height != classProperties(obstacleUnit.class).height) {
                 //std.debug.print("Moved unit {} found an obstacle, unit {}. It is already being pushed, so stopping here.\n", .{ @intFromPtr(self), @intFromPtr(obstacleUnit) });
-                movedDistance = 0;
+                movedDistance = movedDistance / 2;
             } else {
-                movedDistance = moved(obstacleUnit, angle, @min(distance, distance * utils.sizeFactor(self.width, self.height, obstacleUnit.width, obstacleUnit.height)));
+                movedDistance = pushed(obstacleUnit, angle, @min(distance, distance * utils.sizeFactor(self.width, self.height, obstacleUnit.width, obstacleUnit.height)));
                 //std.debug.print("Moved unit {} found an obstacle, unit {}. Pushing it in turn, distance changed from {} to {}.\n", .{ @intFromPtr(self), @intFromPtr(obstacleUnit), distance, movedDistance });
 
                 const pushDeltaXy = utils.vectorToDelta(angle, movedDistance);
@@ -437,10 +427,14 @@ pub const Unit = struct {
         return movedDistance; // Returns effective moved distance
     }
 
-    fn calculateMovedPosition(self: *Unit, angle: f32, distance: f32) [2]u16 {
+    fn calculatePushPosition(self: *Unit, angle: f32, distance: f32) [2]u16 {
         const deltaXy = utils.vectorToDelta(angle, distance);
-        const newX = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + deltaXy[0]));
-        const newY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + deltaXy[1]));
+        const newXBroad: f32 = @round(@as(f32, @floatFromInt(self.x)) + deltaXy[0]);
+        const newYBroad: f32 = @round(@as(f32, @floatFromInt(self.y)) + deltaXy[1]);
+
+        const newX = @as(u16, @intFromFloat(utils.u16Clamped(f32, newXBroad)));
+        const newY = @as(u16, @intFromFloat(utils.u16Clamped(f32, newYBroad)));
+
         return [2]u16{ newX, newY };
     }
 
@@ -456,8 +450,8 @@ pub const Unit = struct {
     /// Calculates and returns the unit's immediate destination based on its current `target` and `cellsign`.
     fn getStep(self: *Unit) utils.Point {
         // do more stuff here for pathing
-        const dx = @as(i32, @intCast(self.target.x)) - @as(i32, @intCast(self.x));
-        const dy = @as(i32, @intCast(self.target.y)) - @as(i32, @intCast(self.y));
+        const dx = @as(i32, @intCast(self.x)) - @as(i32, @intCast(self.target.x));
+        const dy = @as(i32, @intCast(self.y)) - @as(i32, @intCast(self.target.y));
         if (@abs(dx + dy) < @as(i32, @intFromFloat(self.speed()))) {
             _ = self.retarget(utils.randomU16(main.mapWidth), utils.randomU16(main.mapHeight)); // <--- just testing
         }
@@ -948,7 +942,7 @@ pub const Grid = struct {
         return nearbyEntities[0..count];
     }
 
-    /// Finds entities in a 3x3 cell radius, then performs a bounding box check. Returns first colliding entity.
+    /// Finds entities in a 3x3 cell radius, then performs an axis-aligned bounding box check. Returns first colliding entity or null.
     pub fn collidesWith(self: *Grid, x: u16, y: u16, width: u16, height: u16, currentEntity: ?*Entity) !?*Entity {
         const halfWidth = @divTrunc(width, 2);
         const halfHeight = @divTrunc(height, 2);

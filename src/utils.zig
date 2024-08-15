@@ -52,6 +52,29 @@ pub fn scaleToTickRate(float: f32) f32 { // Delta time capped to tickrate
     return (float * (@max(@as(f32, @floatCast(main.TICK_DURATION)), rl.getFrameTime()))) * main.TICKRATE;
 }
 
+// Value types and conversions
+//----------------------------------------------------------------------------------
+pub const u16max: u16 = 65535;
+pub const i16max: i16 = 32767;
+pub const u32max: u16 = 4294967295;
+pub const i32max: i32 = 2147483647;
+
+pub fn u16Clamped(comptime T: type, value: T) T {
+    return @max(0, @min(value, u16max));
+}
+
+pub fn i16Clamped(comptime T: type, value: T) T {
+    return @max(-i16max, @min(value, i16max));
+}
+
+pub fn u32Clamped(comptime T: type, value: T) T {
+    return @max(0, @min(value, u32max));
+}
+
+pub fn i32Clamped(comptime T: type, value: T) T {
+    return @max(-i32max, @min(value, i32max));
+}
+
 // Data structures
 //----------------------------------------------------------------------------------
 /// Iterate over the items in the ArrayList to find the index of the item matching ptr,
@@ -258,15 +281,15 @@ pub fn dirOffset(x: u16, y: u16, dir: u8, offset: u16) [2]u16 {
 
 pub fn angleFromDir(dir: u8) f32 {
     return switch (dir) {
-        1 => 135.0, ////// Down-Left
-        2 => 90.0, /////// Down
-        3 => 45.0, /////// Down-Right
-        4 => 180.0, ////// Left
-        6 => 0.0, //////// Right
-        7 => 225.0, ////// Up-Left
-        8 => 270.0, ////// Up
-        9 => 315.0, ////// Up-Right
-        else => 90.0, //// Defaults to down for invalid input
+        1 => 225.0, ///// Down-Left
+        2 => 270.0, ///// Down
+        3 => 315.0, ///// Down-Right
+        4 => 180.0, ///// Left
+        6 => 0.0, ///// Right
+        7 => 135.0, ///// Up-Left
+        8 => 90.0, ///// Up
+        9 => 45.0, ///// Up-Right
+        else => 0.0, //// Defaults to up for invalid input
     };
 }
 
@@ -277,15 +300,15 @@ pub fn isHorz(dir: u8) bool {
 /// Takes `angle` and `magnitude`, and returns the corresponding `x`,`y` coordinate offset from origin.
 pub fn vectorToDelta(angle: f32, magnitude: f32) [2]f32 {
     const radians = angle * std.math.pi / 180.0;
-    return [2]f32{ magnitude * std.math.cos(radians), magnitude * std.math.sin(radians) };
+    return [2]f32{ magnitude * std.math.cos(radians), -magnitude * std.math.sin(radians) };
 }
 
-/// Takes an `x`,`y` offset from origin, and returns the corresponding angle (`0.0 - 360.0`).
-pub fn deltaToAngle(dx: i32, dy: i32) f32 { // Supports fractional degrees
+/// Takes an `x`,`y` offset from origin, and returns the corresponding angle as a float value (`0.0` - `360.0`).
+pub fn deltaToAngle(dx: i32, dy: i32) f32 {
     const dxF = @as(f32, @floatFromInt(dx));
     const dyF = @as(f32, @floatFromInt(dy));
     const angle_radians = @as(f32, std.math.atan2(dxF, dyF));
-    const angle_degrees = angle_radians * (180.0 / std.math.pi);
+    const angle_degrees = angle_radians * (180.0 / std.math.pi) + 90; // 0 right, 90 up, 180 left, 270 down
     return if (angle_degrees < 0) angle_degrees + 360.0 else angle_degrees;
 }
 

@@ -108,18 +108,18 @@ pub fn main() anyerror!void {
     allocator.free(startCoords); // Freeing starting positions
 
     // Testing/debugging
-    //const SPREAD = 60; // PERCENTAGE
-    //const rangeX: u16 = @intCast(@divTrunc(@as(i32, @intCast(mapWidth)) * SPREAD, 100));
-    //const rangeY: u16 = @intCast(@divTrunc(@as(i32, @intCast(mapHeight)) * SPREAD, 100));
+    const SPREAD = 75; // PERCENTAGE
+    const rangeX: u16 = @intCast(@divTrunc(@as(i32, @intCast(mapWidth)) * SPREAD, 100));
+    const rangeY: u16 = @intCast(@divTrunc(@as(i32, @intCast(mapHeight)) * SPREAD, 100));
 
-    try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
+    //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
     //for (0..5000) |_| {
     //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
-    //for (0..400) |_| {
-    //    _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
-    //}
+    for (0..2) |_| {
+        _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(mapWidth - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(mapHeight - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
+    }
 
     defer entity.units.deinit();
     defer entity.structures.deinit();
