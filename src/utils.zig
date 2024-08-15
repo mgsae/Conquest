@@ -8,18 +8,18 @@ var rng: std.Random.DefaultPrng = undefined;
 // Debug/analysis
 //----------------------------------------------------------------------------------
 
-/// Sets `main.profileTimer[timer]` and prints a message. Stop the timer with `utils.endTimer()`.
+/// Sets `main.profile_timer[timer]` and prints a message. Stop the timer with `utils.endTimer()`.
 pub fn startTimer(timer: usize, comptime startMsg: []const u8) void {
     const msg = if (startMsg.len > 0 and startMsg[startMsg.len - 1] != '\n') startMsg ++ " " else startMsg;
     std.debug.print(msg, .{});
-    main.profileTimer[timer] = rl.getTime();
+    main.profile_timer[timer] = rl.getTime();
 }
 
-/// Stops `main.profileTimer[timer]` and prints a message. Must write `{}` to add the result argument.
+/// Stops `main.profile_timer[timer]` and prints a message. Must write `{}` to add the result argument.
 pub fn endTimer(timer: usize, comptime endMsg: []const u8) void {
-    const result = rl.getTime() - main.profileTimer[timer];
+    const result = rl.getTime() - main.profile_timer[timer];
     std.debug.print(endMsg ++ " \n", .{result});
-    main.profileTimer[timer] = 0;
+    main.profile_timer[timer] = 0;
 }
 
 pub fn assert(condition: bool, failureMsg: []const u8) void {
@@ -35,7 +35,13 @@ pub fn printGridEntities(grid: *entity.Grid) void {
     while (it.next()) |entry| {
         total_entities += entry.value_ptr.items.len;
     }
-    std.debug.print("Total entities on the grid: {}.\n", .{total_entities});
+    const players = entity.players.items.len;
+    const structures = entity.structures.items.len;
+    const units = entity.units.items.len;
+    std.debug.print("Total entities on the grid: {} ({} players, {} structures, {} units).\n", .{ total_entities, players, structures, units });
+    if (total_entities != players + structures + units) {
+        std.log.err("DISCREPANCY DETECTED! Number of entities does not match the combined number of players, structures, and units.\n", .{});
+    }
 }
 
 /// Prints the number of cells currently stored in the hashmap, corresponding to the
@@ -44,8 +50,8 @@ pub fn printGridCells(grid: *entity.Grid) void {
     std.debug.print("Currently active cells on the grid: {}.\n", .{grid.cells.count()});
 }
 
-pub fn perFrame(frequency: i64) bool {
-    return @mod(main.frameCount, frequency) == 0;
+pub fn perFrame(frequency: u64) bool {
+    return @mod(main.frame_count, frequency) == 0;
 }
 
 pub fn scaleToTickRate(float: f32) f32 { // Delta time capped to tickrate
@@ -340,92 +346,111 @@ pub fn sizeFactor(w1: u16, h1: u16, w2: u16, h2: u16) f32 {
 //----------------------------------------------------------------------------------
 
 pub const Grid = struct {
-    pub const CellSize = main.GRID_CELL_SIZE;
-    pub const HalfCell: comptime_int = CellSize / 2;
+    pub const cell_size = main.GRID_CELL_SIZE;
+    pub const cell_half: comptime_int = cell_size / 2;
 
     pub inline fn getNeighborhood() [9][2]i16 {
         return [_][2]i16{
             [_]i16{ 0, 0 }, // Central cell
-            [_]i16{ -CellSize, 0 }, // Left neighbor
-            [_]i16{ CellSize, 0 }, // Right neighbor
-            [_]i16{ 0, -CellSize }, // Top neighbor
-            [_]i16{ 0, CellSize }, // Bottom neighbor
-            [_]i16{ -CellSize, -CellSize }, // Top-left
-            [_]i16{ CellSize, CellSize }, // Bottom-right
-            [_]i16{ -CellSize, CellSize }, // Bottom-left
-            [_]i16{ CellSize, -CellSize }, // Top-right
+            [_]i16{ -cell_size, 0 }, // Left neighbor
+            [_]i16{ cell_size, 0 }, // Right neighbor
+            [_]i16{ 0, -cell_size }, // Top neighbor
+            [_]i16{ 0, cell_size }, // Bottom neighbor
+            [_]i16{ -cell_size, -cell_size }, // Top-left
+            [_]i16{ cell_size, cell_size }, // Bottom-right
+            [_]i16{ -cell_size, cell_size }, // Bottom-left
+            [_]i16{ cell_size, -cell_size }, // Top-right
         };
     }
 
-    pub inline fn getValidNeighbors(x: u16, y: u16, mapWidth: u16, mapHeight: u16) []const [2]u16 {
+    pub inline fn getValidNeighbors(world_x: u16, world_y: u16, map_width: u16, map_height: u16) []const [2]u16 {
         var neighbors: [9][2]u16 = undefined;
         var count: usize = 0;
-        neighbors[count] = [2]u16{ x, y }; // Always include the central cell
+        neighbors[count] = [2]u16{ world_x, world_y }; // Always include the central cell
         count += 1;
 
         // Check and add left neighbors
-        if (x >= CellSize) {
-            neighbors[count] = [2]u16{ x - CellSize, y };
+        if (world_x >= cell_size) {
+            neighbors[count] = [2]u16{ world_x - cell_size, world_y };
             count += 1;
-            if (y >= CellSize) {
-                neighbors[count] = [2]u16{ x - CellSize, y - CellSize }; // Top-left
+            if (world_y >= cell_size) {
+                neighbors[count] = [2]u16{ world_x - cell_size, world_y - cell_size }; // Top-left
                 count += 1;
             }
-            if (y + CellSize <= mapHeight) {
-                neighbors[count] = [2]u16{ x - CellSize, y + CellSize }; // Bottom-left
+            if (world_y + cell_size <= map_height) {
+                neighbors[count] = [2]u16{ world_x - cell_size, world_y + cell_size }; // Bottom-left
                 count += 1;
             }
         }
         // Check and add right neighbors
-        if (x + CellSize <= mapWidth) {
-            neighbors[count] = [2]u16{ x + CellSize, y };
+        if (world_x + cell_size <= map_width) {
+            neighbors[count] = [2]u16{ world_x + cell_size, world_y };
             count += 1;
-            if (y >= CellSize) {
-                neighbors[count] = [2]u16{ x + CellSize, y - CellSize }; // Top-right
+            if (world_y >= cell_size) {
+                neighbors[count] = [2]u16{ world_x + cell_size, world_y - cell_size }; // Top-right
                 count += 1;
             }
-            if (y + CellSize <= mapHeight) {
-                neighbors[count] = [2]u16{ x + CellSize, y + CellSize }; // Bottom-right
+            if (world_y + cell_size <= map_height) {
+                neighbors[count] = [2]u16{ world_x + cell_size, world_y + cell_size }; // Bottom-right
                 count += 1;
             }
         }
-        if (y >= CellSize) { // Check and add top neighbor
-            neighbors[count] = [2]u16{ x, y - CellSize };
+        if (world_y >= cell_size) { // Check and add top neighbor
+            neighbors[count] = [2]u16{ world_x, world_y - cell_size };
             count += 1;
         }
-        if (y + CellSize <= mapHeight) { // Check and add bottom neighbor
-            neighbors[count] = [2]u16{ x, y + CellSize };
+        if (world_y + cell_size <= map_height) { // Check and add bottom neighbor
+            neighbors[count] = [2]u16{ world_x, world_y + cell_size };
             count += 1;
         }
         return neighbors[0..count];
     }
 
-    pub fn gridX(x: u16) u16 {
-        return @divFloor(x, CellSize);
+    /// Converts a world coordinate `x` to the horizontal grid coordinate it falls into.
+    /// #### Parameters
+    /// - `world_x`: The `x` coordinate in the world space.
+    /// #### Returns
+    /// - The corresponding grid coordinate on the horizontal axis.
+    pub fn x(world_x: u16) u16 {
+        return @divFloor(world_x, cell_size);
     }
 
-    pub fn gridY(y: u16) u16 {
-        return @divFloor(y, CellSize);
+    /// Converts a world coordinate `y` to the vertical grid coordinate it falls into.
+    /// #### Parameters
+    /// - `world_y`: The `y` coordinate in the world space.
+    /// #### Returns
+    /// - The corresponding grid coordinate on the vertical axis.
+    pub fn y(world_y: u16) u16 {
+        return @divFloor(world_y, cell_size);
     }
 
-    pub fn closestNode(x: u16, y: u16) [2]u16 {
-        const closestX = @divTrunc((x + HalfCell), CellSize) * CellSize;
-        const closestY = @divTrunc((y + HalfCell), CellSize) * CellSize;
-        return [2]u16{ closestX, closestY };
+    pub fn closestNode(world_x: u16, world_y: u16) [2]u16 {
+        const closest_x = @divTrunc((world_x + cell_half), cell_size) * cell_size;
+        const closest_y = @divTrunc((world_y + cell_half), cell_size) * cell_size;
+        return [2]u16{ closest_x, closest_y };
     }
 
-    pub fn closestNodeOffset(x: u16, y: u16, dir: u8, width: u16, height: u16) [2]u16 {
+    pub fn closestNodeOffset(world_x: u16, world_y: u16, dir: u8, width: u16, height: u16) [2]u16 {
         const delta = if (isHorz(dir)) width else height;
-        const offsetXy = dirOffset(x, y, dir, delta);
-        return closestNode(offsetXy[0], offsetXy[1]);
+        const offset_xy = dirOffset(world_x, world_y, dir, delta);
+        return closestNode(offset_xy[0], offset_xy[1]);
+    }
+
+    pub fn entityCount(self: *entity.Grid) usize {
+        var total_entities: usize = 0;
+        var it = self.cells.iterator();
+        while (it.next()) |entry| {
+            total_entities += entry.value_ptr.items.len;
+        }
+        return total_entities;
     }
 };
 
 pub const SpatialHash = struct {
     pub fn hash(x: u16, y: u16) u64 {
-        const gridX = @divFloor(@as(u64, @intCast(x)), Grid.CellSize); // Left cell edge
-        const gridY = @divFloor(@as(u64, @intCast(y)), Grid.CellSize); // Top cell edge
-        const hashValue = (gridX << 32) | gridY;
+        const grid_x = @divFloor(@as(u64, @intCast(x)), Grid.cell_size); // Left cell edge
+        const grid_y = @divFloor(@as(u64, @intCast(y)), Grid.cell_size); // Top cell edge
+        const hashValue = (grid_x << 32) | grid_y;
 
         return hashValue;
     }
@@ -444,9 +469,9 @@ pub const SpatialHash = struct {
 
 pub fn testHashFunction() void {
     const min_x: u16 = 0;
-    const max_x: u16 = main.mapWidth;
+    const max_x: u16 = main.map_width;
     const min_y: u16 = 0;
-    const max_y: u16 = main.mapHeight;
+    const max_y: u16 = main.map_height;
     const step: u16 = 1;
 
     std.log.info("\nTesting hash function. Checking hash values for positions between {}, {} and {}, {}, with an increment of {}.", .{ min_x, min_y, max_x, max_y, step });
@@ -456,9 +481,9 @@ pub fn testHashFunction() void {
     var collisionCount: usize = 0;
 
     var x: u16 = min_x;
-    while (x <= max_x) : (x += step * Grid.CellSize) {
+    while (x <= max_x) : (x += step * Grid.cell_size) {
         var y: u16 = min_y; // Reset y for each new x
-        while (y <= max_y) : (y += step * Grid.CellSize) {
+        while (y <= max_y) : (y += step * Grid.cell_size) {
             const hashValue = SpatialHash.hash(x, y);
 
             if (seenHashes.getOrPut(hashValue)) |existing| {
@@ -482,7 +507,7 @@ pub fn testHashFunction() void {
 // Map Coordinates
 //----------------------------------------------------------------------------------
 pub fn isOnMap(x: u16, y: u16) bool {
-    return x >= 0 and x < main.mapWidth and y >= 0 and y <= main.mapHeight;
+    return x >= 0 and x < main.map_width and y >= 0 and y <= main.map_height;
 }
 
 pub fn isInMap(x: u16, y: u16, width: u16, height: u16) bool {
@@ -492,21 +517,22 @@ pub fn isInMap(x: u16, y: u16, width: u16, height: u16) bool {
     const xSigned = @as(i32, @intCast(x));
     const ySigned = @as(i32, @intCast(y));
 
-    return xSigned - halfWidth >= 0 and xSigned + halfWidth < @as(i32, @intCast(main.mapWidth)) and ySigned - halfHeight >= 0 and ySigned + halfHeight <= @as(i32, @intCast(main.mapHeight));
+    return xSigned - halfWidth >= 0 and xSigned + halfWidth < @as(i32, @intCast(main.map_width)) and ySigned - halfHeight >= 0 and ySigned + halfHeight <= @as(i32, @intCast(main.map_height));
 }
 
 pub fn mapClampX(x: i16, width: u16) u16 {
     const halfWidth = @as(i16, @intCast(@divTrunc(width, 2)));
-    const clampedX = @max(halfWidth, @min(x, @as(i16, @intCast(main.mapWidth)) - halfWidth));
+    const clampedX = @max(halfWidth, @min(x, @as(i16, @intCast(main.map_width)) - halfWidth));
     return @as(u16, @intCast(clampedX));
 }
 
 pub fn mapClampY(y: i16, height: u16) u16 {
     const halfHeight = @as(i16, @intCast(@divTrunc(height, 2)));
-    const clampedY = @max(halfHeight, @min(y, @as(i16, @intCast(main.mapHeight)) - halfHeight));
+    const clampedY = @max(halfHeight, @min(y, @as(i16, @intCast(main.map_height)) - halfHeight));
     return @as(u16, @intCast(clampedY));
 }
 
+/// Returns the closest midpoint of the closest quad-partitioned cell to `x`,`y`.
 pub fn closestNexus(x: u16, y: u16) [2]u16 {
     const quadSize = main.GRID_CELL_SIZE / 2;
     const nexLength = quadSize / 2;
@@ -517,47 +543,49 @@ pub fn closestNexus(x: u16, y: u16) [2]u16 {
 
 // Canvas
 //----------------------------------------------------------------------------------
-/// Returns drawing position from posX given camera offsetX and zoom
-pub fn canvasX(posX: i32, offsetX: f32, zoom: f32) i32 {
-    const zoomedPosX = @as(f32, @floatFromInt(posX)) * zoom;
-    return @as(i32, @intFromFloat(zoomedPosX + offsetX));
+/// Returns drawing position from world `x` given camera `offset_x` and `zoom`.
+pub fn canvasX(x: i32, offset_x: f32, zoom: f32) i32 {
+    const zoomed_x = @as(f32, @floatFromInt(x)) * zoom;
+    return @as(i32, @intFromFloat(zoomed_x + offset_x));
 }
 
-/// Returns drawing position from posY given camera offsetY and zoom
-pub fn canvasY(posY: i32, offsetY: f32, zoom: f32) i32 {
-    const zoomedPosY = @as(f32, @floatFromInt(posY)) * zoom;
-    return @as(i32, @intFromFloat(zoomedPosY + offsetY));
+/// Returns drawing position from world `y` given camera `offset_y` and `zoom`.
+pub fn canvasY(y: i32, offset_y: f32, zoom: f32) i32 {
+    const zoomed_y = @as(f32, @floatFromInt(y)) * zoom;
+    return @as(i32, @intFromFloat(zoomed_y + offset_y));
 }
 
-/// Returns drawing scale given object scale and camera zoom
+/// Returns drawing scale given object `scale` and camera `zoom`.
 pub fn canvasScale(scale: i32, zoom: f32) i32 {
-    const scaledValue = zoom * @as(f32, @floatFromInt(scale));
-    return @as(i32, @intFromFloat(scaledValue));
+    const scaled_value = zoom * @as(f32, @floatFromInt(scale));
+    return @as(i32, @intFromFloat(scaled_value));
 }
 
+/// Sets canvas offset values to center on the player position.
 pub fn canvasOnPlayer() void {
-    const screenWidthF = @as(f32, @floatFromInt(rl.getScreenWidth()));
-    const screenHeightF = @as(f32, @floatFromInt(rl.getScreenHeight()));
-    main.canvasOffsetX = -(@as(f32, @floatFromInt(main.gamePlayer.x)) * main.canvasZoom) + (screenWidthF / 2);
-    main.canvasOffsetY = -(@as(f32, @floatFromInt(main.gamePlayer.y)) * main.canvasZoom) + (screenHeightF / 2);
+    const screen_width_f = @as(f32, @floatFromInt(rl.getScreenWidth()));
+    const screen_height_f = @as(f32, @floatFromInt(rl.getScreenHeight()));
+    main.canvas_offset_x = -(@as(f32, @floatFromInt(main.player.x)) * main.canvas_zoom) + (screen_width_f / 2);
+    main.canvas_offset_y = -(@as(f32, @floatFromInt(main.player.y)) * main.canvas_zoom) + (screen_height_f / 2);
 }
 
-pub fn getMaxCanvasSize(screenWidth: i32, screenHeight: i32, mapWidth: u16, mapHeight: u16) f32 {
-    if (screenWidth > screenHeight) {
-        return @as(f32, @floatFromInt(screenWidth)) / @as(f32, @floatFromInt(mapWidth));
+/// Calculates and returns the maximum zoom out possible while remaining within the given map dimensions.
+pub fn maxCanvasSize(screen_width: i32, screen_height: i32, map_width: u16, map_height: u16) f32 {
+    if (screen_width > screen_height) {
+        return @as(f32, @floatFromInt(screen_width)) / @as(f32, @floatFromInt(map_width));
     } else {
-        return @as(f32, @floatFromInt(screenHeight)) / @as(f32, @floatFromInt(mapHeight));
+        return @as(f32, @floatFromInt(screen_height)) / @as(f32, @floatFromInt(map_height));
     }
 }
 
 // Drawing
 //----------------------------------------------------------------------------------
-/// Uses raylib to draw rectangle scaled and positioned to canvas
+/// Uses raylib to draw rectangle scaled and positioned to canvas.
 pub fn drawRect(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
-    rl.drawRectangle(canvasX(x, main.canvasOffsetX, main.canvasZoom), canvasY(y, main.canvasOffsetY, main.canvasZoom), canvasScale(width, main.canvasZoom), canvasScale(height, main.canvasZoom), col);
+    rl.drawRectangle(canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom), canvasScale(width, main.canvas_zoom), canvasScale(height, main.canvas_zoom), col);
 }
 
-/// Draws rectangle centered on the x, y coordinates, scaled and positioned to canvas
+/// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawEntity(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
-    rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.canvasOffsetX, main.canvasZoom), canvasY(y - @divTrunc(height, 2), main.canvasOffsetY, main.canvasZoom), canvasScale(width, main.canvasZoom), canvasScale(height, main.canvasZoom), col);
+    rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.canvas_offset_x, main.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.canvas_offset_y, main.canvas_zoom), canvasScale(width, main.canvas_zoom), canvasScale(height, main.canvas_zoom), col);
 }
