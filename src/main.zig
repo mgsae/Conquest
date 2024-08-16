@@ -7,8 +7,9 @@ const entity = @import("entity.zig");
 pub const TICKRATE = 60;
 pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
 pub const MAX_TICKS_PER_FRAME = 1;
-pub const PLAYER_SEARCH_LIMIT = 1600; // Limit must exceed #entities in 3x3 cells
-pub const UNIT_SEARCH_LIMIT = 2560;
+pub const PLAYER_SEARCH_LIMIT = 512; // Player collision limit, must exceed #entities in 3x3 cells
+pub const UNIT_SEARCH_LIMIT = 256; // Unit collision limit
+pub const BUFFERSIZE = 1600; // Limit to number of entities updated via sectionSearch per tick
 pub var last_tick_time: f64 = 0.0;
 pub var frame_count: u64 = 0;
 pub var profile_mode = false;
@@ -85,7 +86,7 @@ pub fn main() anyerror!void {
     std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ map_width, map_height, utils.Grid.cell_size });
 
     // Initialize the grid
-    try grid.init(&allocator, gridWidth, gridHeight);
+    try grid.init(&allocator, gridWidth, gridHeight, BUFFERSIZE);
     const cellsigns_cache = try allocator.alloc(u32, grid.columns * grid.rows);
     defer grid.deinit(&allocator);
 
@@ -119,7 +120,7 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
-    for (0..1000) |_| {
+    for (0..0) |_| {
         _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
     }
 

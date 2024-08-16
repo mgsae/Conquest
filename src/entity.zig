@@ -14,7 +14,7 @@ const Kind = enum {
     Structure,
 };
 
-pub const Entity align(8) = struct {
+pub const Entity = struct {
     kind: Kind,
     content: union(Kind) { // Stores pointer to the actual data
         Player: *Player,
@@ -219,7 +219,7 @@ pub const Player = struct {
 
         const built = Structure.build(xy[0], xy[1], build_index);
         if (built) |building| {
-            std.debug.print("Structure built successfully: {}\n", .{building});
+            std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
             // Do something with the structure
         } else {
             std.debug.print("Failed to build structure\n", .{});
@@ -305,29 +305,39 @@ pub const Unit = struct {
         if (self.life <= 0) self.die(null);
     }
 
-    /// Searches for collision at `new_x`,`new_y`. If no obstacle is found, sets position to `x`, `y`. If obstacle is found, moves along edge.
+    /// Searches for collision at `new_x`,`new_y`. If no obstacle is found, sets position to `x`, `y`. If obstacle is found, tries moving along edge.
     fn move(self: *Unit, new_x: u16, new_y: u16) !void {
         const old_x = self.x;
         const old_y = self.y;
+
+        // If step is out of bounds, clamps to map (ignoring collision) if needed, and retargets
         if (!utils.isInMap(new_x, new_y, self.width, self.height)) {
-            // Step is out of bounds, clamps to map (ignoring collision) and retargets
             if (!utils.isInMap(old_x, old_y, self.width, self.height)) {
                 const clamped_x = utils.mapClampX(@as(i16, @intCast(new_x)), self.width);
                 const clamped_y = utils.mapClampY(@as(i16, @intCast(new_y)), self.height);
-                _ = self.tryMove(clamped_x, clamped_y, old_x, old_y, null);
+                _ = self.tryMove(clamped_x, clamped_y, old_x, old_y);
             }
             _ = self.retarget(utils.randomU16(main.map_width), utils.randomU16(main.map_height)); // <--- just testing
             return;
         }
+
         if (old_x == new_x and old_y == new_y) return; // No change
-        const entities = main.grid.getSection(utils.Grid.x(new_x), utils.Grid.y(new_y));
-        if (!self.tryMove(new_x, new_y, old_x, old_y, entities)) { // Tries executing regular move
-            self.moveAlongAxis(new_x, new_y, old_x, old_y, entities); // If collision, tries moving along either axis
+
+        if (!self.tryMove(new_x, new_y, old_x, old_y)) { // Tries executing regular move
+            _ = self.moveAlongAxis(new_x, new_y, old_x, old_y); // If collided, tries moving along either axis
         }
     }
 
-    fn tryMove(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16, entities: ?*std.ArrayList(*Entity)) bool {
-        const collision = if (entities != null) self.checkCollision(new_x, new_y, entities.?.*) else null;
+    /// Searches for collision at `new_x`,`new_y`. If unhindered, executes the movement, updates the grid, and returns `true`. If hindered, returns `false`.
+    fn tryMove(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) bool {
+        // Causes entities to stop at "undiscovered" cells:
+        //if (entities == null or entities.?.items.len == 0) {
+        //    std.debug.print("Entities list is empty.\n", .{});
+        //    return true;
+        //}
+        //std.debug.print("Entities list retrieved: length = {any}, address = {}\n", .{ entities.?.items.len, @intFromPtr(entities) });
+
+        const collision = self.checkCollision(new_x, new_y);
         if (collision == null) { // No obstacle, move
             self.x = new_x;
             self.y = new_y;
@@ -337,45 +347,49 @@ pub const Unit = struct {
         return false;
     }
 
-    fn moveAlongAxis(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16, entities: ?*std.ArrayList(*Entity)) void {
+    /// Compares `new_x`,`new_y` and `old_x`,`old_y` to find largest difference. Tries `tryMove()` along either dimension, prioritizing the dominant axis.
+    /// Executes move if collision check passes, returning `true`.
+    fn moveAlongAxis(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) bool {
         const diffX: i32 = @as(i32, @intCast(new_x)) - @as(i32, @intCast(old_x));
         const diffY: i32 = @as(i32, @intCast(new_y)) - @as(i32, @intCast(old_y));
 
         if (@abs(diffX) > @abs(diffY)) { // Horizontal axis dominant
-            if (!self.tryMove(new_x, old_y, old_x, old_y, entities)) {
-                _ = self.tryMove(old_x, new_y, old_x, old_y, entities);
+            if (!self.tryMove(new_x, old_y, old_x, old_y)) {
+                return self.tryMove(old_x, new_y, old_x, old_y);
             }
         } else { // Vertical axis dominant
-            if (!self.tryMove(old_x, new_y, old_x, old_y, entities)) {
-                _ = self.tryMove(new_x, old_y, old_x, old_y, entities);
+            if (!self.tryMove(old_x, new_y, old_x, old_y)) {
+                return self.tryMove(new_x, old_y, old_x, old_y);
             }
         }
+        return true; // Moved along dominant axis
     }
 
     /// Iterates through entities from current cell's index of `Grid.sections`. Checks for AABB collisions. Returns the first colliding `*Entity`, otherwise null.
-    fn checkCollision(self: *Unit, x: u16, y: u16, entities: std.ArrayList(*Entity)) ?*Entity {
-        if (entities.items.len > 0) {
-            //std.debug.print("Checking collision for {} entities.\n", .{entities.len});
-            for (entities.items) |entity| {
+    fn checkCollision(self: *Unit, x: u16, y: u16) ?*Entity {
+        const entities = main.grid.sectionEntities(utils.Grid.x(x), utils.Grid.y(y));
+        if (entities != null) {
+            const half_width = @divTrunc(self.width, 2);
+            const half_height = @divTrunc(self.height, 2);
+            const left = @max(half_width, x) - half_width;
+            const right = x + half_width;
+            const top = @max(half_height, y) - half_height;
+            const bottom = y + half_height;
+
+            for (entities.?.items) |entity| {
                 if (entity == self.entity) {
                     continue;
                 }
-                //std.debug.print("Checking entity {} at memory address: {}.\n", .{ i, @intFromPtr(entity) });
+
+                const entity_x = entity.x();
+                const entity_y = entity.y();
                 const entity_half_width = @divTrunc(entity.width(), 2);
                 const entity_half_height = @divTrunc(entity.height(), 2);
-                //std.debug.print("Entity {}: half_width = {}, half_height = {}.\n", .{ i, entity_half_width, entity_half_height });
 
-                const entity_left = @max(entity_half_width, entity.x()) - entity_half_width;
-                const entity_right = entity.x() + entity_half_width;
-                const entity_top = @max(entity_half_height, entity.y()) - entity_half_height;
-                const entity_bottom = entity.y() + entity_half_height;
-
-                const half_width = @divTrunc(self.width, 2);
-                const half_height = @divTrunc(self.height, 2);
-                const left = @max(half_width, x) - half_width;
-                const right = x + half_width;
-                const top = @max(half_height, y) - half_height;
-                const bottom = y + half_height;
+                const entity_left = @max(entity_half_width, entity_x) - entity_half_width;
+                const entity_right = entity_x + entity_half_width;
+                const entity_top = @max(entity_half_height, entity_y) - entity_half_height;
+                const entity_bottom = entity_y + entity_half_height;
 
                 if ((left < entity_right) and (right > entity_left) and
                     (top < entity_bottom) and (bottom > entity_top))
@@ -389,16 +403,21 @@ pub const Unit = struct {
     }
 
     /// Checks 3x3 cells in the spatial hash and returns a list of nearby entities. Excludes the `self` unit.
-    fn entitiesNear(self: *Unit, grid: *Grid, x: u16, y: u16, limit: comptime_int) ![]*Entity {
+    fn entitiesNearUNUSEDfromOldUnitCollision(self: *Unit, grid: *Grid, x: u16, y: u16, limit: comptime_int) ![]*Entity {
+        std.debug.print("Running entitiesNear.\n", .{});
         var nearby_entities: [limit]*Entity = undefined;
         var count: usize = 0;
+        std.debug.print("Declared nearby_entities: {any}, of length: {}\n", .{ nearby_entities, limit });
 
         const offsets = utils.Grid.sectionFromPoint(x, y, main.map_width, main.map_height);
+
+        std.debug.print("Found offsets from x,y: {any}.\n", .{offsets});
 
         for (offsets) |offset| { // For each neighboring cell
             const neighbor_x = offset[0];
             const neighbor_y = offset[1];
             const neighbor_key = utils.SpatialHash.hash(neighbor_x, neighbor_y);
+            std.debug.print("Found neighbor_key: {}.\n", .{neighbor_key});
 
             if (grid.cells.get(neighbor_key)) |list| { // Lists the cell contents
                 for (list.items) |entity| { // For each entity in the cell
@@ -406,11 +425,12 @@ pub const Unit = struct {
                         if (count >= limit) return error.EntityAmountExceedsLimit;
                         nearby_entities[count] = entity;
                         count += 1;
+                        std.debug.print("Added entity to entitiesNear, current count: {}.\n", .{count});
                     }
                 }
             }
         }
-        //std.debug.print("{} entities found by entitiesNear: {any}.\n", .{ count, nearby_entities[0..count] });
+        std.debug.print("{} entities found by entitiesNear: {any}.\n", .{ count, nearby_entities[0..count] });
         return nearby_entities[0..count];
     }
 
@@ -576,7 +596,7 @@ pub const Structure = struct {
     class: u8,
     color: rl.Color,
     life: u16,
-    pulse: f16,
+    tempo: f16,
     elapsed: u16 = 0,
 
     /// `Structure` property fields determined by `class`.
@@ -585,16 +605,16 @@ pub const Structure = struct {
         width: u16,
         height: u16,
         life: u16,
-        pulse: f16,
+        tempo: f16,
     };
 
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 5000, .pulse = 3.2 },
-            1 => Properties{ .color = rl.Color.blue, .width = 100, .height = 100, .life = 6000, .pulse = 5.5 },
-            2 => Properties{ .color = rl.Color.dark_blue, .width = 200, .height = 200, .life = 7000, .pulse = 4.0 },
-            3 => Properties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 8000, .pulse = 2.0 },
+            0 => Properties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 5000, .tempo = 3.2 },
+            1 => Properties{ .color = rl.Color.blue, .width = 100, .height = 100, .life = 6000, .tempo = 5.5 },
+            2 => Properties{ .color = rl.Color.dark_blue, .width = 200, .height = 200, .life = 7000, .tempo = 4.0 },
+            3 => Properties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 8000, .tempo = 2.0 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -605,9 +625,9 @@ pub const Structure = struct {
 
     pub fn update(self: *Structure) void {
         self.elapsed += 1;
-        const pulse_ticks = utils.ticksFromSecs(self.pulse);
-        if (self.elapsed >= pulse_ticks) {
-            self.elapsed -= pulse_ticks; // Subtracting interval accounts for possible overshoot
+        const tempo_ticks = utils.ticksFromSecs(self.tempo);
+        if (self.elapsed >= tempo_ticks) {
+            self.elapsed -= tempo_ticks; // Subtracting interval accounts for possible overshoot
             self.spawnUnit() catch return;
         }
     }
@@ -632,7 +652,7 @@ pub const Structure = struct {
             .height = from_class.height,
             .color = from_class.color,
             .life = from_class.life,
-            .pulse = from_class.pulse,
+            .tempo = from_class.tempo,
             .x = x,
             .y = y,
         };
@@ -767,26 +787,29 @@ pub const Grid = struct {
     allocator: *std.mem.Allocator,
     cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.SpatialHash.Context, 80) = undefined,
     cellsigns: []u32, // A slice into a contiguous block of memory
+    entity_buffer: []*Entity, // Allocated once, rewritten each tick
+    buffer_offset: usize, // Tracks the current usage of the buffer
     sections: []std.ArrayList(*Entity), // Array of dynamic lists of pointers to entities (each section is 3x3 around a given cell)
     columns: usize,
     rows: usize,
 
     const Cellsign = u32;
 
-    pub fn init(self: *Grid, allocator: *std.mem.Allocator, columns: usize, rows: usize) !void {
+    pub fn init(self: *Grid, allocator: *std.mem.Allocator, columns: usize, rows: usize, buffer_size: usize) !void {
         self.allocator = allocator;
         self.cells = std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.SpatialHash.Context, 80).init(allocator.*);
 
         self.columns = columns;
         self.rows = rows;
         self.cellsigns = try allocator.alloc(u32, columns * rows);
+        self.entity_buffer = try allocator.alloc(*Entity, buffer_size);
+        self.buffer_offset = 0;
 
         const total_cells = columns * rows;
         self.sections = try allocator.alloc(std.ArrayList(*Entity), total_cells);
         for (self.sections) |*section| {
             section.* = std.ArrayList(*Entity).init(allocator.*);
         }
-        std.debug.print("Alignment of entity: {}.\n", .{@alignOf(*Entity)});
     }
 
     pub fn deinit(self: *Grid, allocator: *std.mem.Allocator) void {
@@ -802,9 +825,11 @@ pub const Grid = struct {
             section.deinit();
         }
         allocator.free(self.sections);
+        allocator.free(self.entity_buffer);
     }
 
-    fn getSection(self: *Grid, x: usize, y: usize) ?*std.ArrayList(*Entity) {
+    /// Takes a grid cell `x`,`y` and returns the list of entities stored in `sections` for that cell.
+    fn sectionEntities(self: *Grid, x: usize, y: usize) ?*std.ArrayList(*Entity) {
         if (x >= self.columns or y >= self.rows) {
             return null;
         }
@@ -837,6 +862,7 @@ pub const Grid = struct {
     }
 
     pub fn updateSections(self: *Grid, cellsigns_cache: []u32) void {
+        self.buffer_offset = 0; // Resets at the start of each frame
         for (0..self.columns) |x| {
             for (0..self.rows) |y| {
                 const sign = cellsigns_cache[y * self.columns + x];
@@ -851,13 +877,12 @@ pub const Grid = struct {
     }
 
     fn updateSection(self: *Grid, x: usize, y: usize) !void {
-        const entities = try self.entitiesNear(@as(u16, @intCast(x * utils.Grid.cell_size)), @as(u16, @intCast(y * utils.Grid.cell_size)), main.PLAYER_SEARCH_LIMIT);
+        const entities = try self.sectionSearch(@as(u16, @intCast(x * utils.Grid.cell_size)), @as(u16, @intCast(y * utils.Grid.cell_size)), main.UNIT_SEARCH_LIMIT);
         const index = y * self.columns + x; // Searches hashmap for entities near cell to create/update section
         self.sections[index].clearAndFree();
         for (entities) |entity| {
             try self.sections[index].append(entity);
         }
-        // std.debug.print("Updated section around cell {},{}. The section now contains {} entities.\n", .{ x, y, entities.len });
     }
 
     /// Retrieves current `Cellsign` of cell. Expects `x`,`y` grid coordinates, not world coordinates.
@@ -983,12 +1008,53 @@ pub const Grid = struct {
         return sign;
     }
 
-    /// Returns a slice of nearby entities within a 3x3 grid centered around the given x, y coordinates.
-    /// Returns an error if the number of nearby entities exceeds `limit`.
-    pub fn entitiesNear(self: *Grid, x: u16, y: u16, limit: comptime_int) ![]*Entity {
-        var nearby_entities: [limit]*Entity = undefined;
+    /// Looks up spatial hash and returns slice of entities within a 3x3 section around given x, y coordinates.
+    /// Returns error if buffer_offset exceeds the buffersize or the number of entities exceeds `limit`.
+    pub fn sectionSearch(self: *Grid, x: u16, y: u16, limit: comptime_int) ![]*Entity {
+        const buffer = self.entity_buffer;
         var count: usize = 0;
 
+        if (self.buffer_offset >= buffer.len) { // Check if there is enough space in the buffer
+            std.log.err("Buffer offset ({}) has exceeded buffer size ({}). Cannot add more entities.\n", .{ self.buffer_offset, buffer.len });
+            return error.BufferOverflow;
+        }
+
+        const offsets = utils.Grid.sectionFromPoint(x, y, main.map_width, main.map_height);
+
+        for (offsets) |offset| {
+            const neighbor_x = offset[0];
+            const neighbor_y = offset[1];
+            const neighbor_key = utils.SpatialHash.hash(neighbor_x, neighbor_y);
+
+            if (self.cells.get(neighbor_key)) |list| {
+                for (list.items) |entity| {
+                    // Ensure we do not exceed the buffer or the limit
+                    if (count >= limit or self.buffer_offset + count >= buffer.len) {
+                        std.debug.print("Entity limit reached or buffer full: {} entities collected, limit is {}. Total entities collected: {}, buffer limit is {}.\n", .{ count, limit, self.buffer_offset + count, buffer.len });
+                        return error.EntityAmountExceedsLimit;
+                    }
+                    const entity_ptr_value = @intFromPtr(entity);
+                    if (entity_ptr_value < 1024) {
+                        std.debug.print("Error: Suspicious entity pointer found: ptr={}, skipping\n", .{entity_ptr_value});
+                        continue; // Skips sussy pointers, indicates memory problem
+                    }
+                    buffer[self.buffer_offset + count] = entity; // Adds to buffer with offset
+                    count += 1;
+                }
+            }
+        }
+
+        self.buffer_offset += count; // Update the buffer_offset by the number of entities added
+        return buffer[self.buffer_offset - count .. self.buffer_offset];
+    }
+
+    /// Returns a slice of nearby entities within a 3x3 grid centered around the given x, y coordinates.
+    /// Returns an error if the number of nearby entities exceeds `limit`.
+    pub fn entitiesNearOLD(self: *Grid, x: u16, y: u16, limit: comptime_int) ![]*Entity {
+        std.debug.print("Calling entitiesNear with a limit of {}.\n", .{limit});
+        var nearby_entities: [limit]*Entity = undefined;
+        var count: usize = 0;
+        //std.debug.print("nearby_entities should be undefined {any}.\n", .{nearby_entities});
         // Gets a 3x3 section of the grid
         const offsets = utils.Grid.sectionFromPoint(x, y, main.map_width, main.map_height);
 
@@ -1011,7 +1077,8 @@ pub const Grid = struct {
                 }
             }
         }
-        //if (utils.perFrame(60)) std.debug.print("Searching for entities near {}, {}. Found {} entities within area from {},{} to {},{}.\n", .{ x, y, count, (x - utils.SpatialHash.cell_size), (y - utils.SpatialHash.cell_size), (x + utils.SpatialHash.cell_size), (y + utils.SpatialHash.cell_size) });
+        std.debug.print("By the time entitiesNear is done, count is: {}.\n", .{count});
+        //std.debug.print("Searching for entities near {any}. Found {} entities within area.\n", .{ offsets[0], count });
         return nearby_entities[0..count];
     }
 
@@ -1024,9 +1091,9 @@ pub const Grid = struct {
         const top = @max(half_height, y) - half_height;
         const bottom = y + half_height;
         const nearby_entities = if (current_entity != null and current_entity.?.kind == Kind.Unit)
-            try self.entitiesNear(x, y, main.UNIT_SEARCH_LIMIT)
+            try self.sectionSearch(x, y, main.UNIT_SEARCH_LIMIT)
         else
-            try self.entitiesNear(x, y, main.PLAYER_SEARCH_LIMIT);
+            try self.sectionSearch(x, y, main.PLAYER_SEARCH_LIMIT);
         for (nearby_entities) |entity| {
             if (current_entity) |cur| {
                 if (cur == entity) {
