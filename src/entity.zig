@@ -14,7 +14,7 @@ const Kind = enum {
     Structure,
 };
 
-pub const Entity = struct {
+pub const Entity align(8) = struct {
     kind: Kind,
     content: union(Kind) { // Stores pointer to the actual data
         Player: *Player,
@@ -300,6 +300,7 @@ pub const Unit = struct {
 
         // act, determine based on AI logic
         // move, determine movement based on AI logic
+
         self.life -= 1;
         if (self.life <= 0) self.die(null);
     }
@@ -309,9 +310,16 @@ pub const Unit = struct {
         const old_x = self.x;
         const old_y = self.y;
         if (!utils.isInMap(new_x, new_y, self.width, self.height)) {
-            // Not on map, may want to make sure it's currently inside, too
+            // Step is out of bounds, clamps to map (ignoring collision) and retargets
+            if (!utils.isInMap(old_x, old_y, self.width, self.height)) {
+                const clamped_x = utils.mapClampX(@as(i16, @intCast(new_x)), self.width);
+                const clamped_y = utils.mapClampY(@as(i16, @intCast(new_y)), self.height);
+                _ = self.tryMove(clamped_x, clamped_y, old_x, old_y, null);
+            }
+            _ = self.retarget(utils.randomU16(main.map_width), utils.randomU16(main.map_height)); // <--- just testing
             return;
         }
+        if (old_x == new_x and old_y == new_y) return; // No change
         const entities = main.grid.getSection(utils.Grid.x(new_x), utils.Grid.y(new_y));
         if (!self.tryMove(new_x, new_y, old_x, old_y, entities)) { // Tries executing regular move
             self.moveAlongAxis(new_x, new_y, old_x, old_y, entities); // If collision, tries moving along either axis
@@ -778,6 +786,7 @@ pub const Grid = struct {
         for (self.sections) |*section| {
             section.* = std.ArrayList(*Entity).init(allocator.*);
         }
+        std.debug.print("Alignment of entity: {}.\n", .{@alignOf(*Entity)});
     }
 
     pub fn deinit(self: *Grid, allocator: *std.mem.Allocator) void {
