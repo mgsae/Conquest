@@ -287,7 +287,6 @@ pub const Unit = struct {
     height: u16,
     life: u16,
     target: utils.Point,
-    cached_entities: ?[]*Entity, // Cached entities to check collision with
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
 
     pub fn draw(self: *Unit) void {
@@ -321,10 +320,13 @@ pub const Unit = struct {
             return;
         }
 
-        if (old_x == new_x and old_y == new_y) return; // No change
-
         if (!self.tryMove(new_x, new_y, old_x, old_y)) { // Tries executing regular move
             _ = self.moveAlongAxis(new_x, new_y, old_x, old_y); // If collided, tries moving along either axis
+        }
+
+        if (old_x == self.x and old_y == self.y) { // If no change after moving, retarget
+            _ = self.retarget(utils.randomU16(main.map_width), utils.randomU16(main.map_height)); // <--- just testing
+            return;
         }
     }
 
@@ -526,7 +528,6 @@ pub const Unit = struct {
             .x = x,
             .y = y,
             .target = utils.Point.at(utils.randomU16(main.map_width), utils.randomU16(main.map_height)), // <--- just testing
-            .cached_entities = null,
             .cached_cellsigns = [_]u32{0} ** 9,
         };
 
@@ -1030,7 +1031,7 @@ pub const Grid = struct {
                 for (list.items) |entity| {
                     // Ensure we do not exceed the buffer or the limit
                     if (count >= limit or self.buffer_offset + count >= buffer.len) {
-                        std.debug.print("Entity limit reached or buffer full: {} entities collected, limit is {}. Total entities collected: {}, buffer limit is {}.\n", .{ count, limit, self.buffer_offset + count, buffer.len });
+                        //std.debug.print("Entity limit reached or buffer full: {} entities collected, limit is {}. Total entities collected: {}, buffer limit is {}.\n", .{ count, limit, self.buffer_offset + count, buffer.len });
                         return error.EntityAmountExceedsLimit;
                     }
                     const entity_ptr_value = @intFromPtr(entity);

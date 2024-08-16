@@ -7,9 +7,9 @@ const entity = @import("entity.zig");
 pub const TICKRATE = 60;
 pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
 pub const MAX_TICKS_PER_FRAME = 1;
-pub const PLAYER_SEARCH_LIMIT = 512; // Player collision limit, must exceed #entities in 3x3 cells
-pub const UNIT_SEARCH_LIMIT = 256; // Unit collision limit
-pub const BUFFERSIZE = 1600; // Limit to number of entities updated via sectionSearch per tick
+pub const PLAYER_SEARCH_LIMIT = 1028; // Player collision search limit, must exceed #entities in 3x3 cells
+pub const UNIT_SEARCH_LIMIT = 256; // Unit collision search limit
+pub const BUFFERSIZE = 65536; // Limit to number of entities updated via sectionSearch per tick
 pub var last_tick_time: f64 = 0.0;
 pub var frame_count: u64 = 0;
 pub var profile_mode = false;
@@ -28,7 +28,7 @@ pub var canvas_max: f32 = 1.0; // Recalculated in setMapSize() for max map visib
 // World
 const STARTING_MAP_WIDTH = 1920 * 8; // Limit for u16 coordinates: 65535
 const STARTING_MAP_HEIGHT = 1080 * 8; // Limit for u16 coordinates: 65535
-pub const GRID_CELL_SIZE = 400; //512;
+pub const GRID_CELL_SIZE = 600; //512;
 pub var map_width: u16 = 0;
 pub var map_height: u16 = 0;
 pub var grid: entity.Grid = undefined;
@@ -120,7 +120,7 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
-    for (0..0) |_| {
+    for (0..500) |_| {
         _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
     }
 
