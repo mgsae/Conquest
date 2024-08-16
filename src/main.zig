@@ -47,15 +47,15 @@ pub fn main() anyerror!void {
 
     const flags = rl.ConfigFlags{
         .fullscreen_mode = false,
-        .window_resizable = false,
+        .window_resizable = true,
         .window_undecorated = false, // Removes window border
         .window_transparent = false,
         .msaa_4x_hint = false,
-        .vsync_hint = true,
+        .vsync_hint = false,
         .window_hidden = false,
         .window_always_run = false,
         .window_minimized = false,
-        .window_maximized = true,
+        .window_maximized = false,
         .window_unfocused = false,
         .window_topmost = false,
         .window_highdpi = false,
@@ -66,6 +66,7 @@ pub fn main() anyerror!void {
     rl.setWindowState(flags);
     //rl.setWindowSize(screen_width, screen_height);
     //rl.setTargetFPS(60);
+    //rl.toggleFullscreen();
 
     // Initialize utility
     //--------------------------------------------------------------------------------------
@@ -85,6 +86,7 @@ pub fn main() anyerror!void {
 
     // Initialize the grid
     try grid.init(&allocator, gridWidth, gridHeight);
+    const cellsigns_cache = try allocator.alloc(u32, grid.columns * grid.rows);
     defer grid.deinit(&allocator);
 
     // Initialize entities
@@ -136,7 +138,7 @@ pub fn main() anyerror!void {
 
         // Profiling
         //----------------------------------------------------------------------------------
-        const profile_frame = (profile_mode and utils.perFrame(1));
+        const profile_frame = (profile_mode and utils.perFrame(45));
         if (profile_frame) {
             utils.startTimer(3, "\nSTART OF FRAME :::");
             std.debug.print("{}.\n\n", .{frame_count});
@@ -165,8 +167,12 @@ pub fn main() anyerror!void {
             if (profile_frame) utils.startTimer(1, "- Updating cell signatures.");
             grid.updateCellsigns(); // Updates Grid.cellsigns array
             if (profile_frame) utils.endTimer(1, "Updating cell signatures took {} seconds.");
+            if (profile_frame) utils.startTimer(1, "- Updating grid sections.");
+            grid.updateSections(cellsigns_cache); // Updates Grid.sections array by cellsign comparison
+            if (profile_frame) utils.endTimer(1, "Updating grid sections took {} seconds.");
 
             try updateLogic(stored_key_input, profile_frame);
+
             updateControls(stored_mousewheel, stored_key_input, profile_frame);
 
             stored_mousewheel = 0.0;
@@ -270,7 +276,7 @@ fn draw(profile_frame: bool) void {
 }
 
 pub fn updateCanvasZoom(mousewheel_delta: f32) void {
-    canvas_max = utils.maxCanvasSize(screen_width, screen_height, map_width, map_height); // For window resizing
+    canvas_max = utils.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), map_width, map_height); // For window resizing
     if (mousewheel_delta != 0) {
         const old_zoom: f32 = canvas_zoom;
         const zoom_change: f32 = 1 + (0.025 * mousewheel_delta); // zoom rate

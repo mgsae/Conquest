@@ -312,22 +312,14 @@ pub const Unit = struct {
             // Not on map, may want to make sure it's currently inside, too
             return;
         }
-        try self.refreshCachedEntities(&main.grid, new_x, new_y); // Updates cached_entities only if cellsigns have changed
-
-        if (!self.tryMove(new_x, new_y, old_x, old_y)) { // Tries executing regular move
-            self.moveAlongAxis(new_x, new_y, old_x, old_y); // If collision, tries moving along either axis
+        const entities = main.grid.getSection(utils.Grid.x(new_x), utils.Grid.y(new_y));
+        if (!self.tryMove(new_x, new_y, old_x, old_y, entities)) { // Tries executing regular move
+            self.moveAlongAxis(new_x, new_y, old_x, old_y, entities); // If collision, tries moving along either axis
         }
     }
 
-    fn tryMove(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) bool {
-        //const cache = self.cached_entities orelse return false;
-        //std.debug.print("Checking for collisions. Cached entity addresses:\n", .{});
-        //for (cache, 0..) |entity, i| {
-        //    std.debug.print("Entity {}: memory address = {}\n", .{ i, @intFromPtr(entity) });
-        //}
-        //std.debug.print("Current cached_cellsigns: {any}.\n", .{self.cached_cellsigns});
-
-        const collision = self.checkCollision(new_x, new_y);
+    fn tryMove(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16, entities: ?*std.ArrayList(*Entity)) bool {
+        const collision = if (entities != null) self.checkCollision(new_x, new_y, entities.?.*) else null;
         if (collision == null) { // No obstacle, move
             self.x = new_x;
             self.y = new_y;
@@ -337,26 +329,26 @@ pub const Unit = struct {
         return false;
     }
 
-    fn moveAlongAxis(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) void {
+    fn moveAlongAxis(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16, entities: ?*std.ArrayList(*Entity)) void {
         const diffX: i32 = @as(i32, @intCast(new_x)) - @as(i32, @intCast(old_x));
         const diffY: i32 = @as(i32, @intCast(new_y)) - @as(i32, @intCast(old_y));
 
         if (@abs(diffX) > @abs(diffY)) { // Horizontal axis dominant
-            if (!self.tryMove(new_x, old_y, old_x, old_y)) {
-                _ = self.tryMove(old_x, new_y, old_x, old_y);
+            if (!self.tryMove(new_x, old_y, old_x, old_y, entities)) {
+                _ = self.tryMove(old_x, new_y, old_x, old_y, entities);
             }
         } else { // Vertical axis dominant
-            if (!self.tryMove(old_x, new_y, old_x, old_y)) {
-                _ = self.tryMove(new_x, old_y, old_x, old_y);
+            if (!self.tryMove(old_x, new_y, old_x, old_y, entities)) {
+                _ = self.tryMove(new_x, old_y, old_x, old_y, entities);
             }
         }
     }
 
-    /// Iterates through `cached_entites` and checks for AABB collisions. Returns the first colliding entity.
-    fn checkCollision(self: *Unit, x: u16, y: u16) ?*Entity {
-        if (self.cached_entities) |entities| {
+    /// Iterates through entities from current cell's index of `Grid.sections`. Checks for AABB collisions. Returns the first colliding `*Entity`, otherwise null.
+    fn checkCollision(self: *Unit, x: u16, y: u16, entities: std.ArrayList(*Entity)) ?*Entity {
+        if (entities.items.len > 0) {
             //std.debug.print("Checking collision for {} entities.\n", .{entities.len});
-            for (entities) |entity| {
+            for (entities.items) |entity| {
                 if (entity == self.entity) {
                     continue;
                 }
@@ -388,61 +380,12 @@ pub const Unit = struct {
         return null;
     }
 
-    /// Checks the current cellsigns of 3x3 surrounding cells against the cached ones to see if an update is needed. If so, refreshes the
-    /// cached_entities list with the relevant entities from the grid by calling `Grid.entitiesNear`.
-    fn refreshCachedEntities(self: *Unit, grid: *Grid, new_x: u16, new_y: u16) !void {
-        var needs_update = false;
-        const cell_x = utils.Grid.x(new_x);
-        const cell_y = utils.Grid.y(new_y);
-
-        for (0..3) |dy| {
-            for (0..3) |dx| {
-                const nx = if (cell_x + dx >= 1) cell_x + dx - 1 else 0;
-                const ny = if (cell_y + dy >= 1) cell_y + dy - 1 else 0;
-                if (nx >= grid.columns or ny >= grid.rows) continue;
-
-                const cellsign = grid.getCellsign(nx, ny);
-                const index = dy * 3 + dx;
-
-                if (cellsign != self.cached_cellsigns[index]) {
-                    needs_update = true;
-                    self.cached_cellsigns[index] = cellsign; // Update the cached cellsign
-                }
-            }
-        }
-
-        if (needs_update) {
-            const entities = self.entitiesNear(&main.grid, new_x, new_y, main.UNIT_SEARCH_LIMIT) catch |err| {
-                std.debug.print("Error refreshing cached entities: {}\n", .{err});
-                return;
-            };
-
-            const allocator = grid.allocator;
-            if (self.cached_entities) |cache| {
-                if (cache.len != entities.len) {
-                    allocator.free(cache); // If length changed, reallocate memory
-                    self.cached_entities = try allocator.alloc(*Entity, entities.len);
-                }
-            } else { // Allocate memory if new
-                self.cached_entities = try allocator.alloc(*Entity, entities.len);
-            }
-
-            // Copy the entities into cached_entities
-            if (self.cached_entities) |cache| {
-                for (entities, 0..) |entity, i| {
-                    cache[i] = entity;
-                }
-                //std.debug.print("Cached entities count: {any}.\n", .{entities.len});
-            }
-        }
-    }
-
     /// Checks 3x3 cells in the spatial hash and returns a list of nearby entities. Excludes the `self` unit.
     fn entitiesNear(self: *Unit, grid: *Grid, x: u16, y: u16, limit: comptime_int) ![]*Entity {
         var nearby_entities: [limit]*Entity = undefined;
         var count: usize = 0;
 
-        const offsets = utils.Grid.getValidNeighbors(x, y, main.map_width, main.map_height);
+        const offsets = utils.Grid.sectionFromPoint(x, y, main.map_width, main.map_height);
 
         for (offsets) |offset| { // For each neighboring cell
             const neighbor_x = offset[0];
@@ -816,6 +759,7 @@ pub const Grid = struct {
     allocator: *std.mem.Allocator,
     cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.SpatialHash.Context, 80) = undefined,
     cellsigns: []u32, // A slice into a contiguous block of memory
+    sections: []std.ArrayList(*Entity), // Array of dynamic lists of pointers to entities (each section is 3x3 around a given cell)
     columns: usize,
     rows: usize,
 
@@ -828,7 +772,12 @@ pub const Grid = struct {
         self.columns = columns;
         self.rows = rows;
         self.cellsigns = try allocator.alloc(u32, columns * rows);
-        // Not initializing values
+
+        const total_cells = columns * rows;
+        self.sections = try allocator.alloc(std.ArrayList(*Entity), total_cells);
+        for (self.sections) |*section| {
+            section.* = std.ArrayList(*Entity).init(allocator.*);
+        }
     }
 
     pub fn deinit(self: *Grid, allocator: *std.mem.Allocator) void {
@@ -837,7 +786,69 @@ pub const Grid = struct {
             entry.value_ptr.*.deinit(); // Dereference value_ptr to access and deinitialize the value
         }
         self.cells.deinit();
+
         allocator.free(self.cellsigns);
+
+        for (self.sections) |section| {
+            section.deinit();
+        }
+        allocator.free(self.sections);
+    }
+
+    fn getSection(self: *Grid, x: usize, y: usize) ?*std.ArrayList(*Entity) {
+        if (x >= self.columns or y >= self.rows) {
+            return null;
+        }
+        const index = y * self.columns + x;
+        return &self.sections[index];
+    }
+
+    fn addToSection(self: *Grid, x: usize, y: usize, entity: *Entity) !void {
+        if (x < self.columns and y < self.rows) {
+            const index = y * self.columns + x;
+            try self.sections[index].append(entity);
+        }
+    }
+
+    fn removeFromSection(self: *Grid, x: usize, y: usize, entity: *Entity) !void {
+        if (x < self.columns and y < self.rows) {
+            const index = y * self.columns + x;
+            var section = &self.sections[index];
+            var found_index: ?usize = null;
+            for (section.items, 0..) |e, i| {
+                if (e == entity) {
+                    found_index = i;
+                    break;
+                }
+            }
+            if (found_index) |idx| {
+                section.swapRemove(idx);
+            }
+        }
+    }
+
+    pub fn updateSections(self: *Grid, cellsigns_cache: []u32) void {
+        for (0..self.columns) |x| {
+            for (0..self.rows) |y| {
+                const sign = cellsigns_cache[y * self.columns + x];
+                if (self.getCellsign(x, y) != sign) { // Cellsign changed from previous tick
+                    cellsigns_cache[y * self.columns + x] = self.getCellsign(x, y); // Cache is changed in place
+                    self.updateSection(x, y) catch |err| {
+                        std.log.err("Failed to update section at ({}, {}): {}\n", .{ x, y, err });
+                    };
+                }
+            }
+        }
+    }
+
+    fn updateSection(self: *Grid, x: usize, y: usize) !void {
+        const entities = try self.entitiesNear(@as(u16, @intCast(x * utils.Grid.cell_size)), @as(u16, @intCast(y * utils.Grid.cell_size)), main.PLAYER_SEARCH_LIMIT);
+        const index = y * self.columns + x; // Searches hashmap for entities near cell to create/update section
+        self.sections[index].clearAndFree();
+        for (entities) |entity| {
+            try self.sections[index].append(entity);
+        }
+        // std.debug.print("Updated section around cell {},{}. The section now contains {} entities.\n", .{ x, y, entities.len });
     }
 
     /// Retrieves current `Cellsign` of cell. Expects `x`,`y` grid coordinates, not world coordinates.
@@ -949,7 +960,7 @@ pub const Grid = struct {
         }
     }
 
-    /// Generates a `Cellsign` (`u32`) for a given entity list.
+    /// Generates a `Cellsign` (`u32`) for a given entity list. Does not update the grid's `cellsigns` array.
     pub fn generateCellsign(entity_list: *std.ArrayList(*Entity)) Cellsign {
         var sign: Cellsign = 0;
         const entity_count = @as(u32, @intCast(entity_list.items.len)); // Encodes the number of entities in the lowest 8 bits
@@ -970,7 +981,7 @@ pub const Grid = struct {
         var count: usize = 0;
 
         // Gets a 3x3 section of the grid
-        const offsets = utils.Grid.getValidNeighbors(x, y, main.map_width, main.map_height);
+        const offsets = utils.Grid.sectionFromPoint(x, y, main.map_width, main.map_height);
 
         // Prioritizes player if in central cell
         if (utils.Grid.x(main.player.x) == offsets[0][0] and utils.Grid.y(main.player.y) == offsets[0][1]) {

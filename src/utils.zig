@@ -360,7 +360,7 @@ pub const Grid = struct {
     pub const cell_size = main.GRID_CELL_SIZE;
     pub const cell_half: comptime_int = cell_size / 2;
 
-    pub inline fn getNeighborhood() [9][2]i16 {
+    pub inline fn sectionOffsets() [9][2]i16 {
         return [_][2]i16{
             [_]i16{ 0, 0 }, // Central cell
             [_]i16{ -cell_size, 0 }, // Left neighbor
@@ -374,7 +374,8 @@ pub const Grid = struct {
         };
     }
 
-    pub inline fn getValidNeighbors(world_x: u16, world_y: u16, map_width: u16, map_height: u16) []const [2]u16 {
+    /// Returns an array of 3x3 (up to 9) valid map `x`,`y` coordinates offset by grid `cell_size` from `world_x`,`world_y`.
+    pub inline fn sectionFromPoint(world_x: u16, world_y: u16, map_width: u16, map_height: u16) []const [2]u16 {
         var neighbors: [9][2]u16 = undefined;
         var count: usize = 0;
         neighbors[count] = [2]u16{ world_x, world_y }; // Always include the central cell
