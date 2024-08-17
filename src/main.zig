@@ -94,6 +94,7 @@ pub fn main() anyerror!void {
     // Initialize the grid
     try grid.init(&allocator, gridWidth, gridHeight, BUFFERSIZE);
     const cellsigns_cache = try allocator.alloc(u32, grid.columns * grid.rows);
+    defer allocator.free(cellsigns_cache);
     defer grid.deinit(&allocator);
 
     // Initialize entities
