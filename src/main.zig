@@ -7,14 +7,15 @@ const entity = @import("entity.zig");
 pub const TICKRATE = 60;
 pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
 pub const MAX_TICKS_PER_FRAME = 1;
-pub const PLAYER_SEARCH_LIMIT = 1028; // Player collision search limit, must exceed #entities in 3x3 cells
-pub const UNIT_SEARCH_LIMIT = 256; // Unit collision search limit
+pub const PLAYER_SEARCH_LIMIT = 2056; // Player collision search limit, must exceed #entities in 3x3 cells
+pub const UNIT_SEARCH_LIMIT = 1028; // Unit collision search limit
 pub const BUFFERSIZE = 65536; // Limit to number of entities updated via sectionSearch per tick
 pub var last_tick_time: f64 = 0.0;
-pub var frame_count: u64 = 0;
+pub var frame_number: u64 = 0;
 pub var profile_mode = false;
 pub var profile_timer = [4]f64{ 0, 0, 0, 0 };
 pub var keys: utils.Key = undefined; // Keybindings
+pub var tick_number: u64 = undefined; // Ersatz server tick
 
 // Camera
 pub const SCROLL_SPEED: f16 = 25.0;
@@ -23,12 +24,16 @@ pub var screen_height: i16 = 1080;
 pub var canvas_offset_x: f32 = 0.0;
 pub var canvas_offset_y: f32 = 0.0;
 pub var canvas_zoom: f32 = 1.0;
-pub var canvas_max: f32 = 1.0; // Recalculated in setMapSize() for max map visibility
+pub var canvas_max: f32 = 1.0; // Recalculated in setMapSize for max map visibility
+
+// Interface
+pub var build_guide: ?u8 = null;
 
 // World
 const STARTING_MAP_WIDTH = 1920 * 8; // Limit for u16 coordinates: 65535
 const STARTING_MAP_HEIGHT = 1080 * 8; // Limit for u16 coordinates: 65535
-pub const GRID_CELL_SIZE = 600; //512;
+pub const GRID_CELL_SIZE = 500; //512;
+pub const MOVEMENT_DIVISIONS = 10; // Modulus base for unit movement updates
 pub var map_width: u16 = 0;
 pub var map_height: u16 = 0;
 pub var grid: entity.Grid = undefined;
@@ -74,6 +79,7 @@ pub fn main() anyerror!void {
     utils.rngInit();
     var stored_mousewheel: f32 = 0.0;
     var stored_key_input: u32 = 0;
+    tick_number = 0; // <-- Here, would fetch value from server
 
     // Initialize map
     //--------------------------------------------------------------------------------------
@@ -120,7 +126,7 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
-    for (0..500) |_| {
+    for (0..0) |_| {
         _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
     }
 
@@ -142,7 +148,7 @@ pub fn main() anyerror!void {
         const profile_frame = (profile_mode and utils.perFrame(45));
         if (profile_frame) {
             utils.startTimer(3, "\nSTART OF FRAME :::");
-            std.debug.print("{}.\n\n", .{frame_count});
+            std.debug.print("{} (TICK {}).\n\n", .{ frame_number, tick_number });
         }
 
         // Input
@@ -157,14 +163,13 @@ pub fn main() anyerror!void {
         //----------------------------------------------------------------------------------
         if (profile_frame) utils.startTimer(0, "LOGIC PHASE.\n");
 
-        const currentTime: f64 = rl.getTime();
-        var elapsedTime: f64 = currentTime - last_tick_time;
-        var updatesPerformed: usize = 0;
+        var elapsed_time: f64 = rl.getTime() - last_tick_time;
+        var updates_performed: usize = 0;
 
-        if (profile_frame and elapsedTime < TICK_DURATION) std.debug.print("- Elapsed time < tick duration, skipping logic update this frame.\n", .{});
+        if (profile_frame and elapsed_time < TICK_DURATION) std.debug.print("- Elapsed time < tick duration, skipping logic update this frame.\n", .{});
 
         // Perform updates if enough time has elapsed
-        while (elapsedTime >= TICK_DURATION) {
+        while (elapsed_time >= TICK_DURATION) {
             if (profile_frame) utils.startTimer(1, "- Updating cell signatures.");
             grid.updateCellsigns(); // Updates Grid.cellsigns array
             if (profile_frame) utils.endTimer(1, "Updating cell signatures took {} seconds.");
@@ -179,16 +184,17 @@ pub fn main() anyerror!void {
             stored_mousewheel = 0.0;
             stored_key_input = 0;
 
-            elapsedTime -= TICK_DURATION;
-            updatesPerformed += 1;
+            elapsed_time -= TICK_DURATION;
+            updates_performed += 1;
 
-            if (updatesPerformed >= MAX_TICKS_PER_FRAME) {
+            if (updates_performed >= MAX_TICKS_PER_FRAME) {
                 break; // Prevent too much work per frame
             }
         }
 
-        last_tick_time += @as(f64, @floatFromInt(updatesPerformed)) * TICK_DURATION;
-        frame_count += 1;
+        tick_number += updates_performed; // <-- tick_number is meant to be server side
+        last_tick_time += @as(f64, @floatFromInt(updates_performed)) * TICK_DURATION;
+        frame_number += 1;
 
         if (profile_frame) utils.endTimer(0, "Logic phase took {} seconds in total.\n");
 
@@ -243,16 +249,6 @@ fn updateControls(mousewheel_delta: f32, key_input: u32, profile_frame: bool) vo
 }
 
 fn updateLogic(key_input: u32, profile_frame: bool) !void {
-    if (profile_frame) utils.startTimer(1, "- Updating units.");
-    for (entity.units.items) |unit| {
-        try unit.update();
-    }
-    if (profile_frame) utils.endTimer(1, "Updating units took {} seconds.");
-    if (profile_frame) utils.startTimer(1, "- Updating structures.");
-    for (entity.structures.items) |structure| {
-        structure.update();
-    }
-    if (profile_frame) utils.endTimer(1, "Updating structures took {} seconds.");
     if (profile_frame) utils.startTimer(1, "- Updating players.");
     for (entity.players.items) |p| {
         if (p == player) {
@@ -262,6 +258,16 @@ fn updateLogic(key_input: u32, profile_frame: bool) !void {
         }
     }
     if (profile_frame) utils.endTimer(1, "Updating players took {} seconds.");
+    if (profile_frame) utils.startTimer(1, "- Updating structures.");
+    for (entity.structures.items) |structure| {
+        structure.update();
+    }
+    if (profile_frame) utils.endTimer(1, "Updating structures took {} seconds.");
+    if (profile_frame) utils.startTimer(1, "- Updating units.");
+    for (entity.units.items) |unit| {
+        try unit.update();
+    }
+    if (profile_frame) utils.endTimer(1, "Updating units took {} seconds.");
 }
 
 fn draw(profile_frame: bool) void {
@@ -272,7 +278,7 @@ fn draw(profile_frame: bool) void {
     drawEntities();
     if (profile_frame) utils.endTimer(1, "Drawing entities took {} seconds.");
     if (profile_frame) utils.startTimer(1, "- Drawing UI.");
-    drawUI();
+    drawInterface();
     if (profile_frame) utils.endTimer(1, "Drawing UI took {} seconds.");
 }
 
@@ -363,13 +369,16 @@ pub fn drawMap() void {
 }
 
 fn drawEntities() void {
-    for (entity.units.items) |u| u.draw();
+    for (entity.units.items) |u| u.draw(); // Possibly interpolate
     for (entity.structures.items) |s| s.draw();
     for (entity.players.items) |p| p.draw();
 }
 
 /// Draws user interface
-pub fn drawUI() void {
+pub fn drawInterface() void {
+    if (build_guide != null) player.drawGuide(build_guide.?);
+
+    // Development tools
     rl.drawFPS(40, 40);
 }
 
@@ -404,4 +413,8 @@ pub fn startingLocations(allocator: *std.mem.Allocator, player_count: u8) ![]uti
     }
 
     return slice;
+}
+
+pub fn moveDivison(life: u16) bool {
+    return (life % MOVEMENT_DIVISIONS) == 0;
 }

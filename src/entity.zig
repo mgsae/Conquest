@@ -205,19 +205,20 @@ pub const Player = struct {
             build_index = 3;
         }
 
-        if (build_index != null) executeBuild(self, build_index.?);
+        if (build_index != null) { // Sets build guide or executes build
+            if (main.build_guide == null or main.build_guide.? != build_index.?) {
+                main.build_guide = build_index;
+            } else {
+                main.build_guide = null;
+                executeBuild(self, build_index.?);
+            }
+        }
     }
 
     // Maybe refactor to abstract the build_index/class relation, to support tech trees
     fn executeBuild(self: *Player, build_index: u8) void {
-        const class = Structure.preset(build_index);
-        const delta = if (utils.isHorz(self.direction))
-            @divTrunc(class.width, 2) + @divTrunc(self.width, 2)
-        else
-            @divTrunc(class.height, 2) + @divTrunc(self.height, 2);
-        const xy = utils.dirOffset(self.x, self.y, self.direction, delta);
-
-        const built = Structure.build(xy[0], xy[1], build_index);
+        const xy = findBuildPosition(self, build_index);
+        const built = Structure.construct(xy[0], xy[1], build_index);
         if (built) |building| {
             std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
             // Do something with the structure
@@ -225,6 +226,15 @@ pub const Player = struct {
             std.debug.print("Failed to build structure\n", .{});
             // Handle the failure case, e.g., notify the player or log the error
         }
+    }
+
+    fn findBuildPosition(self: *Player, class: u8) [2]u16 {
+        const building = Structure.preset(class);
+        const player_topleft = [2]u16{ self.x - (self.width / 2), self.y - (self.height / 2) };
+
+        const shifted_xy = utils.dirOffset(player_topleft[0], player_topleft[1], self.direction, if (utils.isHorz(self.direction)) building.width else building.height);
+        const subcell_xy = utils.subcell.snapPosition(shifted_xy[0], shifted_xy[1], building.width, building.height);
+        return subcell_xy;
     }
 
     pub fn createLocal(x: u16, y: u16) !*Player {
@@ -274,6 +284,17 @@ pub const Player = struct {
         try main.grid.addEntity(entity, null, null);
         return player;
     }
+
+    pub fn drawGuide(self: *Player, class: u8) void {
+        const xy = self.findBuildPosition(class);
+        const building = Structure.preset(class);
+        const collides = main.grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;
+        if (collides != null or !utils.isInMap(xy[0], xy[1], building.width, building.height)) {
+            utils.drawGuideFail(xy[0], xy[1], building.width, building.height, building.color);
+        } else {
+            utils.drawGuide(xy[0], xy[1], building.width, building.height, building.color);
+        }
+    }
 };
 
 // Unit
@@ -294,8 +315,16 @@ pub const Unit = struct {
     }
 
     pub fn update(self: *Unit) !void {
-        const step = self.getStep();
-        try self.move(step.x, step.y);
+        // Idea: units should have on/off state on their movement
+        // So the unit moves maybe for 30 frames, then pauses for 30, etc.
+        //if (@rem(@as(f16, @floatFromInt(self.life)), self.speed() * 100) < (self.speed() * 10) / 2) {
+        //    const step = self.getStep();
+        //    try self.move(step.x, step.y);
+        //}
+        if (main.moveDivison(self.life)) {
+            const step = self.getStep();
+            try self.move(step.x, step.y);
+        }
 
         // act, determine based on AI logic
         // move, determine movement based on AI logic
@@ -666,13 +695,12 @@ pub const Structure = struct {
         return structure;
     }
 
-    pub fn build(x: u16, y: u16, class: u8) ?*Structure {
-        const node_xy = utils.closestNexus(x, y);
-        const collides = main.grid.collidesWith(node_xy[0], node_xy[1], preset(class).width, preset(class).height, null) catch return null;
-        if (collides != null or !utils.isInMap(node_xy[0], node_xy[1], preset(class).width, preset(class).height)) {
+    pub fn construct(x: u16, y: u16, class: u8) ?*Structure {
+        const collides = main.grid.collidesWith(x, y, preset(class).width, preset(class).height, null) catch return null;
+        if (collides != null or !utils.isInMap(x, y, preset(class).width, preset(class).height)) {
             return null;
         }
-        const structure = Structure.create(node_xy[0], node_xy[1], class) catch return null;
+        const structure = Structure.create(x, y, class) catch return null;
         structures.append(structure) catch return null;
         return structure;
     }

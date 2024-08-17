@@ -51,7 +51,7 @@ pub fn printGridCells(grid: *entity.Grid) void {
 }
 
 pub fn perFrame(frequency: u64) bool {
-    return @mod(main.frame_count, frequency) == 0;
+    return @mod(main.frame_number, frequency) == 0;
 }
 
 pub fn scaleToTickRate(float: f32) f32 { // Delta time capped to tickrate
@@ -283,14 +283,15 @@ pub fn dirDelta(dir: u8) [2]i8 {
     return [2]i8{ x, y };
 }
 
-pub fn dirOffset(x: u16, y: u16, dir: u8, offset: u16) [2]u16 {
+/// Takes `x`,`y` and `dir`, and returns the new `x`,`y` after applying the `distance` offset.
+pub fn dirOffset(x: u16, y: u16, dir: u8, distance: u16) [2]u16 {
     var oX = x;
     var oY = y;
     switch (dir) {
-        2 => oY += offset,
-        4 => oX -= offset,
-        6 => oX += offset,
-        8 => oY -= offset,
+        2 => oY += distance,
+        4 => oX -= distance,
+        6 => oX += distance,
+        8 => oY -= distance,
         else => return [2]u16{ x, y },
     }
     return [2]u16{ oX, oY };
@@ -518,39 +519,55 @@ pub fn testHashFunction() void {
 
 // Map Coordinates
 //----------------------------------------------------------------------------------
+pub const subcell = struct {
+    pub const size = main.GRID_CELL_SIZE / 10;
+
+    /// Returns the top-left of the closest 10th part of a cell to `x`,`y`.
+    pub fn closest(x: u16, y: u16) [2]u16 {
+        const closest_x = @divTrunc(x, subcell.size) * subcell.size;
+        const closest_y = @divTrunc(y, subcell.size) * subcell.size;
+        return [2]u16{ closest_x, closest_y };
+    }
+
+    pub fn snapPosition(x: u16, y: u16, width: u16, height: u16) [2]u16 {
+        const snapped_center = subcell.closest(x, y);
+        return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
+    }
+};
+
 pub fn isOnMap(x: u16, y: u16) bool {
     return x >= 0 and x < main.map_width and y >= 0 and y <= main.map_height;
 }
 
 pub fn isInMap(x: u16, y: u16, width: u16, height: u16) bool {
-    const halfWidth = @divTrunc(width, 2);
-    const halfHeight = @divTrunc(height, 2);
+    const half_width = @divTrunc(width, 2);
+    const half_height = @divTrunc(height, 2);
 
-    const xSigned = @as(i32, @intCast(x));
-    const ySigned = @as(i32, @intCast(y));
+    const x_signed = @as(i32, @intCast(x));
+    const y_signed = @as(i32, @intCast(y));
 
-    return xSigned - halfWidth >= 0 and xSigned + halfWidth < @as(i32, @intCast(main.map_width)) and ySigned - halfHeight >= 0 and ySigned + halfHeight <= @as(i32, @intCast(main.map_height));
+    return x_signed - half_width >= 0 and x_signed + half_width < @as(i32, @intCast(main.map_width)) and y_signed - half_height >= 0 and y_signed + half_height <= @as(i32, @intCast(main.map_height));
 }
 
 pub fn mapClampX(x: i16, width: u16) u16 {
-    const halfWidth = @as(i16, @intCast(@divTrunc(width, 2)));
-    const clampedX = @max(halfWidth, @min(x, @as(i16, @intCast(main.map_width)) - halfWidth));
-    return @as(u16, @intCast(clampedX));
+    const half_width = @as(i16, @intCast(@divTrunc(width, 2)));
+    const clamped_x = @max(half_width, @min(x, @as(i16, @intCast(main.map_width)) - half_width));
+    return @as(u16, @intCast(clamped_x));
 }
 
 pub fn mapClampY(y: i16, height: u16) u16 {
-    const halfHeight = @as(i16, @intCast(@divTrunc(height, 2)));
-    const clampedY = @max(halfHeight, @min(y, @as(i16, @intCast(main.map_height)) - halfHeight));
-    return @as(u16, @intCast(clampedY));
+    const half_height = @as(i16, @intCast(@divTrunc(height, 2)));
+    const clamped_y = @max(half_height, @min(y, @as(i16, @intCast(main.map_height)) - half_height));
+    return @as(u16, @intCast(clamped_y));
 }
 
-/// Returns the closest midpoint of the closest quad-partitioned cell to `x`,`y`.
+/// Returns the midpoint of the closest 4th part of a cell to `x`,`y`.
 pub fn closestNexus(x: u16, y: u16) [2]u16 {
-    const quadSize = main.GRID_CELL_SIZE / 2;
-    const nexLength = quadSize / 2;
-    const closestX = @divTrunc(x, quadSize) * quadSize + nexLength;
-    const closestY = @divTrunc(y, quadSize) * quadSize + nexLength;
-    return [2]u16{ closestX, closestY };
+    const area_size = main.GRID_CELL_SIZE / 2;
+    const nexus_offset = area_size / 2;
+    const closest_x = @divTrunc(x, area_size) * area_size + nexus_offset;
+    const closest_y = @divTrunc(y, area_size) * area_size + nexus_offset;
+    return [2]u16{ closest_x, closest_y };
 }
 
 // Canvas
@@ -592,6 +609,29 @@ pub fn maxCanvasSize(screen_width: i32, screen_height: i32, map_width: u16, map_
 
 // Drawing
 //----------------------------------------------------------------------------------
+
+pub fn drawGuide(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
+    const semiTransparent = rl.Color{
+        .r = col.r,
+        .g = col.g,
+        .b = col.b,
+        .a = col.a / 3,
+    };
+
+    drawEntity(x, y, width, height, semiTransparent);
+}
+
+pub fn drawGuideFail(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
+    const semiTransparent = rl.Color{
+        .r = col.r,
+        .g = col.g,
+        .b = col.b,
+        .a = col.a / 9,
+    };
+
+    drawEntity(x, y, width, height, semiTransparent);
+}
+
 /// Uses raylib to draw rectangle scaled and positioned to canvas.
 pub fn drawRect(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom), canvasScale(width, main.canvas_zoom), canvasScale(height, main.canvas_zoom), col);
