@@ -38,6 +38,9 @@ pub var map_width: u16 = 0;
 pub var map_height: u16 = 0;
 pub var grid: entity.Grid = undefined;
 pub var player: *entity.Player = undefined;
+var dead_players: std.ArrayList(*entity.Player) = undefined;
+var dead_structures: std.ArrayList(*entity.Structure) = undefined;
+var dead_units: std.ArrayList(*entity.Unit) = undefined;
 
 pub fn main() anyerror!void {
 
@@ -100,6 +103,9 @@ pub fn main() anyerror!void {
     entity.players = std.ArrayList(*entity.Player).init(allocator);
     entity.structures = std.ArrayList(*entity.Structure).init(allocator);
     entity.units = std.ArrayList(*entity.Unit).init(allocator);
+    dead_players = std.ArrayList(*entity.Player).init(allocator);
+    dead_structures = std.ArrayList(*entity.Structure).init(allocator);
+    dead_units = std.ArrayList(*entity.Unit).init(allocator);
 
     const startCoords = try startingLocations(&allocator, 1); // 1 player
     for (startCoords, 0..) |coord, i| {
@@ -125,13 +131,16 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
-    for (0..0) |_| {
-        _ = entity.Structure.build(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
+    for (0..100) |_| {
+        _ = entity.Structure.construct(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
     }
 
     defer entity.units.deinit();
     defer entity.structures.deinit();
     defer entity.players.deinit();
+    defer dead_units.deinit();
+    defer dead_structures.deinit();
+    defer dead_players.deinit();
 
     // Initialize user interface
     //--------------------------------------------------------------------------------------
@@ -169,12 +178,12 @@ pub fn main() anyerror!void {
 
         // Perform updates if enough time has elapsed
         while (elapsed_time >= TICK_DURATION) {
+            try updateEntities(stored_key_input, profile_frame);
+            try removeEntities();
+
             if (profile_frame) utils.startTimer(1, "- Updating cell signatures.");
             grid.updateCellsigns(); // Updates Grid.cellsigns array
             if (profile_frame) utils.endTimer(1, "Updating cell signatures took {} seconds.");
-
-            try updateLogic(stored_key_input, profile_frame);
-
             if (profile_frame) utils.startTimer(1, "- Updating grid sections.");
             grid.updateSections(cellsigns_cache); // Updates Grid.sections array by cellsign comparison
             if (profile_frame) utils.endTimer(1, "Updating grid sections took {} seconds.");
@@ -249,9 +258,18 @@ fn updateControls(mousewheel_delta: f32, key_input: u32, profile_frame: bool) vo
     if (profile_frame) utils.endTimer(1, "Updating controls took {} seconds.");
 }
 
-fn updateLogic(key_input: u32, profile_frame: bool) !void {
+fn updateEntities(key_input: u32, profile_frame: bool) !void {
+    // Reminder:
+    // Entities rely on sectionSearch for collision, which retrieves a list from grid.sections.
+    // The updateSections function is responsible for regenerating grid.sections based on the current state of grid.cells.
+    // This means that any entity removed from grid.cells via grid.removeFromCell (e.g. removeEntities -> unit.remove() -> grid.removeFromCell)
+    // should no longer appear in grid.sections ***after*** updateSections has run.
+    // So, the correct order: removeEntities -> updateSections -> updateEntities.
+
+    // Players
     if (profile_frame) utils.startTimer(1, "- Updating players.");
     for (entity.players.items) |p| {
+        // Life / lifecycle ?
         if (p == player) {
             try p.update(key_input);
         } else {
@@ -259,17 +277,36 @@ fn updateLogic(key_input: u32, profile_frame: bool) !void {
         }
     }
     if (profile_frame) utils.endTimer(1, "Updating players took {} seconds.");
+
+    // Structures
     if (profile_frame) utils.startTimer(1, "- Updating structures.");
     for (entity.structures.items) |structure| {
-        structure.update();
+        if (structure.life == -utils.i16max) {
+            try dead_structures.append(structure); // To be destroyed in removeEntities
+        } else {
+            structure.update();
+        }
     }
     if (profile_frame) utils.endTimer(1, "Updating structures took {} seconds.");
+
+    // Units
     if (profile_frame) utils.startTimer(1, "- Updating units.");
     for (entity.units.items) |unit| {
-        std.debug.print("Updating unit at address: {}.\n", .{@intFromPtr(unit)});
-        try unit.update();
+        if (unit.life == -utils.i16max) {
+            try dead_units.append(unit); // To be destroyed in removeEntities
+        } else {
+            try unit.update();
+        }
     }
     if (profile_frame) utils.endTimer(1, "Updating units took {} seconds.");
+}
+
+fn removeEntities() !void {
+    for (dead_units.items) |unit| { // Second: Destroys units that were marked for destruction
+        std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
+        try unit.remove();
+    }
+    dead_units.clearAndFree();
 }
 
 fn draw(profile_frame: bool) void {
@@ -417,6 +454,6 @@ pub fn startingLocations(allocator: *std.mem.Allocator, player_count: u8) ![]uti
     return slice;
 }
 
-pub fn moveDivison(life: u16) bool {
-    return (life % MOVEMENT_DIVISIONS) == 0;
+pub fn moveDivison(life: i16) bool {
+    return @rem(life, MOVEMENT_DIVISIONS) == 0;
 }

@@ -188,7 +188,7 @@ pub const Player = struct {
 
         // If new movement, updates game grid
         if ((new_x != null and new_x.? != old_x) or (new_y != null and new_y.? != old_y)) {
-            main.grid.updateEntity(self.entity, old_x, old_y);
+            main.grid.updateCellPosition(self.entity, old_x, old_y);
         }
     }
 
@@ -273,7 +273,7 @@ pub const Player = struct {
         };
 
         std.debug.print("Created local player at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entity) });
-        try main.grid.addEntity(entity, null, null);
+        try main.grid.addToCell(entity, null, null);
         return player;
     }
 
@@ -297,7 +297,7 @@ pub const Player = struct {
         };
 
         std.debug.print("Created remote player at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entity) });
-        try main.grid.addEntity(entity, null, null);
+        try main.grid.addToCell(entity, null, null);
         return player;
     }
 
@@ -322,7 +322,7 @@ pub const Unit = struct {
     y: u16,
     width: u16,
     height: u16,
-    life: u16,
+    life: i16,
     target: utils.Point,
     last_step: utils.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
@@ -333,7 +333,7 @@ pub const Unit = struct {
 
     pub fn update(self: *Unit) !void {
         if (self.life <= 0) {
-            self.die();
+            try self.die(null);
             return;
         }
         if (main.moveDivison(self.life)) {
@@ -383,7 +383,7 @@ pub const Unit = struct {
         if (collision == null) { // No obstacle, move
             self.x = new_x;
             self.y = new_y;
-            main.grid.updateEntity(self.entity, old_x, old_y);
+            main.grid.updateCellPosition(self.entity, old_x, old_y);
             return true;
         }
         return false;
@@ -444,38 +444,6 @@ pub const Unit = struct {
         return null;
     }
 
-    /// Checks 3x3 cells in the spatial hash and returns a list of nearby entities. Excludes the `self` unit.
-    fn entitiesNearUNUSEDfromOldUnitCollision(self: *Unit, grid: *Grid, x: u16, y: u16, limit: comptime_int) ![]*Entity {
-        std.debug.print("Running entitiesNear.\n", .{});
-        var nearby_entities: [limit]*Entity = undefined;
-        var count: usize = 0;
-        std.debug.print("Declared nearby_entities: {any}, of length: {}\n", .{ nearby_entities, limit });
-
-        const offsets = utils.Grid.sectionFromPoint(x, y, main.map_width, main.map_height);
-
-        std.debug.print("Found offsets from x,y: {any}.\n", .{offsets});
-
-        for (offsets) |offset| { // For each neighboring cell
-            const neighbor_x = offset[0];
-            const neighbor_y = offset[1];
-            const neighbor_key = utils.SpatialHash.hash(neighbor_x, neighbor_y);
-            std.debug.print("Found neighbor_key: {}.\n", .{neighbor_key});
-
-            if (grid.cells.get(neighbor_key)) |list| { // Lists the cell contents
-                for (list.items) |entity| { // For each entity in the cell
-                    if (entity != self.entity) { // Exclude the current unit itself
-                        if (count >= limit) return error.EntityAmountExceedsLimit;
-                        nearby_entities[count] = entity;
-                        count += 1;
-                        std.debug.print("Added entity to entitiesNear, current count: {}.\n", .{count});
-                    }
-                }
-            }
-        }
-        std.debug.print("{} entities found by entitiesNear: {any}.\n", .{ count, nearby_entities[0..count] });
-        return nearby_entities[0..count];
-    }
-
     /// Unit is an obstacle pushed by another entity. Searches for collision. If no new obstacle is found, unit moves `distance`.
     /// If new obstacle is another unit, pushes it a size-factored distance, then moves the same distance. Returns the effective distance moved.
     pub fn pushed(self: *Unit, angle: f32, distance: f32) f32 {
@@ -496,7 +464,7 @@ pub const Unit = struct {
         if (obstacle == null) { // Pushing doesn't collide with another obstacle
             self.x = new_x;
             self.y = new_y;
-            main.grid.updateEntity(self.entity, old_x, old_y);
+            main.grid.updateCellPosition(self.entity, old_x, old_y);
         } else if (obstacle.?.kind == Kind.Unit) { // Pushed unit collides with another unit
 
             const obstacle_unit = obstacle.?.content.Unit;
@@ -577,29 +545,31 @@ pub const Unit = struct {
             .content = .{ .Unit = unit }, // Store the pointer to the Unit
         };
 
-        try main.grid.addEntity(entity, null, null);
+        try main.grid.addToCell(entity, null, null);
         return unit;
     }
 
-    pub fn destroy(self: *Unit) !void {
-        try main.grid.removeEntity(self.entity, null, null); // Removes entity from grid
-        try utils.findAndSwapRemove(Unit, &units, self); // Removes unit from the units collection
-        for (units.items) |unit| {
-            std.debug.assert(unit != self);
-        }
-        main.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
-        main.grid.allocator.destroy(self); // Deallocates memory for the Unit
-    }
-
-    pub fn die(self: *Unit, cause: ?u8) void {
+    pub fn die(self: *Unit, cause: ?u8) !void {
         // Death effect
         if (cause) |c| {
             switch (c) {
-                //    else => // Handle different death types differently
+                else => {}, // Catch-all for now; expand this later with specific cases
             }
         } else { // Unknown cause of death, very sad
+
         }
-        self.life = -1; // Flagged for cleaup in main update
+        self.life = -utils.i16max; // Flagged for destruction in main update
+    }
+
+    pub fn remove(self: *Unit) !void {
+        try main.grid.removeFromCell(self.entity, null, null); // Removes entity from grid
+        try main.grid.removeFromAllSections(self.entity);
+        try utils.findAndSwapRemove(Unit, &units, self); // Removes unit from the units collection
+        for (units.items) |unit| {
+            std.debug.assert(unit != self); // For debugging, unit must be removed at this point
+        }
+        main.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
+        main.grid.allocator.destroy(self); // Deallocates memory for the Unit
     }
 
     /// `Unit` property template fields determined by `class`.
@@ -608,7 +578,7 @@ pub const Unit = struct {
         color: rl.Color,
         width: u16,
         height: u16,
-        life: u16,
+        life: i16,
     };
 
     /// Returns a `Properties` template determined by `class`.
@@ -707,7 +677,7 @@ pub const Structure = struct {
             .content = .{ .Structure = structure },
         };
 
-        try main.grid.addEntity(entity, null, null);
+        try main.grid.addToCell(entity, null, null);
         return structure;
     }
 
@@ -820,7 +790,7 @@ pub const Projectile = struct {
     }
 
     pub fn destroy(self: *Projectile) !void {
-        try main.grid.removeEntity(self.entity, null, null);
+        try main.grid.removeFromCell(self.entity, null, null);
         // no array list of Projectiles, otherwise: try utils.findAndSwapRemove(Projectile, &projectiles, @constCast(&self));
     }
 };
@@ -901,7 +871,41 @@ pub const Grid = struct {
                 }
             }
             if (found_index) |idx| {
-                section.swapRemove(idx);
+                _ = section.swapRemove(idx);
+            }
+        }
+    }
+
+    /// Sections are lists of entities within 3x3 cells. An entity is referenced in the grid.section of any cell falling within its own grid.section. Even though sections overlap, cellsigns are
+    /// cell-specific, so updating one section does not automatically trigger an update of overlapping sections. This function removes an entity from the central section as well as all overlapping sections.
+    fn removeFromNearbySections(self: *Grid, x: usize, y: usize, entity: *Entity) !void {
+        const neighbor_offsets = utils.Grid.section();
+        for (neighbor_offsets) |offset| {
+            const nx = @as(isize, @intCast(x)) + offset[0];
+            const ny = @as(isize, @intCast(y)) + offset[1];
+
+            if (nx >= 0 and nx < self.columns and ny >= 0 and ny < self.rows) {
+                try self.removeFromSection(@as(usize, @intCast(nx)), @as(usize, @intCast(ny)), entity);
+            }
+        }
+    }
+
+    pub fn removeFromAllSections(self: *Grid, entity: *Entity) !void {
+        var count: usize = 0;
+        for (0..self.sections.len) |i| {
+            var section = &self.sections[i];
+            var found_index: ?usize = null;
+            for (section.items, 0..) |e, idx| {
+                count += 1;
+                if (e == entity) {
+                    found_index = idx;
+                    break;
+                }
+            }
+            if (found_index) |idx| {
+                _ = section.swapRemove(idx);
+                std.debug.print("Entity {} removed from section {}.\n", .{ @intFromPtr(entity), i });
+                std.debug.print("By the way, there are {} sections in total, and searched through {} items in them.\n", .{ self.sections.len, count });
             }
         }
     }
@@ -922,9 +926,10 @@ pub const Grid = struct {
     }
 
     fn updateSection(self: *Grid, x: usize, y: usize) !void {
+        const index = y * self.columns + x;
         const entities = try self.sectionSearch(@as(u16, @intCast(x * utils.Grid.cell_size)), @as(u16, @intCast(y * utils.Grid.cell_size)), main.UNIT_SEARCH_LIMIT);
-        const index = y * self.columns + x; // Searches hashmap for entities near cell to create/update section
         self.sections[index].clearAndFree();
+
         for (entities) |entity| {
             try self.sections[index].append(entity);
         }
@@ -940,7 +945,7 @@ pub const Grid = struct {
         self.cellsigns[y * self.columns + x] = value;
     }
 
-    pub fn addEntity(self: *Grid, entity: *Entity, new_x: ?u16, new_y: ?u16) !void {
+    pub fn addToCell(self: *Grid, entity: *Entity, new_x: ?u16, new_y: ?u16) !void {
         const x = new_x orelse entity.x();
         const y = new_y orelse entity.y();
         const key = utils.SpatialHash.hash(x, y);
@@ -962,7 +967,7 @@ pub const Grid = struct {
         try result.value_ptr.*.append(entity);
     }
 
-    pub fn removeEntity(self: *Grid, entity: *Entity, old_x: ?u16, old_y: ?u16) !void {
+    pub fn removeFromCell(self: *Grid, entity: *Entity, old_x: ?u16, old_y: ?u16) !void {
         const x = std.math.clamp(old_x orelse entity.x(), 0, main.map_width);
         const y = std.math.clamp(old_y orelse entity.y(), 0, main.map_height);
         const key = utils.SpatialHash.hash(x, y);
@@ -974,12 +979,12 @@ pub const Grid = struct {
             try utils.findAndSwapRemove(Entity, list, entity);
 
             if (list.items.len == 0) {
-                //std.debug.print("Cell {} is now empty, removing cell from grid.\n", .{key});
+                std.debug.print("Cell {} is now empty, removing cell from grid.\n", .{key});
                 _ = self.cells.remove(key);
             } else {
                 // Update the hashmap with the modified list
                 self.cells.put(key, list.*) catch unreachable;
-                //std.debug.print("Entities in cell {} after removal of entity {}: {any}\n", .{ key, @intFromPtr(entity), list.items });
+                // std.debug.print("Entities in cell {} after removal of entity {}: {any}\n", .{ key, @intFromPtr(entity), list.items });
             }
 
             // For debugging duplicates
@@ -993,9 +998,11 @@ pub const Grid = struct {
             std.debug.print("Error: Attempted to remove entity {} from non-existent cell {}.\n", .{ @intFromPtr(entity), key });
             @panic("Attempted to remove entity from non-existent cell!");
         }
+
+        // Reminder: Entity is at this point still listed in corresponding and neighboring grid.sections addresses.
     }
 
-    pub fn updateEntity(self: *Grid, entity: *Entity, old_x: u16, old_y: u16) void {
+    pub fn updateCellPosition(self: *Grid, entity: *Entity, old_x: u16, old_y: u16) void {
         const oldKey = utils.SpatialHash.hash(old_x, old_y);
         const curX = entity.x();
         const curY = entity.y();
@@ -1004,16 +1011,19 @@ pub const Grid = struct {
         if (oldKey != newKey) {
             // std.debug.print("(Grid update start) Moving entity with ptr {} from cell hash {} to cell hash {}.\n", .{ @intFromPtr(entity), oldKey, newKey });
 
-            self.removeEntity(entity, old_x, old_y) catch |err| {
+            self.removeFromCell(entity, old_x, old_y) catch |err| {
                 std.log.err("Failed to remove entity {} from old cell {}, error: {}\n", .{ @intFromPtr(entity), oldKey, err });
                 return;
             };
 
-            self.addEntity(entity, null, null) catch |err| {
+            self.addToCell(entity, null, null) catch |err| {
                 std.log.err("Failed to add entity {} to new cell {}, error: {}\n", .{ @intFromPtr(entity), newKey, err });
             };
         }
     }
+
+    /// Removes entity from
+    pub fn removeFromGrid() void {}
 
     /// Generates a fresh `Cellsign` from `x`,`y` coordinates. Returns a `Cellsign` if hashmap value is found for location, otherwise `null`.
     pub fn getFreshCellsign(self: *Grid, x: u16, y: u16) ?Cellsign {

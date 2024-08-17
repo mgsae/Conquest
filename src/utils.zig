@@ -301,18 +301,18 @@ pub fn dirDelta(dir: u8) [2]i8 {
     return [2]i8{ x, y };
 }
 
-/// Takes `x`,`y` and `dir`, and returns the new `x`,`y` after applying the `distance` offset.
-pub fn dirOffset(x: u16, y: u16, dir: u8, distance: u16) [2]u16 {
-    var oX = x;
-    var oY = y;
-    switch (dir) {
-        2 => oY += distance,
-        4 => oX -= distance,
-        6 => oX += distance,
-        8 => oY -= distance,
-        else => return [2]u16{ x, y },
+/// Takes `x`,`y` and `dir`, and returns the new `x`,`y` after offsetting by `distance`. Return values are `>= 0`.
+pub fn dirOffset(oX: u16, oY: u16, direction: u8, distance: u16) [2]u16 {
+    var newX = oX;
+    var newY = oY;
+    switch (direction) {
+        2 => newY += distance,
+        4 => newX = if (newX > distance) newX - distance else 0,
+        6 => newX += distance,
+        8 => newY = if (newY > distance) newY - distance else 0,
+        else => {}, // Handle other directions if needed
     }
-    return [2]u16{ oX, oY };
+    return [2]u16{ newX, newY };
 }
 
 pub fn angleFromDir(dir: u8) f32 {
@@ -378,6 +378,20 @@ pub fn sizeFactor(w1: u16, h1: u16, w2: u16, h2: u16) f32 {
 pub const Grid = struct {
     pub const cell_size = main.GRID_CELL_SIZE;
     pub const cell_half: comptime_int = cell_size / 2;
+
+    pub inline fn section() [9][2]i16 {
+        return [_][2]i16{
+            [_]i16{ 0, 0 }, // Central cell
+            [_]i16{ -1, 0 }, // Left neighbor
+            [_]i16{ 1, 0 }, // Right neighbor
+            [_]i16{ 0, -1 }, // Top neighbor
+            [_]i16{ 0, 1 }, // Bottom neighbor
+            [_]i16{ -1, -1 }, // Top-left
+            [_]i16{ 1, 1 }, // Bottom-right
+            [_]i16{ -1, 1 }, // Bottom-left
+            [_]i16{ 1, -1 }, // Top-right
+        };
+    }
 
     pub inline fn sectionOffsets() [9][2]i16 {
         return [_][2]i16{
