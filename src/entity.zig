@@ -328,7 +328,7 @@ pub const Unit = struct {
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
 
     pub fn draw(self: *Unit) void {
-        utils.drawEntity(self.x, self.y, self.width, self.height, self.color());
+        utils.drawEntityInterpolated(self.x, self.y, self.width, self.height, self.color(), self.last_step, self.life);
     }
 
     pub fn update(self: *Unit) !void {
@@ -584,16 +584,16 @@ pub const Unit = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .speed = 3, .color = rl.Color.sky_blue, .width = 30, .height = 30, .life = 3000 },
-            1 => Properties{ .speed = 3.5, .color = rl.Color.blue, .width = 25, .height = 25, .life = 4000 },
-            2 => Properties{ .speed = 2, .color = rl.Color.dark_blue, .width = 45, .height = 45, .life = 5000 },
-            3 => Properties{ .speed = 4, .color = rl.Color.violet, .width = 35, .height = 35, .life = 6000 },
+            0 => Properties{ .speed = 1.5, .color = rl.Color.sky_blue, .width = 30, .height = 30, .life = 3000 },
+            1 => Properties{ .speed = 1.75, .color = rl.Color.blue, .width = 25, .height = 25, .life = 4000 },
+            2 => Properties{ .speed = 1, .color = rl.Color.dark_blue, .width = 45, .height = 45, .life = 5000 },
+            3 => Properties{ .speed = 2, .color = rl.Color.violet, .width = 35, .height = 35, .life = 6000 },
             else => @panic("Invalid unit class"),
         };
     }
 
     pub fn speed(self: *Unit) f16 {
-        return Unit.preset(self.class).speed;
+        return Unit.preset(self.class).speed * main.MOVEMENT_DIVISIONS;
     }
 
     pub fn color(self: *Unit) rl.Color {
@@ -904,8 +904,8 @@ pub const Grid = struct {
             }
             if (found_index) |idx| {
                 _ = section.swapRemove(idx);
-                std.debug.print("Entity {} removed from section {}.\n", .{ @intFromPtr(entity), i });
-                std.debug.print("By the way, there are {} sections in total, and searched through {} items in them.\n", .{ self.sections.len, count });
+                //std.debug.print("Entity {} removed from section {}. ", .{ @intFromPtr(entity), i });
+                //std.debug.print("There are {} sections in total. Searched through {} items before entity was found.\n", .{ self.sections.len, count });
             }
         }
     }
@@ -979,7 +979,7 @@ pub const Grid = struct {
             try utils.findAndSwapRemove(Entity, list, entity);
 
             if (list.items.len == 0) {
-                std.debug.print("Cell {} is now empty, removing cell from grid.\n", .{key});
+                //std.debug.print("Cell {} is now empty, removing cell from grid.\n", .{key});
                 _ = self.cells.remove(key);
             } else {
                 // Update the hashmap with the modified list

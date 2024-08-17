@@ -372,6 +372,16 @@ pub fn sizeFactor(w1: u16, h1: u16, w2: u16, h2: u16) f32 {
     return area1 / area2;
 }
 
+pub fn interpolateStep(last_x: u16, last_y: u16, x: i32, y: i32, frame: i16, interval: comptime_int) [2]i32 {
+    const steps_since_last_move = interval - @rem(frame, interval); // Number of steps since the last move
+    const interpolation_factor = @as(f32, @floatFromInt(steps_since_last_move)) / @as(f32, @floatFromInt(interval));
+
+    const interp_x = @as(i32, last_x) + @as(i32, @intFromFloat(interpolation_factor * @as(f32, @floatFromInt(x - @as(i32, last_x)))));
+    const interp_y = @as(i32, last_y) + @as(i32, @intFromFloat(interpolation_factor * @as(f32, @floatFromInt(y - @as(i32, last_y)))));
+
+    return [2]i32{ interp_x, interp_y };
+}
+
 // Hashmap
 //----------------------------------------------------------------------------------
 
@@ -675,13 +685,8 @@ pub fn drawEntity(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.canvas_offset_x, main.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.canvas_offset_y, main.canvas_zoom), canvasScale(width, main.canvas_zoom), canvasScale(height, main.canvas_zoom), col);
 }
 
-pub fn interpolateStep(last_x: u16, last_y: u16, new_x: u16, new_y: u16, timer: u16, interval: u16) [2]u16 {
-    const steps_since_last_move = timer % interval;
-    const interpolation_factor = steps_since_last_move / interval;
-
-    // Interpolated position
-    const interp_x = last_x + interpolation_factor * (new_x - last_x);
-    const interp_y = last_y + interpolation_factor * (new_y - last_y);
-
-    return [2]u16{ interp_x, interp_y };
+/// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas, interpolated by `frame` since `last_step`.
+pub fn drawEntityInterpolated(x: i32, y: i32, width: i32, height: i32, col: rl.Color, last_step: Point, frame: i16) void {
+    const interp_xy = interpolateStep(last_step.x, last_step.y, x, y, frame, main.MOVEMENT_DIVISIONS);
+    drawEntity(interp_xy[0], interp_xy[1], width, height, col);
 }

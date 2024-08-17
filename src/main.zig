@@ -131,7 +131,7 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
-    for (0..100) |_| {
+    for (0..999) |_| {
         _ = entity.Structure.construct(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
     }
 
@@ -303,7 +303,7 @@ fn updateEntities(key_input: u32, profile_frame: bool) !void {
 
 fn removeEntities() !void {
     for (dead_units.items) |unit| { // Second: Destroys units that were marked for destruction
-        std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
+        //std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
         try unit.remove();
     }
     dead_units.clearAndFree();
