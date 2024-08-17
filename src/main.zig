@@ -70,9 +70,7 @@ pub fn main() anyerror!void {
         .interlaced_hint = false,
     };
     rl.setWindowState(flags);
-    //rl.setWindowSize(screen_width, screen_height);
-    //rl.setTargetFPS(60);
-    //rl.toggleFullscreen();
+    rl.setTargetFPS(120);
 
     // Initialize utility
     //--------------------------------------------------------------------------------------
@@ -174,11 +172,12 @@ pub fn main() anyerror!void {
             if (profile_frame) utils.startTimer(1, "- Updating cell signatures.");
             grid.updateCellsigns(); // Updates Grid.cellsigns array
             if (profile_frame) utils.endTimer(1, "Updating cell signatures took {} seconds.");
+
+            try updateLogic(stored_key_input, profile_frame);
+
             if (profile_frame) utils.startTimer(1, "- Updating grid sections.");
             grid.updateSections(cellsigns_cache); // Updates Grid.sections array by cellsign comparison
             if (profile_frame) utils.endTimer(1, "Updating grid sections took {} seconds.");
-
-            try updateLogic(stored_key_input, profile_frame);
 
             updateControls(stored_mousewheel, stored_key_input, profile_frame);
 
@@ -224,6 +223,7 @@ fn processInput(stored_mousewheel: *f32, stored_key_input: *u32) void {
     stored_mousewheel.* += rl.getMouseWheelMove();
 
     // Build keys bitmasking
+    if (rl.isKeyPressed(rl.KeyboardKey.key_z)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Z);
     if (rl.isKeyPressed(rl.KeyboardKey.key_one)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.One);
     if (rl.isKeyPressed(rl.KeyboardKey.key_two)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Two);
     if (rl.isKeyPressed(rl.KeyboardKey.key_three)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Three);
@@ -266,6 +266,7 @@ fn updateLogic(key_input: u32, profile_frame: bool) !void {
     if (profile_frame) utils.endTimer(1, "Updating structures took {} seconds.");
     if (profile_frame) utils.startTimer(1, "- Updating units.");
     for (entity.units.items) |unit| {
+        std.debug.print("Updating unit at address: {}.\n", .{@intFromPtr(unit)});
         try unit.update();
     }
     if (profile_frame) utils.endTimer(1, "Updating units took {} seconds.");

@@ -193,8 +193,15 @@ pub const Player = struct {
     }
 
     fn updateActionInput(self: *Player, key_input: u32) void {
-        var build_index: ?u8 = null;
+        if (main.keys.actionActive(key_input, utils.Key.Action.BuildConfirm)) {
+            if (main.build_guide != null) {
+                executeBuild(self, main.build_guide.?);
+                main.build_guide = null;
+            }
+            return;
+        }
 
+        var build_index: ?u8 = null;
         if (main.keys.actionActive(key_input, utils.Key.Action.BuildOne)) {
             build_index = 0;
         } else if (main.keys.actionActive(key_input, utils.Key.Action.BuildTwo)) {
@@ -205,12 +212,11 @@ pub const Player = struct {
             build_index = 3;
         }
 
-        if (build_index != null) { // Sets build guide or executes build
+        if (build_index != null) { // Sets build guide
             if (main.build_guide == null or main.build_guide.? != build_index.?) {
                 main.build_guide = build_index;
             } else {
                 main.build_guide = null;
-                executeBuild(self, build_index.?);
             }
         }
     }
@@ -230,10 +236,20 @@ pub const Player = struct {
 
     fn findBuildPosition(self: *Player, class: u8) [2]u16 {
         const building = Structure.preset(class);
-        const player_topleft = [2]u16{ self.x - (self.width / 2), self.y - (self.height / 2) };
-
-        const shifted_xy = utils.dirOffset(player_topleft[0], player_topleft[1], self.direction, if (utils.isHorz(self.direction)) building.width else building.height);
-        const subcell_xy = utils.subcell.snapPosition(shifted_xy[0], shifted_xy[1], building.width, building.height);
+        const min_distance = if (utils.isHorz(self.direction)) (self.width / 2) + (building.width / 2) else (self.height / 2) + (building.height / 2);
+        const sc_size = utils.subcell.size;
+        const compensation: [2]i16 = switch (self.direction) {
+            2 => [2]i16{ sc_size / 2, sc_size },
+            4 => [2]i16{ 0, sc_size / 2 },
+            6 => [2]i16{ sc_size, sc_size / 2 },
+            else => [2]i16{ sc_size / 2, 0 },
+        };
+        const compensated_x = utils.u16Clamped(i16, @as(i16, @intCast(@as(i16, @intCast(self.x)) + compensation[0])));
+        const compensated_y = utils.u16Clamped(i16, @as(i16, @intCast(@as(i16, @intCast(self.y)) + compensation[1])));
+        const shifted_xy = utils.dirOffset(@as(u16, @intCast(compensated_x)), @as(u16, @intCast(compensated_y)), self.direction, min_distance);
+        const map_x = utils.mapClampX(@as(i16, @intCast(shifted_xy[0])), building.width);
+        const map_y = utils.mapClampY(@as(i16, @intCast(shifted_xy[1])), building.height);
+        const subcell_xy = utils.subcell.snapPosition(map_x, map_y, building.width, building.height);
         return subcell_xy;
     }
 
@@ -308,6 +324,7 @@ pub const Unit = struct {
     height: u16,
     life: u16,
     target: utils.Point,
+    last_step: utils.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
 
     pub fn draw(self: *Unit) void {
@@ -315,22 +332,16 @@ pub const Unit = struct {
     }
 
     pub fn update(self: *Unit) !void {
-        // Idea: units should have on/off state on their movement
-        // So the unit moves maybe for 30 frames, then pauses for 30, etc.
-        //if (@rem(@as(f16, @floatFromInt(self.life)), self.speed() * 100) < (self.speed() * 10) / 2) {
-        //    const step = self.getStep();
-        //    try self.move(step.x, step.y);
-        //}
+        if (self.life <= 0) {
+            self.die();
+            return;
+        }
         if (main.moveDivison(self.life)) {
+            self.last_step = utils.Point.at(self.x, self.y);
             const step = self.getStep();
             try self.move(step.x, step.y);
         }
-
-        // act, determine based on AI logic
-        // move, determine movement based on AI logic
-
         self.life -= 1;
-        if (self.life <= 0) self.die(null);
     }
 
     /// Searches for collision at `new_x`,`new_y`. If no obstacle is found, sets position to `x`, `y`. If obstacle is found, tries moving along edge.
@@ -545,7 +556,7 @@ pub const Unit = struct {
 
     pub fn create(x: u16, y: u16, class: u8) !*Unit {
         const entity = try main.grid.allocator.create(Entity); // Memory for the parent entity
-        const unit = try main.grid.allocator.create(Unit); // Allocate memory for Unit and get a pointer
+        const unit = try main.grid.allocator.create(Unit); // Memory for Unit
         const from_class = Unit.preset(class);
 
         unit.* = Unit{
@@ -557,6 +568,7 @@ pub const Unit = struct {
             .x = x,
             .y = y,
             .target = utils.Point.at(utils.randomU16(main.map_width), utils.randomU16(main.map_height)), // <--- just testing
+            .last_step = utils.Point.at(x, y),
             .cached_cellsigns = [_]u32{0} ** 9,
         };
 
@@ -570,20 +582,24 @@ pub const Unit = struct {
     }
 
     pub fn destroy(self: *Unit) !void {
-        try main.grid.removeEntity(self.entity, null, null);
-        try utils.findAndSwapRemove(Unit, &units, self);
+        try main.grid.removeEntity(self.entity, null, null); // Removes entity from grid
+        try utils.findAndSwapRemove(Unit, &units, self); // Removes unit from the units collection
+        for (units.items) |unit| {
+            std.debug.assert(unit != self);
+        }
+        main.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
+        main.grid.allocator.destroy(self); // Deallocates memory for the Unit
     }
 
     pub fn die(self: *Unit, cause: ?u8) void {
         // Death effect
         if (cause) |c| {
-            //switch (c) {
-            //    else => // Handle different death types differently
-            // }
-            self.destroy() catch std.debug.panic("Failed to destroy, cause {}.\n", .{c});
+            switch (c) {
+                //    else => // Handle different death types differently
+            }
         } else { // Unknown cause of death, very sad
-            self.destroy() catch std.debug.panic("Failed to destroy\n", .{});
         }
+        self.life = -1; // Flagged for cleaup in main update
     }
 
     /// `Unit` property template fields determined by `class`.

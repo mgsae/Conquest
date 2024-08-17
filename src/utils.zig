@@ -60,13 +60,28 @@ pub fn scaleToTickRate(float: f32) f32 { // Delta time capped to tickrate
 
 // Value types and conversions
 //----------------------------------------------------------------------------------
-pub const u16max: u16 = 65535;
-pub const i16max: i16 = 32767;
-pub const u32max: u16 = 4294967295;
-pub const i32max: i32 = 2147483647;
+pub const u16max: u16 = std.math.maxInt(u16); // 65535
+pub const i16max: i16 = std.math.maxInt(i16); // 32767
+pub const u32max: u32 = std.math.maxInt(u32); // 4294967295
+pub const i32max: i32 = std.math.maxInt(i32); // 2147483647
 
 pub fn u16Clamped(comptime T: type, value: T) T {
-    return @max(0, @min(value, u16max));
+    const lower_bound: T = @as(T, 0);
+    var upper_bound: T = undefined;
+
+    if (@typeInfo(T) == .Int and u16max <= std.math.maxInt(T)) {
+        upper_bound = @as(T, u16max);
+    } else if (@typeInfo(T) == .Int) {
+        const max_value: T = @as(T, @intCast(std.math.maxInt(T)));
+        const clamped_max: u16 = @as(u16, max_value);
+        upper_bound = @as(T, clamped_max);
+    } else if (@typeInfo(T) == .Float) {
+        upper_bound = @as(T, @floatFromInt(u16max));
+    } else {
+        upper_bound = @as(T, u16max); // Fallback for other types.
+    }
+
+    return @max(lower_bound, @min(value, upper_bound));
 }
 
 pub fn i16Clamped(comptime T: type, value: T) T {
@@ -119,6 +134,7 @@ pub const Key = struct {
         Space = 1 << 9,
         Ctrl = 1 << 10,
         Enter = 1 << 11,
+        Z = 1 << 12,
     };
 
     pub const Action = enum {
@@ -126,6 +142,7 @@ pub const Key = struct {
         BuildTwo,
         BuildThree,
         BuildFour,
+        BuildConfirm,
         MoveUp,
         MoveLeft,
         MoveDown,
@@ -158,6 +175,7 @@ pub const Key = struct {
         try self.bindings.put(Action.BuildTwo, InputValue.Two);
         try self.bindings.put(Action.BuildThree, InputValue.Three);
         try self.bindings.put(Action.BuildFour, InputValue.Four);
+        try self.bindings.put(Action.BuildConfirm, InputValue.Z);
         try self.bindings.put(Action.MoveUp, InputValue.Up);
         try self.bindings.put(Action.MoveLeft, InputValue.Left);
         try self.bindings.put(Action.MoveDown, InputValue.Down);
@@ -522,15 +540,16 @@ pub fn testHashFunction() void {
 pub const subcell = struct {
     pub const size = main.GRID_CELL_SIZE / 10;
 
-    /// Returns the top-left of the closest 10th part of a cell to `x`,`y`.
+    /// Returns the top-left point of the closest 10th part of a cell to `x`,`y`.
     pub fn closest(x: u16, y: u16) [2]u16 {
         const closest_x = @divTrunc(x, subcell.size) * subcell.size;
         const closest_y = @divTrunc(y, subcell.size) * subcell.size;
         return [2]u16{ closest_x, closest_y };
     }
 
+    /// Aligns the top-left point of the rectangle centered on `x`,`y` with the top-left of its closest subcell.
     pub fn snapPosition(x: u16, y: u16, width: u16, height: u16) [2]u16 {
-        const snapped_center = subcell.closest(x, y);
+        const snapped_center = subcell.closest(x - width / 2, y - height / 2);
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
     }
 };
@@ -640,4 +659,15 @@ pub fn drawRect(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
 /// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawEntity(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.canvas_offset_x, main.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.canvas_offset_y, main.canvas_zoom), canvasScale(width, main.canvas_zoom), canvasScale(height, main.canvas_zoom), col);
+}
+
+pub fn interpolateStep(last_x: u16, last_y: u16, new_x: u16, new_y: u16, timer: u16, interval: u16) [2]u16 {
+    const steps_since_last_move = timer % interval;
+    const interpolation_factor = steps_since_last_move / interval;
+
+    // Interpolated position
+    const interp_x = last_x + interpolation_factor * (new_x - last_x);
+    const interp_y = last_y + interpolation_factor * (new_y - last_y);
+
+    return [2]u16{ interp_x, interp_y };
 }
