@@ -28,6 +28,7 @@ pub var canvas_max: f32 = 1.0; // Recalculated in setMapSize for max map visibil
 
 // Interface
 pub var build_guide: ?u8 = null;
+pub var selected: ?*entity.Entity = null;
 
 // World
 const STARTING_MAP_WIDTH = 16000; // 1920 * 8; // Limit for u16 coordinates: 65535
@@ -132,7 +133,7 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
-    for (0..500) |_| {
+    for (0..0) |_| {
         const class = @as(u8, @intCast(utils.randomU16(3)));
         const xy = utils.subcell.snapPosition(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), entity.Structure.preset(class).width, entity.Structure.preset(class).height);
         _ = entity.Structure.construct(xy[0], xy[1], class);
@@ -394,7 +395,7 @@ pub fn updateCanvasPosition(key_input: u32) void {
 /// Draws map and grid markers relative to current canvas
 pub fn drawMap() void {
     // Draw the map area
-    utils.drawRect(0, 0, map_width, map_height, rl.Color.dark_gray);
+    utils.drawRect(0, 0, map_width, map_height, rl.Color.ray_white);
     // Draw grid lines
     var rowIndex: i32 = 1;
     while (rowIndex * utils.Grid.cell_size < map_height) : (rowIndex += 1) {

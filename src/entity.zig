@@ -237,7 +237,7 @@ pub const Player = struct {
     fn findBuildPosition(self: *Player, class: u8) [2]u16 {
         const building = Structure.preset(class);
         const min_distance = if (utils.isHorz(self.direction)) (self.width / 2) + (building.width / 2) else (self.height / 2) + (building.height / 2);
-        const sc_size = utils.subcell.size;
+        const sc_size = utils.Subcell.size;
         const compensation: [2]i16 = switch (self.direction) {
             2 => [2]i16{ sc_size / 2, sc_size },
             4 => [2]i16{ 0, sc_size / 2 },
@@ -249,7 +249,7 @@ pub const Player = struct {
         const shifted_xy = utils.dirOffset(@as(u16, @intCast(compensated_x)), @as(u16, @intCast(compensated_y)), self.direction, min_distance);
         const map_x = utils.mapClampX(@as(i16, @intCast(shifted_xy[0])), building.width);
         const map_y = utils.mapClampY(@as(i16, @intCast(shifted_xy[1])), building.height);
-        const subcell_xy = utils.subcell.snapPosition(map_x, map_y, building.width, building.height);
+        const subcell_xy = utils.Subcell.snapToNode(map_x, map_y, building.width, building.height);
         return subcell_xy;
     }
 
@@ -500,34 +500,53 @@ pub const Unit = struct {
         return [2]u16{ new_x, new_y };
     }
 
-    /// Sets unit's target destination while taking into account its current `cellsign`. Returns `true` if setting new target, returns `false` if target remains the same.
+    /// Sets unit's target destination while taking into account its current `cellsign`. Returns `true` if target has changed, returns `false` if target remains the same.
     pub fn retarget(self: *Unit, x: u16, y: u16) bool {
-        // do more stuff here for pathing
         const prev_target = self.target;
+        // do more stuff here for pathing
 
-        self.target = utils.waypoint.closest(x, y);
+        self.target = utils.Point.at(x, y);
         return prev_target.x != self.target.x or prev_target.y != self.target.y;
     }
 
-    /// Calculates and returns the unit's immediate destination based on its current `target` and `cellsign`.
+    /// Calculates and returns the unit's immediate move based on its current `target` and `class` (not implemented yet).
     fn getStep(self: *Unit) utils.Point {
-        // do more stuff here for pathing
-        // Gets offset from target point
-        const total_dx = @as(i32, @intCast(self.x)) - @as(i32, @intCast(self.target.x));
-        const total_dy = @as(i32, @intCast(self.y)) - @as(i32, @intCast(self.target.y));
 
-        // If within step of target point, retargets
-        if (@abs(total_dx + total_dy) < @as(i32, @intFromFloat(self.speed()))) {
-            _ = self.retarget(utils.randomU16(main.map_width), utils.randomU16(main.map_height)); // <--- just testing
+        // Get the current position of unit and overall distance to target
+        const current = utils.Point.at(self.x, self.y);
+        const distance = utils.distanceSquared(current, self.target);
+
+        // Check if within cell of target
+        if (utils.Grid.x(current.x) == utils.Grid.y(self.target.x) and utils.Grid.y(current.y) == utils.Grid.y(self.target.y)) {
+            std.debug.print("Within target cell at {},{}. Target is at {},{}.\n", .{ self.x, self.y, self.target.x, self.target.y });
+            const dx = @as(i32, @intCast(self.target.x)) - @as(i32, @intCast(self.x));
+            const dy = @as(i32, @intCast(self.target.y)) - @as(i32, @intCast(self.y));
+
+            // If within a subcell of the target point, retarget
+            if (distance <= utils.Subcell.size) {
+                std.debug.print("Reached target directly, retargeting.\n", .{});
+                return current; // Pause triggers retarget
+                //_ = self.retarget(utils.randomU16(main.map_width), utils.randomU16(main.map_height)); // <--- just testing
+            }
+            // Otherwise go directly towards the target
+            const angle = utils.deltaToAngle(dx, dy);
+            const magnitude = @min(self.speed(), @as(f32, @floatFromInt(distance)));
+            const vector = utils.vectorToDelta(angle, magnitude);
+            return utils.deltaPoint(self.x, self.y, vector[0], vector[1]);
+            //
+        } else { // If farther than a subcell away, move by waypoints towards the target
+
+            const waypoint = utils.waypoint.closestTowards(current, self.target, @intFromFloat(self.speed()), distance);
+
+            // Get the offset from the upcoming waypoint
+            const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(waypoint.x));
+            const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(waypoint.y));
+
+            // Translates it into vector to get the new step
+            const angle = utils.deltaToAngle(dx, dy);
+            const vector = utils.vectorToDelta(angle, self.speed());
+            return utils.deltaPoint(self.x, self.y, vector[0], vector[1]);
         }
-        const waypoint = utils.waypoint.closestTowards(self.x, self.y, self.target.x, self.target.y);
-        // Gets offset from upcoming waypoint
-        const dx = @as(i32, @intCast(self.x)) - @as(i32, @intCast(waypoint.x));
-        const dy = @as(i32, @intCast(self.y)) - @as(i32, @intCast(waypoint.y));
-        // Translates that into angular delta times speed
-        const angle = utils.deltaToAngle(dx, dy);
-        const vector = utils.vectorToDelta(angle, self.speed());
-        return utils.deltaPoint(self.x, self.y, vector[0], vector[1]);
     }
 
     pub fn create(x: u16, y: u16, class: u8) !*Unit {
@@ -621,6 +640,7 @@ pub const Structure = struct {
     color: rl.Color,
     life: u16,
     tempo: f16,
+    capacity: i16,
     elapsed: u16 = 0,
 
     /// `Structure` property fields determined by `class`.
@@ -630,15 +650,16 @@ pub const Structure = struct {
         height: u16,
         life: u16,
         tempo: f16,
+        capacity: i16,
     };
 
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 4000, .tempo = 6.4 },
-            1 => Properties{ .color = rl.Color.blue, .width = 100, .height = 100, .life = 12000, .tempo = 11.0 },
-            2 => Properties{ .color = rl.Color.dark_blue, .width = 200, .height = 200, .life = 14000, .tempo = 8.0 },
-            3 => Properties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 9000, .tempo = 4.0 },
+            0 => Properties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 4000, .tempo = 6.4, .capacity = 1 },
+            1 => Properties{ .color = rl.Color.blue, .width = 100, .height = 100, .life = 12000, .tempo = 11.0, .capacity = 8 },
+            2 => Properties{ .color = rl.Color.dark_blue, .width = 200, .height = 200, .life = 14000, .tempo = 8.0, .capacity = 5 },
+            3 => Properties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 9000, .tempo = 4.0, .capacity = 6 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -652,16 +673,27 @@ pub const Structure = struct {
         const tempo_ticks = utils.ticksFromSecs(self.tempo);
         if (self.elapsed >= tempo_ticks) {
             self.elapsed -= tempo_ticks; // Subtracting interval accounts for possible overshoot
-            self.spawnUnit() catch return;
+            if (self.capacity > 0) {
+                if (self.spawnUnit()) |unit| {
+                    _ = unit;
+                    self.capacity = self.capacity - 1;
+                } else |err| {
+                    std.debug.print("Failed to spawn unit: {}. May want some sort of indication.\n", .{err});
+                }
+            }
+            self.capacity = self.capacity + 1; // passive regeneration?
         }
     }
 
-    pub fn spawnUnit(self: *Structure) !void {
+    pub fn spawnUnit(self: *Structure) !*Unit {
         const spawn_class = self.spawnClass();
         const spawn_point = self.spawnPoint(Unit.preset(spawn_class).width, Unit.preset(spawn_class).height) catch null;
         if (spawn_point) |sp| { // If spawn_point is not null, unwrap it
-            try units.append(try Unit.create(sp[0], sp[1], spawn_class));
+            const unit = try Unit.create(sp[0], sp[1], spawn_class);
+            try units.append(unit);
+            return unit;
         }
+        return error.NoAvailableSpawnPoint;
     }
 
     pub fn create(x: u16, y: u16, class: u8) !*Structure {
@@ -677,6 +709,7 @@ pub const Structure = struct {
             .color = from_class.color,
             .life = from_class.life,
             .tempo = from_class.tempo,
+            .capacity = from_class.capacity,
             .x = x,
             .y = y,
         };

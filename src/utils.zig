@@ -386,10 +386,10 @@ pub fn interpolateStep(last_x: u16, last_y: u16, x: i32, y: i32, frame: i16, int
     return [2]i32{ interp_x, interp_y };
 }
 
-fn distanceSquared(a: Point, b: Point) u32 {
+pub fn distanceSquared(a: Point, b: Point) u32 {
     const dx = @as(i32, a.x) - @as(i32, b.x);
     const dy = @as(i32, a.y) - @as(i32, b.y);
-    return @as(u32, dx * dx) + @as(u32, dy * dy);
+    return @as(u32, @intCast(dx * dx)) + @as(u32, @intCast(dy * dy));
 }
 
 fn entityDistance(
@@ -490,19 +490,25 @@ pub const Grid = struct {
         return @divFloor(world_y, cell_size);
     }
 
-    /// Converts world coordinates to the top left node position of the containing cell.
-    pub fn cellNode(world_x: u16, world_y: u16) [2]u16 {
-        return [2]u16{ @as(u16, @intCast(x(world_x))) * cell_size, @as(u16, @intCast(y(world_y))) * cell_size };
+    /// Converts world coordinates to the center position of the containing cell.
+    pub fn cellCenter(world_x: u16, world_y: u16) Point {
+        const node = cellNode(world_x, world_y);
+        return Point.at(node.x + cell_half, node.y + cell_half);
     }
 
-    /// Takes world `x`,`y` and returns the world `x`,`y` of the closest grid node.
-    pub fn closestNode(world_x: u16, world_y: u16) [2]u16 {
+    /// Converts world coordinates to the top left node position of the containing cell.
+    pub fn cellNode(world_x: u16, world_y: u16) Point {
+        return Point.at(@as(u16, @intCast(x(world_x))) * cell_size, @as(u16, @intCast(y(world_y))) * cell_size);
+    }
+
+    /// Takes world `x`,`y` and returns the world `x`,`y` of the closest cell node. Not always the node of the containing cell.
+    pub fn closestNode(world_x: u16, world_y: u16) Point {
         const closest_x = @divTrunc((world_x + cell_half), cell_size) * cell_size;
         const closest_y = @divTrunc((world_y + cell_half), cell_size) * cell_size;
-        return [2]u16{ closest_x, closest_y };
+        return Point.at(closest_x, closest_y);
     }
 
-    pub fn closestNodeOffset(world_x: u16, world_y: u16, dir: u8, width: u16, height: u16) [2]u16 {
+    pub fn closestNodeOffset(world_x: u16, world_y: u16, dir: u8, width: u16, height: u16) Point {
         const delta = if (isHorz(dir)) width else height;
         const offset_xy = dirOffset(world_x, world_y, dir, delta);
         return closestNode(offset_xy[0], offset_xy[1]);
@@ -578,25 +584,54 @@ pub fn testHashFunction() void {
 
 // Map Coordinates
 //----------------------------------------------------------------------------------
-pub const subcell = struct {
+pub const Subcell = struct {
+    node: Point,
+
     pub const size = Grid.cell_size / 10;
 
-    /// Returns the top-left point of the closest 10th part of a cell to `x`,`y`.
-    pub fn closest(x: u16, y: u16) [2]u16 {
-        const closest_x = @divTrunc(x, subcell.size) * subcell.size;
-        const closest_y = @divTrunc(y, subcell.size) * subcell.size;
+    pub fn at(x: u16, y: u16) Subcell {
+        const subcell = try main.grid.allocator.create(Subcell); // Memory
+        subcell.* = Subcell{
+            .node = Point.at(x, y),
+        };
+        return subcell;
+    }
+
+    /// Returns the top left `x`,`y` of the closest 10th part of a cell to `x`,`y`.
+    pub fn node(x: u16, y: u16) [2]u16 {
+        const closest_x = @divTrunc(x, Subcell.size) * Subcell.size;
+        const closest_y = @divTrunc(y, Subcell.size) * Subcell.size;
         return [2]u16{ closest_x, closest_y };
     }
 
-    /// Aligns the top-left point of the rectangle centered on `x`,`y` with the top-left of its closest subcell.
-    pub fn snapPosition(x: u16, y: u16, width: u16, height: u16) [2]u16 {
-        const snapped_center = subcell.closest(x - width / 2, y - height / 2);
+    pub fn pointNode(point: Point) [2]u16 {
+        return node(point.x, point.y)[0];
+    }
+
+    pub fn nodePoint(x: u16, y: u16) Point {
+        const xy = node(x, y);
+        return Point.at(xy[0], xy[1]);
+    }
+
+    /// Aligns the top left of the rectangle centered on `x`,`y` with the top left of its closest subcell.
+    pub fn snapToNode(x: u16, y: u16, width: u16, height: u16) [2]u16 {
+        const snapped_center = Subcell.node(x - width / 2, y - height / 2);
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
+    }
+
+    /// Takes a world `x` coordinate and converts it to the corresponding subcell column number.
+    pub fn subGridX(x: u16) usize {
+        return @divTrunc(x, Subcell.size);
+    }
+
+    /// Takes a world `x` coordinate and converts it to the corresponding subcell row number.
+    pub fn subGridY(y: u16) usize {
+        return @divTrunc(y, Subcell.size);
     }
 };
 
 pub const waypoint: type = struct {
-    /// Takes the grid column/row of a given cell and returns the 4 waypoints along its edges.
+    /// Takes the grid column/row of a given cell and returns the 4 waypoints along its edges. Order: left mid, top mid, right mid, bottom mid.
     pub fn cellSides(grid_x: usize, grid_y: usize) [4]Point {
         const node_x = @as(u16, @intCast(grid_x * Grid.cell_size));
         const node_y = @as(u16, @intCast(grid_y * Grid.cell_size));
@@ -622,37 +657,41 @@ pub const waypoint: type = struct {
         }
     }
 
-    pub fn closestTowards(x: u16, y: u16, target_x: u16, target_y: u16) Point {
-        const current_grid_x = Grid.x(x);
-        const current_grid_y = Grid.y(y);
+    pub fn closestTowards(current: Point, target: Point, step_size: i32, total_distance: u32) Point {
+        const current_cell_center = Grid.cellCenter(current.x, current.y);
+        const closest_grid_x = Grid.x(current_cell_center.x);
+        const closest_grid_y = Grid.y(current_cell_center.y);
+        const waypoints = cellSides(closest_grid_x, closest_grid_y);
 
-        // Get the four waypoints for the current grid cell
-        const waypoints = cellSides(current_grid_x, current_grid_y);
+        // Overall vector from current to target
+        const dx = @as(i32, target.x) - @as(i32, current.x);
+        const dy = @as(i32, target.y) - @as(i32, current.y);
 
-        // Determine direction to target
-        const dx = @as(i32, target_x) - @as(i32, x);
-        const dy = @as(i32, target_y) - @as(i32, y);
+        var best_waypoint: ?Point = null;
+        var best_distance = total_distance;
+        const overstep_threshold = step_size;
 
-        var best_waypoint = waypoints[0];
-        var best_distance = @as(u32, @intCast(@abs(dx) + @abs(dy)));
-
-        // Evaluate each waypoint to find the one that moves closest towards the target
         for (waypoints) |wp| {
-            const wp_dx = @as(i32, wp.x) - @as(i32, x);
-            const wp_dy = @as(i32, wp.y) - @as(i32, y);
+            // Vector from current to the waypoint under consideration
+            const wp_dx = @as(i32, wp.x) - @as(i32, current.x);
+            const wp_dy = @as(i32, wp.y) - @as(i32, current.y);
 
-            // Check if the waypoint is in the general direction of the target
-            const is_closer = (dx * wp_dx >= 0) and (dy * wp_dy >= 0);
-            if (is_closer) {
-                const distance = @as(u32, @intCast(@abs(wp_dx - dx) + @abs(wp_dy - dy)));
-                if (distance < best_distance) {
-                    best_distance = distance;
+            // Dot product, degree of alignment with the overall vector
+            const alignment = dx * wp_dx + dy * wp_dy;
+
+            if (alignment > 0) {
+                const distance_to_target = distanceSquared(wp, target);
+
+                if (best_waypoint == null or (distance_to_target < best_distance and alignment > overstep_threshold)) {
+                    best_distance = distance_to_target;
                     best_waypoint = wp;
                 }
             }
         }
 
-        return best_waypoint;
+        // Return the waypoint closest to the target, otherwise center of current cell
+        if (best_waypoint == null) std.debug.print("No best waypoint found.\n", .{});
+        return best_waypoint orelse current_cell_center;
     }
 };
 
