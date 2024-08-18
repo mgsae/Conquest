@@ -79,9 +79,10 @@ pub fn main() anyerror!void {
     // Initialize utility
     //--------------------------------------------------------------------------------------
     utils.rngInit();
+    tick_number = 0; // <-- Here, would fetch value from server
+    var stored_mouse_input: [2]rl.Vector2 = [2]rl.Vector2{ rl.Vector2.zero(), rl.Vector2.zero() };
     var stored_mousewheel: f32 = 0.0;
     var stored_key_input: u32 = 0;
-    tick_number = 0; // <-- Here, would fetch value from server
 
     // Initialize map
     //--------------------------------------------------------------------------------------
@@ -167,7 +168,7 @@ pub fn main() anyerror!void {
         //----------------------------------------------------------------------------------
         if (profile_frame) utils.startTimer(0, "INPUT PHASE.\n");
         if (profile_frame) utils.startTimer(1, "- Processing input.");
-        processInput(&stored_mousewheel, &stored_key_input);
+        processInput(&stored_mouse_input[0], &stored_mouse_input[1], &stored_mousewheel, &stored_key_input);
         if (profile_frame) utils.endTimer(1, "Processing input took {} seconds.");
         if (profile_frame) utils.endTimer(0, "Input phase took {} seconds in total.\n");
 
@@ -194,8 +195,10 @@ pub fn main() anyerror!void {
             grid.updateSections(cellsigns_cache); // Updates Grid.sections array by cellsign comparison
             if (profile_frame) utils.endTimer(1, "Updating grid sections took {} seconds.");
 
-            updateControls(stored_mousewheel, stored_key_input, profile_frame);
+            updateControls(stored_mouse_input[0], stored_mouse_input[1], stored_mousewheel, stored_key_input, profile_frame);
 
+            // Resetting input
+            stored_mouse_input = [2]rl.Vector2{ rl.Vector2.zero(), rl.Vector2.zero() };
             stored_mousewheel = 0.0;
             stored_key_input = 0;
 
@@ -234,17 +237,19 @@ pub fn main() anyerror!void {
     }
 }
 
-fn processInput(stored_mousewheel: *f32, stored_key_input: *u32) void {
+fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vector2, stored_mousewheel: *f32, stored_key_input: *u32) void {
+    if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) stored_mouse_input_l.* = rl.getMousePosition(); // Sets stored_mouse_input[0] to left-clicked position
+    if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_right)) stored_mouse_input_r.* = rl.getMouseDelta(); // Sets stored_mouse_input[1] to right-mouse down delta
     stored_mousewheel.* += rl.getMouseWheelMove();
 
-    // Build keys bitmasking
+    // Number keys bitmasking
     if (rl.isKeyPressed(rl.KeyboardKey.key_z)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Z);
     if (rl.isKeyPressed(rl.KeyboardKey.key_one)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.One);
     if (rl.isKeyPressed(rl.KeyboardKey.key_two)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Two);
     if (rl.isKeyPressed(rl.KeyboardKey.key_three)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Three);
     if (rl.isKeyPressed(rl.KeyboardKey.key_four)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Four);
 
-    // Move keys bitmasking
+    // Direction keys bitmasking
     if (rl.isKeyDown(rl.KeyboardKey.key_w) or rl.isKeyDown(rl.KeyboardKey.key_up)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Up);
     if (rl.isKeyDown(rl.KeyboardKey.key_a) or rl.isKeyDown(rl.KeyboardKey.key_left)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Left);
     if (rl.isKeyDown(rl.KeyboardKey.key_s) or rl.isKeyDown(rl.KeyboardKey.key_down)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Down);
@@ -256,10 +261,13 @@ fn processInput(stored_mousewheel: *f32, stored_key_input: *u32) void {
     if (rl.isKeyPressed(rl.KeyboardKey.key_enter) or rl.isKeyPressed(rl.KeyboardKey.key_kp_enter)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Enter);
 }
 
-fn updateControls(mousewheel_delta: f32, key_input: u32, profile_frame: bool) void {
+fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vector2, mousewheel_delta: f32, key_input: u32, profile_frame: bool) void {
+    // use for clicks selection etc.:
+    _ = stored_mouse_input_l;
+
     if (profile_frame) utils.startTimer(1, "- Updating controls.");
     updateCanvasZoom(mousewheel_delta);
-    updateCanvasPosition(key_input);
+    updateCanvasPosition(stored_mouse_input_r, key_input);
     if (keys.actionActive(key_input, utils.Key.Action.SpecialEnter)) profile_mode = !profile_mode; // Enter toggles profile mode (verbose logs) for now
     if (profile_frame) utils.endTimer(1, "Updating controls took {} seconds.");
 }
@@ -348,7 +356,7 @@ pub fn updateCanvasZoom(mousewheel_delta: f32) void {
     }
 }
 
-pub fn updateCanvasPosition(key_input: u32) void {
+pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
     const mouse_x = @as(f32, @floatFromInt(rl.getMouseX()));
     const mouse_y = @as(f32, @floatFromInt(rl.getMouseY()));
     const screen_width_float = @as(f32, @floatFromInt(rl.getScreenWidth()));
@@ -357,13 +365,12 @@ pub fn updateCanvasPosition(key_input: u32) void {
     const margin_h: f32 = screen_height_float / 10.0;
     const effective_speed: f32 = @as(f32, @floatCast(SCROLL_SPEED)) / @max(1, canvas_zoom * 0.1);
 
-    if ((key_input & (1 << 9)) != 0) {
-        // Space key centers camera on player
+    if ((key_input & (1 << 9)) != 0) { // Space key centers camera on player
         utils.canvasOnPlayer();
-        //canvas_offset_x = -(@as(f32, @floatFromInt(player.x)) * canvas_zoom) + (screen_width_float / 2);
-        //canvas_offset_y = -(@as(f32, @floatFromInt(player.y)) * canvas_zoom) + (screen_height_float / 2);
-    } else {
-        // Mouse edge scrolls camera
+    } else if (mouse_input_r.x != 0 or mouse_input_r.y != 0) { // Right-button drags canvas
+        canvas_offset_x += mouse_input_r.x * 2;
+        canvas_offset_y += mouse_input_r.y * 2;
+    } else { // Mouse edge scrolls camera
         if (mouse_x < margin_w) {
             const factor = 1.0 - (mouse_x / margin_w);
             canvas_offset_x += effective_speed * factor;
