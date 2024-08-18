@@ -30,9 +30,9 @@ pub var canvas_max: f32 = 1.0; // Recalculated in setMapSize for max map visibil
 pub var build_guide: ?u8 = null;
 
 // World
-const STARTING_MAP_WIDTH = 1920 * 8; // Limit for u16 coordinates: 65535
-const STARTING_MAP_HEIGHT = 1080 * 8; // Limit for u16 coordinates: 65535
-pub const GRID_CELL_SIZE = 500; //512;
+const STARTING_MAP_WIDTH = 16000; // 1920 * 8; // Limit for u16 coordinates: 65535
+const STARTING_MAP_HEIGHT = 16000; // 1080 * 8; // Limit for u16 coordinates: 65535
+pub const GRID_CELL_SIZE = 1000;
 pub const MOVEMENT_DIVISIONS = 10; // Modulus base for unit movement updates
 pub var map_width: u16 = 0;
 pub var map_height: u16 = 0;
@@ -107,7 +107,7 @@ pub fn main() anyerror!void {
     dead_structures = std.ArrayList(*entity.Structure).init(allocator);
     dead_units = std.ArrayList(*entity.Unit).init(allocator);
 
-    const startCoords = try startingLocations(&allocator, 1); // 1 player
+    const startCoords = try startingLocations(&allocator, 2); // players
     for (startCoords, 0..) |coord, i| {
         std.debug.print("Player starting at: ({}, {})\n", .{ coord.x, coord.y });
         if (i == 0) {
@@ -122,7 +122,8 @@ pub fn main() anyerror!void {
     allocator.free(startCoords); // Freeing starting positions
 
     // Testing/debugging
-    const SPREAD = 75; // PERCENTAGE
+    //--------------------------------------------------------------------------------------
+    const SPREAD = 50; // PERCENTAGE
     const rangeX: u16 = @intCast(@divTrunc(@as(i32, @intCast(map_width)) * SPREAD, 100));
     const rangeY: u16 = @intCast(@divTrunc(@as(i32, @intCast(map_height)) * SPREAD, 100));
 
@@ -131,8 +132,10 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
     //}
-    for (0..999) |_| {
-        _ = entity.Structure.construct(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3))));
+    for (0..500) |_| {
+        const class = @as(u8, @intCast(utils.randomU16(3)));
+        const xy = utils.subcell.snapPosition(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), entity.Structure.preset(class).width, entity.Structure.preset(class).height);
+        _ = entity.Structure.construct(xy[0], xy[1], class);
     }
 
     defer entity.units.deinit();
@@ -179,7 +182,9 @@ pub fn main() anyerror!void {
         // Perform updates if enough time has elapsed
         while (elapsed_time >= TICK_DURATION) {
             try updateEntities(stored_key_input, profile_frame);
+            if (profile_frame) utils.startTimer(1, "- Removing dead entities.");
             try removeEntities();
+            if (profile_frame) utils.endTimer(1, "Removing dead entities took {} seconds.");
 
             if (profile_frame) utils.startTimer(1, "- Updating cell signatures.");
             grid.updateCellsigns(); // Updates Grid.cellsigns array

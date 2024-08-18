@@ -47,7 +47,7 @@ pub fn printGridEntities(grid: *entity.Grid) void {
 /// Prints the number of cells currently stored in the hashmap, corresponding to the
 /// number of distinct cells that contain one or more entities.
 pub fn printGridCells(grid: *entity.Grid) void {
-    std.debug.print("Currently active cells on the grid: {}.\n", .{grid.cells.count()});
+    std.debug.print("Currently active cells on the grid: {} (out of {} cells, {} rows, {} columns).\n", .{ grid.cells.count(), grid.rows * grid.columns, grid.rows, grid.columns });
 }
 
 pub fn perFrame(frequency: u64) bool {
@@ -57,6 +57,10 @@ pub fn perFrame(frequency: u64) bool {
 pub fn scaleToTickRate(float: f32) f32 { // Delta time capped to tickrate
     return (float * (@max(@as(f32, @floatCast(main.TICK_DURATION)), rl.getFrameTime()))) * main.TICKRATE;
 }
+
+// Metaprogramming
+//----------------------------------------------------------------------------------
+const Predicate = fn (entity: *entity.Entity) bool; // Function pointer to an entity
 
 // Value types and conversions
 //----------------------------------------------------------------------------------
@@ -203,7 +207,7 @@ pub const Key = struct {
 
 // RNG
 //----------------------------------------------------------------------------------
-pub fn rngInit() void {
+pub fn rngInit() void { // Must be deterministic/objective, so to some extent a placeholder
     rng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp()))); // Initialize rng
 }
 
@@ -348,11 +352,11 @@ pub fn deltaToAngle(dx: i32, dy: i32) f32 {
     return if (angle_degrees < 0) angle_degrees + 360.0 else angle_degrees;
 }
 
-/// Takes an `x`,`y` origin coordinate and a `dX`,`dY` displacement. Returns the `Point` after translation.
-pub fn deltaPoint(x: u16, y: u16, dX: f32, dY: f32) Point {
-    const endX: f32 = @max(0, @as(f32, @floatFromInt(x)) + dX);
-    const endY: f32 = @max(0, @as(f32, @floatFromInt(y)) + dY);
-    return Point.at(@as(u16, @intFromFloat(@round(endX))), @as(u16, @intFromFloat(@round(endY)))); // Ah, sweet zig syntax
+/// Takes an `x`,`y` origin coordinate and a `dx`,`dy` displacement. Returns the `Point` after translation.
+pub fn deltaPoint(x: u16, y: u16, dx: f32, dy: f32) Point {
+    const end_x: f32 = @max(0, @as(f32, @floatFromInt(x)) + dx);
+    const end_y: f32 = @max(0, @as(f32, @floatFromInt(y)) + dy);
+    return Point.at(@as(u16, @intFromFloat(@round(end_x))), @as(u16, @intFromFloat(@round(end_y)))); // Ah, sweet zig syntax
 }
 
 pub fn angleFromTo(x1: u16, y1: u16, x2: u16, y2: u16) f32 {
@@ -380,6 +384,21 @@ pub fn interpolateStep(last_x: u16, last_y: u16, x: i32, y: i32, frame: i16, int
     const interp_y = @as(i32, last_y) + @as(i32, @intFromFloat(interpolation_factor * @as(f32, @floatFromInt(y - @as(i32, last_y)))));
 
     return [2]i32{ interp_x, interp_y };
+}
+
+fn distanceSquared(a: Point, b: Point) u32 {
+    const dx = @as(i32, a.x) - @as(i32, b.x);
+    const dy = @as(i32, a.y) - @as(i32, b.y);
+    return @as(u32, dx * dx) + @as(u32, dy * dy);
+}
+
+fn entityDistance(
+    e1: *entity.Entity,
+    e2: *entity.Entity,
+) u32 {
+    const a = Point.at(e1.x(), e1.y());
+    const b = Point.at(e2.x(), e2.y());
+    return distanceSquared(a, b);
 }
 
 // Hashmap
@@ -461,24 +480,22 @@ pub const Grid = struct {
         return neighbors[0..count];
     }
 
-    /// Converts a world coordinate `x` to the horizontal grid coordinate it falls into.
-    /// #### Parameters
-    /// - `world_x`: The `x` coordinate in the world space.
-    /// #### Returns
-    /// - The corresponding grid coordinate on the horizontal axis.
-    pub fn x(world_x: u16) u16 {
+    /// Converts a world coordinate `x` to the grid column it falls into.
+    pub fn x(world_x: u16) usize {
         return @divFloor(world_x, cell_size);
     }
 
-    /// Converts a world coordinate `y` to the vertical grid coordinate it falls into.
-    /// #### Parameters
-    /// - `world_y`: The `y` coordinate in the world space.
-    /// #### Returns
-    /// - The corresponding grid coordinate on the vertical axis.
-    pub fn y(world_y: u16) u16 {
+    /// Converts a world coordinate `y` to the grid row it falls into.
+    pub fn y(world_y: u16) usize {
         return @divFloor(world_y, cell_size);
     }
 
+    /// Converts world coordinates to the top left node position of the containing cell.
+    pub fn cellNode(world_x: u16, world_y: u16) [2]u16 {
+        return [2]u16{ @as(u16, @intCast(x(world_x))) * cell_size, @as(u16, @intCast(y(world_y))) * cell_size };
+    }
+
+    /// Takes world `x`,`y` and returns the world `x`,`y` of the closest grid node.
     pub fn closestNode(world_x: u16, world_y: u16) [2]u16 {
         const closest_x = @divTrunc((world_x + cell_half), cell_size) * cell_size;
         const closest_y = @divTrunc((world_y + cell_half), cell_size) * cell_size;
@@ -562,7 +579,7 @@ pub fn testHashFunction() void {
 // Map Coordinates
 //----------------------------------------------------------------------------------
 pub const subcell = struct {
-    pub const size = main.GRID_CELL_SIZE / 10;
+    pub const size = Grid.cell_size / 10;
 
     /// Returns the top-left point of the closest 10th part of a cell to `x`,`y`.
     pub fn closest(x: u16, y: u16) [2]u16 {
@@ -575,6 +592,67 @@ pub const subcell = struct {
     pub fn snapPosition(x: u16, y: u16, width: u16, height: u16) [2]u16 {
         const snapped_center = subcell.closest(x - width / 2, y - height / 2);
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
+    }
+};
+
+pub const waypoint: type = struct {
+    /// Takes the grid column/row of a given cell and returns the 4 waypoints along its edges.
+    pub fn cellSides(grid_x: usize, grid_y: usize) [4]Point {
+        const node_x = @as(u16, @intCast(grid_x * Grid.cell_size));
+        const node_y = @as(u16, @intCast(grid_y * Grid.cell_size));
+        return [4]Point{
+            Point.at(node_x, node_y + Grid.cell_half), // left mid
+            Point.at(node_x + Grid.cell_half, node_y), // top mid
+            Point.at(node_x + Grid.cell_size, node_y + Grid.cell_half), // Right mid
+            Point.at(node_x + Grid.cell_half, node_y + Grid.cell_size), // Bottom mid
+        };
+    }
+    /// Takes world `x`,`y` cordinates and returns the closest waypoint.
+    pub fn closest(x: u16, y: u16) Point {
+        const waypoints = cellSides(Grid.x(x), Grid.y(y));
+        const mid_x_diff: i32 = @as(i32, x) - (waypoints[1].x + Grid.cell_half);
+        const mid_y_diff: i32 = @as(i32, y) - (waypoints[0].y) + Grid.cell_half;
+
+        if (mid_x_diff < 0) { // On left side of cell
+            if (@abs(mid_x_diff) > @abs(mid_y_diff)) return waypoints[0];
+            return if (mid_y_diff < 0) waypoints[1] else waypoints[3];
+        } else { // On right side of cell
+            if (@abs(mid_x_diff) > @abs(mid_y_diff)) return waypoints[2];
+            return if (mid_y_diff < 0) waypoints[1] else waypoints[3];
+        }
+    }
+
+    pub fn closestTowards(x: u16, y: u16, target_x: u16, target_y: u16) Point {
+        const current_grid_x = Grid.x(x);
+        const current_grid_y = Grid.y(y);
+
+        // Get the four waypoints for the current grid cell
+        const waypoints = cellSides(current_grid_x, current_grid_y);
+
+        // Determine direction to target
+        const dx = @as(i32, target_x) - @as(i32, x);
+        const dy = @as(i32, target_y) - @as(i32, y);
+
+        var best_waypoint = waypoints[0];
+        var best_distance = @as(u32, @intCast(@abs(dx) + @abs(dy)));
+
+        // Evaluate each waypoint to find the one that moves closest towards the target
+        for (waypoints) |wp| {
+            const wp_dx = @as(i32, wp.x) - @as(i32, x);
+            const wp_dy = @as(i32, wp.y) - @as(i32, y);
+
+            // Check if the waypoint is in the general direction of the target
+            const is_closer = (dx * wp_dx >= 0) and (dy * wp_dy >= 0);
+            if (is_closer) {
+                const distance = @as(u32, @intCast(@abs(wp_dx - dx) + @abs(wp_dy - dy)));
+                if (distance < best_distance) {
+                    best_distance = distance;
+                    best_waypoint = wp;
+                }
+            }
+        }
+
+        return best_waypoint;
     }
 };
 
@@ -594,24 +672,64 @@ pub fn isInMap(x: u16, y: u16, width: u16, height: u16) bool {
 
 pub fn mapClampX(x: i16, width: u16) u16 {
     const half_width = @as(i16, @intCast(@divTrunc(width, 2)));
-    const clamped_x = @max(half_width, @min(x, @as(i16, @intCast(main.map_width)) - half_width));
+    const clamped_x = @max(half_width, @min(x, @as(i32, @intCast(main.map_width)) - half_width));
     return @as(u16, @intCast(clamped_x));
 }
 
 pub fn mapClampY(y: i16, height: u16) u16 {
     const half_height = @as(i16, @intCast(@divTrunc(height, 2)));
-    const clamped_y = @max(half_height, @min(y, @as(i16, @intCast(main.map_height)) - half_height));
+    const clamped_y = @max(half_height, @min(y, @as(i32, @intCast(main.map_height)) - half_height));
     return @as(u16, @intCast(clamped_y));
 }
 
-/// Returns the midpoint of the closest 4th part of a cell to `x`,`y`.
-pub fn closestNexus(x: u16, y: u16) [2]u16 {
-    const area_size = main.GRID_CELL_SIZE / 2;
-    const nexus_offset = area_size / 2;
-    const closest_x = @divTrunc(x, area_size) * area_size + nexus_offset;
-    const closest_y = @divTrunc(y, area_size) * area_size + nexus_offset;
-    return [2]u16{ closest_x, closest_y };
+/// Searches for `Entity` that satisfies the `condition`, starting with the section at the `origin` point.
+pub fn concentricSearch(grid: *entity.Grid, origin: Point, condition: Predicate) ?*entity.Entity {
+    const origin_col = Grid.x(origin.x);
+    const origin_row = Grid.y(origin.y);
+    var closest_entity: ?*entity.Entity = null;
+    var closest_distance = std.math.inf(f32);
+
+    var radius: i32 = 0;
+    while (true) {
+        var found_any_entity = false;
+
+        for (-radius..radius) |d| {
+            // Check the four sides of the square at this radius
+            const offsets = [4]Point{
+                Point{ .x = origin_col + d, .y = origin_row - radius }, // Top
+                Point{ .x = origin_col + d, .y = origin_row + radius }, // Bottom
+                Point{ .x = origin_col - radius, .y = origin_row + d }, // Left
+                Point{ .x = origin_col + radius, .y = origin_row + d }, // Right
+            };
+
+            for (&offsets) |offset| {
+                if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.cols and offset.y < grid.rows) {
+                    const entities: ?*std.ArrayList(*entity.Entity) = grid.sectionEntities(offset.x, offset.y);
+                    if (entities != null) {
+                        found_any_entity = true;
+                        for (entities.?.items) |e| {
+                            if (condition(e)) {
+                                const distance = distanceSquared(origin, Point.at(e.x(), e.y()));
+                                if (distance < closest_distance) {
+                                    closest_entity = e;
+                                    closest_distance = distance;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (closest_entity != null) return closest_entity; // If found entity in this radius, return the closest one
+        if (!found_any_entity) break; // If no entities were found overall, stop searching
+
+        radius += 2; // Increases radius by 2 since each section covers 3x3 cells, thus overlaps by one on each side
+    }
+    return null; // If no entity was found after the entire search
 }
+
+// AI
+//----------------------------------------------------------------------------------
 
 // Canvas
 //----------------------------------------------------------------------------------

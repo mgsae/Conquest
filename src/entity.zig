@@ -188,7 +188,7 @@ pub const Player = struct {
 
         // If new movement, updates game grid
         if ((new_x != null and new_x.? != old_x) or (new_y != null and new_y.? != old_y)) {
-            main.grid.updateCellPosition(self.entity, old_x, old_y);
+            main.grid.updateCellMembership(self.entity, old_x, old_y);
         }
     }
 
@@ -383,7 +383,7 @@ pub const Unit = struct {
         if (collision == null) { // No obstacle, move
             self.x = new_x;
             self.y = new_y;
-            main.grid.updateCellPosition(self.entity, old_x, old_y);
+            main.grid.updateCellMembership(self.entity, old_x, old_y);
             return true;
         }
         return false;
@@ -464,7 +464,7 @@ pub const Unit = struct {
         if (obstacle == null) { // Pushing doesn't collide with another obstacle
             self.x = new_x;
             self.y = new_y;
-            main.grid.updateCellPosition(self.entity, old_x, old_y);
+            main.grid.updateCellMembership(self.entity, old_x, old_y);
         } else if (obstacle.?.kind == Kind.Unit) { // Pushed unit collides with another unit
 
             const obstacle_unit = obstacle.?.content.Unit;
@@ -505,18 +505,26 @@ pub const Unit = struct {
         // do more stuff here for pathing
         const prev_target = self.target;
 
-        self.target = utils.Point.at(x, y);
+        self.target = utils.waypoint.closest(x, y);
         return prev_target.x != self.target.x or prev_target.y != self.target.y;
     }
 
     /// Calculates and returns the unit's immediate destination based on its current `target` and `cellsign`.
     fn getStep(self: *Unit) utils.Point {
         // do more stuff here for pathing
-        const dx = @as(i32, @intCast(self.x)) - @as(i32, @intCast(self.target.x));
-        const dy = @as(i32, @intCast(self.y)) - @as(i32, @intCast(self.target.y));
-        if (@abs(dx + dy) < @as(i32, @intFromFloat(self.speed()))) {
+        // Gets offset from target point
+        const total_dx = @as(i32, @intCast(self.x)) - @as(i32, @intCast(self.target.x));
+        const total_dy = @as(i32, @intCast(self.y)) - @as(i32, @intCast(self.target.y));
+
+        // If within step of target point, retargets
+        if (@abs(total_dx + total_dy) < @as(i32, @intFromFloat(self.speed()))) {
             _ = self.retarget(utils.randomU16(main.map_width), utils.randomU16(main.map_height)); // <--- just testing
         }
+        const waypoint = utils.waypoint.closestTowards(self.x, self.y, self.target.x, self.target.y);
+        // Gets offset from upcoming waypoint
+        const dx = @as(i32, @intCast(self.x)) - @as(i32, @intCast(waypoint.x));
+        const dy = @as(i32, @intCast(self.y)) - @as(i32, @intCast(waypoint.y));
+        // Translates that into angular delta times speed
         const angle = utils.deltaToAngle(dx, dy);
         const vector = utils.vectorToDelta(angle, self.speed());
         return utils.deltaPoint(self.x, self.y, vector[0], vector[1]);
@@ -584,10 +592,10 @@ pub const Unit = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .speed = 1.5, .color = rl.Color.sky_blue, .width = 30, .height = 30, .life = 3000 },
-            1 => Properties{ .speed = 1.75, .color = rl.Color.blue, .width = 25, .height = 25, .life = 4000 },
-            2 => Properties{ .speed = 1, .color = rl.Color.dark_blue, .width = 45, .height = 45, .life = 5000 },
-            3 => Properties{ .speed = 2, .color = rl.Color.violet, .width = 35, .height = 35, .life = 6000 },
+            0 => Properties{ .speed = 1.5, .color = rl.Color.sky_blue, .width = 30, .height = 30, .life = 6000 },
+            1 => Properties{ .speed = 1.75, .color = rl.Color.blue, .width = 25, .height = 25, .life = 8000 },
+            2 => Properties{ .speed = 1, .color = rl.Color.dark_blue, .width = 45, .height = 45, .life = 10000 },
+            3 => Properties{ .speed = 2, .color = rl.Color.violet, .width = 35, .height = 35, .life = 7000 },
             else => @panic("Invalid unit class"),
         };
     }
@@ -627,10 +635,10 @@ pub const Structure = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 5000, .tempo = 3.2 },
-            1 => Properties{ .color = rl.Color.blue, .width = 100, .height = 100, .life = 6000, .tempo = 5.5 },
-            2 => Properties{ .color = rl.Color.dark_blue, .width = 200, .height = 200, .life = 7000, .tempo = 4.0 },
-            3 => Properties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 8000, .tempo = 2.0 },
+            0 => Properties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 4000, .tempo = 6.4 },
+            1 => Properties{ .color = rl.Color.blue, .width = 100, .height = 100, .life = 12000, .tempo = 11.0 },
+            2 => Properties{ .color = rl.Color.dark_blue, .width = 200, .height = 200, .life = 14000, .tempo = 8.0 },
+            3 => Properties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 9000, .tempo = 4.0 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -844,7 +852,7 @@ pub const Grid = struct {
     }
 
     /// Takes a grid cell `x`,`y` and returns the list of entities stored in `sections` for that cell.
-    fn sectionEntities(self: *Grid, x: usize, y: usize) ?*std.ArrayList(*Entity) {
+    pub fn sectionEntities(self: *Grid, x: usize, y: usize) ?*std.ArrayList(*Entity) {
         if (x >= self.columns or y >= self.rows) {
             return null;
         }
@@ -1002,7 +1010,7 @@ pub const Grid = struct {
         // Reminder: Entity is at this point still listed in corresponding and neighboring grid.sections addresses.
     }
 
-    pub fn updateCellPosition(self: *Grid, entity: *Entity, old_x: u16, old_y: u16) void {
+    pub fn updateCellMembership(self: *Grid, entity: *Entity, old_x: u16, old_y: u16) void {
         const oldKey = utils.SpatialHash.hash(old_x, old_y);
         const curX = entity.x();
         const curY = entity.y();
@@ -1101,40 +1109,6 @@ pub const Grid = struct {
 
         self.buffer_offset += count; // Update the buffer_offset by the number of entities added
         return buffer[self.buffer_offset - count .. self.buffer_offset];
-    }
-
-    /// Returns a slice of nearby entities within a 3x3 grid centered around the given x, y coordinates.
-    /// Returns an error if the number of nearby entities exceeds `limit`.
-    pub fn entitiesNearOLD(self: *Grid, x: u16, y: u16, limit: comptime_int) ![]*Entity {
-        std.debug.print("Calling entitiesNear with a limit of {}.\n", .{limit});
-        var nearby_entities: [limit]*Entity = undefined;
-        var count: usize = 0;
-        //std.debug.print("nearby_entities should be undefined {any}.\n", .{nearby_entities});
-        // Gets a 3x3 section of the grid
-        const offsets = utils.Grid.sectionFromPoint(x, y, main.map_width, main.map_height);
-
-        // Prioritizes player if in central cell
-        if (utils.Grid.x(main.player.x) == offsets[0][0] and utils.Grid.y(main.player.y) == offsets[0][1]) {
-            nearby_entities[count] = main.player.entity;
-            count += 1;
-        }
-
-        for (offsets) |offset| { // For each neighboring cell
-            const neighbor_x = offset[0];
-            const neighbor_y = offset[1];
-            const neighbor_key = utils.SpatialHash.hash(neighbor_x, neighbor_y);
-
-            if (self.cells.get(neighbor_key)) |list| { // Lists the cell contents
-                for (list.items) |entity| { // For each entity in the cell
-                    if (count >= limit) return error.EntityAmountExceedsLimit;
-                    nearby_entities[count] = entity;
-                    count += 1;
-                }
-            }
-        }
-        std.debug.print("By the time entitiesNear is done, count is: {}.\n", .{count});
-        //std.debug.print("Searching for entities near {any}. Found {} entities within area.\n", .{ offsets[0], count });
-        return nearby_entities[0..count];
     }
 
     /// Finds entities in a 3x3 cell radius, then performs an axis-aligned bounding box check. Returns first colliding entity or null.
