@@ -7,11 +7,13 @@ const u = @import("utils.zig");
 pub var players: std.ArrayList(*Player) = undefined;
 pub var units: std.ArrayList(*Unit) = undefined;
 pub var structures: std.ArrayList(*Structure) = undefined;
+pub var resources: std.ArrayList(*Resource) = undefined;
 
 const Kind = enum {
     Player,
     Unit,
     Structure,
+    Resource,
 };
 
 pub const Entity = struct {
@@ -20,6 +22,7 @@ pub const Entity = struct {
         Player: *Player,
         Unit: *Unit,
         Structure: *Structure,
+        Resource: *Structure,
     },
 
     pub fn width(self: *Entity) u16 {
@@ -27,6 +30,7 @@ pub const Entity = struct {
             Kind.Player => self.content.Player.width,
             Kind.Unit => self.content.Unit.width,
             Kind.Structure => self.content.Structure.width,
+            Kind.Resource => self.content.Resource.width,
         };
     }
 
@@ -35,6 +39,7 @@ pub const Entity = struct {
             Kind.Player => self.content.Player.height,
             Kind.Unit => self.content.Unit.height,
             Kind.Structure => self.content.Structure.height,
+            Kind.Resource => self.content.Resource.height,
         };
     }
 
@@ -43,6 +48,7 @@ pub const Entity = struct {
             Kind.Player => self.content.Player.x,
             Kind.Unit => self.content.Unit.x,
             Kind.Structure => self.content.Structure.x,
+            Kind.Resource => self.content.Resource.x,
         };
     }
 
@@ -51,6 +57,7 @@ pub const Entity = struct {
             Kind.Player => self.content.Player.y,
             Kind.Unit => self.content.Unit.y,
             Kind.Structure => self.content.Structure.y,
+            Kind.Resource => self.content.Resource.y,
         };
     }
 
@@ -78,7 +85,7 @@ pub const Player = struct {
     local: bool = false,
 
     pub fn draw(self: Player) void {
-        u.drawEntity(self.x, self.y, self.width, self.height, self.color);
+        u.drawPlayer(self.x, self.y, self.width, self.height, self.color);
     }
 
     pub fn update(self: *Player, key_input: ?u32) anyerror!void {
@@ -736,6 +743,22 @@ pub const Structure = struct {
             }
         }
         return error.NoValidSpawnPoint;
+    }
+};
+
+// Resource
+//----------------------------------------------------------------------------------
+pub const Resource = struct {
+    entity: *Entity,
+    class: u8,
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+    life: i16,
+
+    pub fn draw(self: *Unit) void {
+        u.drawEntity(self.x, self.y, self.width, self.height, self.color());
     }
 };
 

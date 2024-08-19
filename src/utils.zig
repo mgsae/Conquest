@@ -985,27 +985,21 @@ pub fn screenToSubcell(screen_position: rl.Vector2) Subcell {
 
 // Drawing
 //----------------------------------------------------------------------------------
+pub fn opacity(color: rl.Color, alpha: f32) rl.Color {
+    return rl.Color{
+        .r = color.r,
+        .g = color.g,
+        .b = color.b,
+        .a = asU8(f32, asF32(u8, color.a) * alpha),
+    };
+}
 
 pub fn drawGuide(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
-    const semiTransparent = rl.Color{
-        .r = col.r,
-        .g = col.g,
-        .b = col.b,
-        .a = col.a / 2,
-    };
-
-    drawEntity(x, y, width, height, semiTransparent);
+    drawEntity(x, y, width, height, opacity(col, 0.4));
 }
 
 pub fn drawGuideFail(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
-    const semiTransparent = rl.Color{
-        .r = col.r,
-        .g = col.g,
-        .b = col.b,
-        .a = col.a / 8,
-    };
-
-    drawEntity(x, y, width, height, semiTransparent);
+    drawEntity(x, y, width, height, opacity(col, 0.15));
 }
 
 /// Uses raylib to draw rectangle scaled and positioned to canvas.
@@ -1018,8 +1012,14 @@ pub fn drawEntity(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.canvas_offset_x, main.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.canvas_offset_y, main.canvas_zoom), canvasScale(width, main.canvas_zoom), canvasScale(height, main.canvas_zoom), col);
 }
 
-/// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas, interpolated by `frame` since `last_step`.
+/// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas, interpolated by `frame` since `last_step`. The full interpolation interval is determined by `MOVEMENT_DIVISIONS`.
 pub fn drawEntityInterpolated(x: i32, y: i32, width: i32, height: i32, col: rl.Color, last_step: Point, frame: i16) void {
     const interp_xy = interpolateStep(last_step.x, last_step.y, x, y, frame, main.MOVEMENT_DIVISIONS);
     drawEntity(interp_xy[0], interp_xy[1], width, height, col);
+}
+
+/// Draws rectangle and build radius centered on `x`,`y` coordinates, scaled and positioned to canvas.
+pub fn drawPlayer(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
+    drawEntity(x, y, width, height, col);
+    rl.drawCircleLines(canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom), Grid.cell_half * main.canvas_zoom, opacity(col, 0.25));
 }

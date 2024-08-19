@@ -19,8 +19,8 @@ pub var tick_number: u64 = undefined; // Ersatz server tick
 
 // Camera
 pub const SCROLL_SPEED: f16 = 25.0;
-pub var screen_width: i16 = 1920 / 2;
-pub var screen_height: i16 = 1080 / 2;
+pub var screen_width: i16 = 1920;
+pub var screen_height: i16 = 1080;
 pub var canvas_offset_x: f32 = 0.0;
 pub var canvas_offset_y: f32 = 0.0;
 pub var canvas_zoom: f32 = 1.0;
@@ -105,6 +105,7 @@ pub fn main() anyerror!void {
     entity.players = std.ArrayList(*entity.Player).init(allocator);
     entity.structures = std.ArrayList(*entity.Structure).init(allocator);
     entity.units = std.ArrayList(*entity.Unit).init(allocator);
+    entity.resources = std.ArrayList(*entity.Resource).init(allocator);
     dead_players = std.ArrayList(*entity.Player).init(allocator);
     dead_structures = std.ArrayList(*entity.Structure).init(allocator);
     dead_units = std.ArrayList(*entity.Unit).init(allocator);
