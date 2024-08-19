@@ -76,126 +76,126 @@ pub const u64max: u64 = std.math.maxInt(u64); // 18446744073709551615
 pub const i64max: i64 = std.math.maxInt(i64); // (-9223372036854775807 to) 9223372036854775807
 pub const f64max: f64 = std.math.floatMax(f64); // (-1.7976931348623157e+308 to) 1.7976931348623157e+308
 
-/// Casts `value` from the type `T1` to the type `T2`. Types must be numerical. Clamps the value to the range of `T2`.
-pub fn as(comptime T1: type, value: T1, comptime T2: type) T2 {
+/// Casts `v` from the type `T1` to the type `T2`. Types must be numerical. Clamps the value to the range of `T2`.
+pub fn as(comptime T1: type, v: T1, comptime T2: type) T2 {
     if ((@typeInfo(T1) != .Float and @typeInfo(T1) != .Int) or (@typeInfo(T2) != .Float and @typeInfo(T2) != .Int)) {
-        std.debug.panic("Attempted to cast to/from a non-numerical type. Type of value: {}. Type of return: {}.", .{ @TypeOf(T1), @TypeOf(T2) });
+        std.debug.panic("Attempted to cast to/from a non-numerical type. Type of value: {}. Type of return: {}.", .{ T1, T2 });
     }
     // Delegate to the appropriate casting function based on which type T2 is
     switch (T2) {
-        u8 => return asU8(T1, value),
-        i8 => return asI8(T1, value),
-        u16 => return asU16(T1, value),
-        i16 => return asI16(T1, value),
-        u32 => return asU32(T1, value),
-        i32 => return asI32(T1, value),
-        u64 => return asU64(T1, value),
-        i64 => return asI64(T1, value),
-        f16 => return asF16(T1, value),
-        f32 => return asF32(T1, value),
-        f64 => return asF64(T1, value),
-        else => std.debug.panic("Unsupported target type: {}", .{@TypeOf(T2)}),
+        u8 => return asU8(T1, v),
+        i8 => return asI8(T1, v),
+        u16 => return asU16(T1, v),
+        i16 => return asI16(T1, v),
+        u32 => return asU32(T1, v),
+        i32 => return asI32(T1, v),
+        u64 => return asU64(T1, v),
+        i64 => return asI64(T1, v),
+        f16 => return asF16(T1, v),
+        f32 => return asF32(T1, v),
+        f64 => return asF64(T1, v),
+        else => std.debug.panic("Unsupported target type: {}", .{T2}),
     }
 }
 
-/// Casts numerical `value` to type `u8`. Clamps the value range of `T`.
-pub fn asU8(comptime T: type, value: T) u8 {
-    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u8, @intFromFloat(value)) else @as(u8, value), u8max));
+/// Casts numerical value `v` to type `u8`. Clamps the value range of `T`.
+pub fn asU8(comptime T: type, v: T) u8 {
+    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u8, @intFromFloat(v)) else @as(u8, @intCast(v)), u8max));
 }
 
-/// Casts numerical `value` to type `i8`. Clamps the value range of `T`.
-pub fn asI8(comptime T: type, value: T) i8 {
-    return @max(-i8max - 1, @min(if (@typeInfo(T) == .Float) @as(i8, @intFromFloat(value)) else @as(i8, value), i8max));
+/// Casts numerical value `v` to type `i8`. Clamps the value range of `T`.
+pub fn asI8(comptime T: type, v: T) i8 {
+    return @max(-i8max - 1, @min(if (@typeInfo(T) == .Float) @as(i8, @intFromFloat(v)) else @as(i8, @intCast(v)), i8max));
 }
 
-/// Casts numerical `value` to type `u16`. Clamps the value range of `T`.
-pub fn asU16(comptime T: type, value: T) u16 {
-    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u16, @intFromFloat(value)) else @as(u16, value), u16max));
+/// Casts numerical value `v` to type `u16`. Clamps the value range of `T`.
+pub fn asU16(comptime T: type, v: T) u16 {
+    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u16, @intFromFloat(v)) else @as(u16, @intCast(v)), u16max));
 }
 
-/// Casts numerical `value` to type `i16`. Clamps the value range of `T`.
-pub fn asI16(comptime T: type, value: T) i16 {
-    return @max(-i16max - 1, @min(if (@typeInfo(T) == .Float) @as(i16, @intFromFloat(value)) else @as(i16, value), i16max));
+/// Casts numerical value `v` to type `i16`. Clamps the value range of `T`.
+pub fn asI16(comptime T: type, v: T) i16 {
+    return @max(-i16max - 1, @min(if (@typeInfo(T) == .Float) @as(i16, @intFromFloat(v)) else @as(i16, @intCast(v)), i16max));
 }
 
-/// Casts numerical `value` to type `f16`. Clamps the value range of `T`.
-pub fn asF16(comptime T: type, value: T) f16 {
-    return @max(-f16max, @min(if (@typeInfo(T) == .Float) @as(f16, value) else @as(f16, @floatFromInt(value)), f16max));
+/// Casts numerical value `v` to type `f16`. Clamps the value range of `T`.
+pub fn asF16(comptime T: type, v: T) f16 {
+    return @max(-f16max, @min(if (@typeInfo(T) == .Float) @as(f16, @floatCast(v)) else @as(f16, @floatFromInt(v)), f16max));
 }
 
-/// Casts numerical `value` to type `u32`. Clamps the value range of `T`.
-pub fn asU32(comptime T: type, value: T) u32 {
-    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u32, @intFromFloat(value)) else @as(u32, value), u32max));
+/// Casts numerical value `v` to type `u32`. Clamps the value range of `T`.
+pub fn asU32(comptime T: type, v: T) u32 {
+    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u32, @intFromFloat(v)) else @as(u32, @intCast(v)), u32max));
 }
 
-/// Casts numerical `value` to type `i32`. Clamps the value range of `T`.
-pub fn asI32(comptime T: type, value: T) i32 {
-    return @max(-i32max - 1, @min(if (@typeInfo(T) == .Float) @as(i32, @intFromFloat(value)) else @as(i32, value), i32max));
+/// Casts numerical value `v` to type `i32`. Clamps the value range of `T`.
+pub fn asI32(comptime T: type, v: T) i32 {
+    return @max(-i32max - 1, @min(if (@typeInfo(T) == .Float) @as(i32, @intFromFloat(v)) else @as(i32, @intCast(v)), i32max));
 }
 
-/// Casts numerical `value` to type `f32`. Clamps the value range of `T`.
-pub fn asF32(comptime T: type, value: T) f32 {
-    return @max(-f32max, @min(if (@typeInfo(T) == .Float) @as(f32, value) else @as(f32, @floatFromInt(value)), f32max));
+/// Casts numerical value `v` to type `f32`. Clamps the value range of `T`.
+pub fn asF32(comptime T: type, v: T) f32 {
+    return @max(-f32max, @min(if (@typeInfo(T) == .Float) @as(f32, @floatCast(v)) else @as(f32, @floatFromInt(v)), f32max));
 }
 
-/// Casts numerical `value` to type `u64`.
-pub fn asU64(comptime T: type, value: T) u64 {
-    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u64, @intFromFloat(value)) else @as(u64, value), u64max));
+/// Casts numerical value `v` to type `u64`.
+pub fn asU64(comptime T: type, v: T) u64 {
+    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u64, @intFromFloat(v)) else @as(u64, @intCast(v)), u64max));
 }
 
-/// Casts numerical `value` to type `i64`.
-pub fn asI64(comptime T: type, value: T) i64 {
-    return @max(-i64max - 1, @min(if (@typeInfo(T) == .Float) @as(i64, @intFromFloat(value)) else @as(i64, value), i64max));
+/// Casts numerical value `v` to type `i64`.
+pub fn asI64(comptime T: type, v: T) i64 {
+    return @max(-i64max - 1, @min(if (@typeInfo(T) == .Float) @as(i64, @intFromFloat(v)) else @as(i64, @intCast(v)), i64max));
 }
 
-/// Casts numerical `value` to type `f64`.
-pub fn asF64(comptime T: type, value: T) f64 {
-    return @max(-f64max, @min(if (@typeInfo(T) == .Float) @as(f64, value) else @as(f64, @floatFromInt(value)), f64max));
+/// Casts numerical value `v` to type `f64`.
+pub fn asF64(comptime T: type, v: T) f64 {
+    return @max(-f64max, @min(if (@typeInfo(T) == .Float) @as(f64, @floatCast(v)) else @as(f64, @floatFromInt(v)), f64max));
 }
 
 // Clamping value ranges
-pub fn u8Clamp(comptime T: type, value: T) T {
-    return @max(0, @min(value, u8max));
+pub fn u8Clamp(comptime T: type, v: T) T {
+    return @max(0, @min(v, u8max));
 }
 
-pub fn i8Clamp(comptime T: type, value: T) T {
-    return @max(std.math.minInt(i8), @min(value, i8max));
+pub fn i8Clamp(comptime T: type, v: T) T {
+    return @max(std.math.minInt(i8), @min(v, i8max));
 }
 
-pub fn u16Clamp(comptime T: type, value: T) T {
-    return @max(@as(T, 0), @min(value, if (@typeInfo(T) == .Int) @as(T, if (u16max <= std.math.maxInt(T)) u16max else @as(u16, std.math.maxInt(T))) else @as(T, @floatFromInt(u16max))));
+pub fn u16Clamp(comptime T: type, v: T) T {
+    return @max(@as(T, 0), @min(v, if (@typeInfo(T) == .Int) @as(T, if (u16max <= std.math.maxInt(T)) u16max else @as(u16, std.math.maxInt(T))) else @as(T, @floatFromInt(u16max))));
 }
 
-pub fn i16Clamp(comptime T: type, value: T) T {
-    return @max(std.math.minInt(i16), @min(value, i16max));
+pub fn i16Clamp(comptime T: type, v: T) T {
+    return @max(std.math.minInt(i16), @min(v, i16max));
 }
 
-pub fn f16Clamp(comptime T: type, value: T) T {
-    const f16_value = if (@typeInfo(T) == .Float) value else @as(f16, @floatFromInt(value));
-    const clamped = @max(-f16max, @min(f16_value, f16max));
+pub fn f16Clamp(comptime T: type, v: T) T {
+    const f16_v = if (@typeInfo(T) == .Float) v else @as(f16, @floatFromInt(v));
+    const clamped = @max(-f16max, @min(f16_v, f16max));
     return if (@typeInfo(T) == .Float) clamped else @as(T, @intFromFloat(clamped));
 }
 
-pub fn u32Clamp(comptime T: type, value: T) T {
-    return @max(@as(T, 0), @min(value, if (@typeInfo(T) == .Int) @as(T, if (u32max <= std.math.maxInt(T)) u32max else @as(u32, std.math.maxInt(T))) else @as(T, @floatFromInt(u32max))));
+pub fn u32Clamp(comptime T: type, v: T) T {
+    return @max(@as(T, 0), @min(v, if (@typeInfo(T) == .Int) @as(T, if (u32max <= std.math.maxInt(T)) u32max else @as(u32, std.math.maxInt(T))) else @as(T, @floatFromInt(u32max))));
 }
 
-pub fn i32Clamp(comptime T: type, value: T) T {
-    return @max(std.math.minInt(i32), @min(value, i32max));
+pub fn i32Clamp(comptime T: type, v: T) T {
+    return @max(std.math.minInt(i32), @min(v, i32max));
 }
 
-pub fn f32Clamp(comptime T: type, value: T) T {
-    const f32_value = if (@typeInfo(T) == .Float) value else @as(f32, @floatFromInt(value));
-    const clamped = @max(-f32max, @min(f32_value, f32max));
+pub fn f32Clamp(comptime T: type, v: T) T {
+    const f32_v = if (@typeInfo(T) == .Float) v else @as(f32, @floatFromInt(v));
+    const clamped = @max(-f32max, @min(f32_v, f32max));
     return if (@typeInfo(T) == .Float) clamped else @as(T, @intFromFloat(clamped));
 }
 
-pub fn u64Clamp(comptime T: type, value: T) T {
-    return @max(0, @min(value, @as(T, u64max)));
+pub fn u64Clamp(comptime T: type, v: T) T {
+    return @max(0, @min(v, @as(T, u64max)));
 }
 
-pub fn i64Clamp(comptime T: type, value: T) T {
-    return @max(std.math.minInt(i64), @min(value, @as(T, i64max)));
+pub fn i64Clamp(comptime T: type, v: T) T {
+    return @max(std.math.minInt(i64), @min(v, @as(T, i64max)));
 }
 
 // Data structures
@@ -398,11 +398,24 @@ pub const Point = struct {
         };
     }
 
+    /// Moves the point by a horizontal and/or vertical offset. Clamped to map limits.
     pub fn shift(self: *Point, x_shift: i32, y_shift: i32) void {
         const cur_x = @as(i32, @intCast(self.x));
         const cur_y = @as(i32, @intCast(self.y));
-        self.x = @as(u16, @intCast(u16Clamp(i32, cur_x + x_shift)));
-        self.y = @as(u16, @intCast(u16Clamp(i32, cur_y + y_shift)));
+        const shifted_x = @as(u16, @intCast(u16Clamp(i32, cur_x + x_shift)));
+        const shifted_y = @as(u16, @intCast(u16Clamp(i32, cur_y + y_shift)));
+        self.x = mapClampX(shifted_x, 1);
+        self.y = mapClampY(shifted_y, 1);
+    }
+
+    /// Returns the Grid columns and rows in which the point is located.
+    pub fn getCellCoordinates(self: *Point) [2]usize {
+        return [2]usize{ Grid.x(self.x), Grid.y(self.y) };
+    }
+
+    /// Returns the Subcell in which the point is located.
+    pub fn getSubcell(self: *Point) Subcell {
+        return Subcell.at(self.x, self.y);
     }
 };
 
@@ -978,7 +991,7 @@ pub fn drawGuide(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
         .r = col.r,
         .g = col.g,
         .b = col.b,
-        .a = col.a / 3,
+        .a = col.a / 2,
     };
 
     drawEntity(x, y, width, height, semiTransparent);
@@ -989,7 +1002,7 @@ pub fn drawGuideFail(x: i32, y: i32, width: i32, height: i32, col: rl.Color) voi
         .r = col.r,
         .g = col.g,
         .b = col.b,
-        .a = col.a / 9,
+        .a = col.a / 8,
     };
 
     drawEntity(x, y, width, height, semiTransparent);

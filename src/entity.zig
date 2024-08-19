@@ -1,7 +1,7 @@
 const std: type = @import("std");
 const rl = @import("raylib");
-const utils = @import("utils.zig");
 const main = @import("main.zig");
+const u = @import("utils.zig");
 
 // Setting up entities
 pub var players: std.ArrayList(*Player) = undefined;
@@ -56,7 +56,7 @@ pub const Entity = struct {
 
     /// Returns the bigger of two entities, or null if same size.
     pub fn bigger(e1: *Entity, e2: *Entity) ?*Entity {
-        switch (utils.bigger(e1.width(), e1.height(), e2.width(), e2.height())) {
+        switch (u.bigger(e1.width(), e1.height(), e2.width(), e2.height())) {
             0 => return e1,
             1 => return e2,
             2, 3 => return null,
@@ -78,7 +78,7 @@ pub const Player = struct {
     local: bool = false,
 
     pub fn draw(self: Player) void {
-        utils.drawEntity(self.x, self.y, self.width, self.height, self.color);
+        u.drawEntity(self.x, self.y, self.width, self.height, self.color);
     }
 
     pub fn update(self: *Player, key_input: ?u32) anyerror!void {
@@ -87,7 +87,7 @@ pub const Player = struct {
                 if (input > 0) {
                     // std.debug.print("Key input!\n", .{});
                     try self.updateMoveInput(input);
-                    self.updateActionInput(input);
+                    updateActionInput(input);
                 } else {
                     // std.debug.print("No key input.\n", .{});
                 }
@@ -99,25 +99,25 @@ pub const Player = struct {
     }
 
     fn updateMoveInput(self: *Player, key_input: u32) !void {
-        const speed = utils.scaleToTickRate(self.speed);
+        const speed = u.scaleToTickRate(self.speed);
         var changed_x: ?u16 = null;
         var changed_y: ?u16 = null;
 
         // Processes movement input
-        if (main.keys.actionActive(key_input, utils.Key.Action.MoveUp)) {
-            changed_y = utils.mapClampY(@truncate(utils.i32SubFloat(f32, self.y, speed)), self.height);
+        if (main.keys.actionActive(key_input, u.Key.Action.MoveUp)) {
+            changed_y = u.mapClampY(@truncate(u.i32SubFloat(f32, self.y, speed)), self.height);
             self.direction = 8; // Numpad direction
         }
-        if (main.keys.actionActive(key_input, utils.Key.Action.MoveLeft)) {
-            changed_x = utils.mapClampX(@truncate(utils.i32SubFloat(f32, self.x, speed)), self.width);
+        if (main.keys.actionActive(key_input, u.Key.Action.MoveLeft)) {
+            changed_x = u.mapClampX(@truncate(u.i32SubFloat(f32, self.x, speed)), self.width);
             self.direction = 4; // Numpad direction
         }
-        if (main.keys.actionActive(key_input, utils.Key.Action.MoveDown)) {
-            changed_y = utils.mapClampY(@truncate(utils.i32AddFloat(f32, self.y, speed)), self.height);
+        if (main.keys.actionActive(key_input, u.Key.Action.MoveDown)) {
+            changed_y = u.mapClampY(@truncate(u.i32AddFloat(f32, self.y, speed)), self.height);
             self.direction = 2; // Numpad direction
         }
-        if (main.keys.actionActive(key_input, utils.Key.Action.MoveRight)) {
-            changed_x = utils.mapClampX(@truncate(utils.i32AddFloat(f32, self.x, speed)), self.width);
+        if (main.keys.actionActive(key_input, u.Key.Action.MoveRight)) {
+            changed_x = u.mapClampX(@truncate(u.i32AddFloat(f32, self.x, speed)), self.width);
             self.direction = 6; // Numpad direction
         }
 
@@ -131,8 +131,8 @@ pub const Player = struct {
         var new_y: ?u16 = changed_y;
         var obstacleX: ?*Entity = null;
         var obstacleY: ?*Entity = null;
-        // const deltaXy = utils.deltaXy(old_x, old_y, new_x orelse old_x, new_y orelse old_y);
-        // std.debug.print("Player movement direction: {}. Delta to angle: {}. Angle from dir: {}. Vector to delta: {any}.\n", .{ self.direction, @as(i64, @intFromFloat(utils.deltaToAngle(deltaXy[0], deltaXy[1]))), utils.angleFromDir(self.direction), utils.vectorToDelta(utils.deltaToAngle(deltaXy[0], deltaXy[1]), speed) });
+        // const deltaXy = u.deltaXy(old_x, old_y, new_x orelse old_x, new_y orelse old_y);
+        // std.debug.print("Player movement direction: {}. Delta to angle: {}. Angle from dir: {}. Vector to delta: {any}.\n", .{ self.direction, @as(i64, @intFromFloat(u.deltaToAngle(deltaXy[0], deltaXy[1]))), u.angleFromDir(self.direction), u.vectorToDelta(u.deltaToAngle(deltaXy[0], deltaXy[1]), speed) });
 
         // Gets potential obstacle entities on both axes
         if (new_x != null) obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.entity) catch null;
@@ -146,11 +146,11 @@ pub const Player = struct {
                 const resistance = 0.1; // maybe depend on size relation
                 const force = (1.0 - resistance);
                 const difference = @as(f64, @floatFromInt(@as(i32, new_x.?) - @as(i32, old_x)));
-                new_x = @as(u16, @intCast(@as(i32, old_x) + @as(i32, @intFromFloat(@round(difference * force)))));
+                new_x = u.asU16(i32, u.asI32(u16, old_x) + u.asI32(f64, @round(difference * force)));
 
                 // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
-                std.debug.print("Pushing horizontally, angle: {}, distance: {}\n", .{ utils.angleFromDir(self.direction), speed * force });
-                const push_distance = obstacleX.?.content.Unit.pushed(utils.angleFromDir(self.direction), speed * force);
+                std.debug.print("Pushing horizontally, angle: {}, distance: {}\n", .{ u.angleFromDir(self.direction), speed * force });
+                const push_distance = obstacleX.?.content.Unit.pushed(u.angleFromDir(self.direction), speed * force);
                 std.debug.print("Horizontal push distance: {}\n", .{push_distance});
                 if (push_distance >= speed * force) {
                     obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.entity) catch null;
@@ -173,8 +173,8 @@ pub const Player = struct {
                 new_y = @as(u16, @intCast(@as(i32, old_y) + @as(i32, @intFromFloat(@round(difference * force)))));
 
                 // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
-                std.debug.print("Pushing vertically, angle: {}, distance: {}\n", .{ utils.angleFromDir(self.direction), speed * force });
-                const push_distance = obstacleY.?.content.Unit.pushed(utils.angleFromDir(self.direction), speed * force);
+                std.debug.print("Pushing vertically, angle: {}, distance: {}\n", .{ u.angleFromDir(self.direction), speed * force });
+                const push_distance = obstacleY.?.content.Unit.pushed(u.angleFromDir(self.direction), speed * force);
                 std.debug.print("Vertical push distance: {}\n", .{push_distance});
                 if (push_distance >= speed * force) {
                     obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.entity) catch null;
@@ -192,23 +192,23 @@ pub const Player = struct {
         }
     }
 
-    fn updateActionInput(self: *Player, key_input: u32) void {
-        if (main.keys.actionActive(key_input, utils.Key.Action.BuildConfirm)) {
+    fn updateActionInput(key_input: u32) void {
+        if (main.keys.actionActive(key_input, u.Key.Action.BuildConfirm)) {
             if (main.build_guide != null) {
-                executeBuild(self, main.build_guide.?);
+                main.executeBuild(main.build_guide.?);
                 main.build_guide = null;
             }
             return;
         }
 
         var build_index: ?u8 = null;
-        if (main.keys.actionActive(key_input, utils.Key.Action.BuildOne)) {
+        if (main.keys.actionActive(key_input, u.Key.Action.BuildOne)) {
             build_index = 0;
-        } else if (main.keys.actionActive(key_input, utils.Key.Action.BuildTwo)) {
+        } else if (main.keys.actionActive(key_input, u.Key.Action.BuildTwo)) {
             build_index = 1;
-        } else if (main.keys.actionActive(key_input, utils.Key.Action.BuildThree)) {
+        } else if (main.keys.actionActive(key_input, u.Key.Action.BuildThree)) {
             build_index = 2;
-        } else if (main.keys.actionActive(key_input, utils.Key.Action.BuildFour)) {
+        } else if (main.keys.actionActive(key_input, u.Key.Action.BuildFour)) {
             build_index = 3;
         }
 
@@ -219,51 +219,6 @@ pub const Player = struct {
                 main.build_guide = null;
             }
         }
-    }
-
-    // Maybe refactor to abstract the build_index/class relation to allow tech trees
-    fn executeBuild(self: *Player, build_index: u8) void {
-        const class = build_index; // <-- change this?
-        if (!isInBuildDistance(class)) return;
-        const xy = findBuildPosition(self, build_index);
-        const built = Structure.construct(xy[0], xy[1], class);
-        if (built) |building| {
-            std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
-            // Do something with the structure
-        } else {
-            std.debug.print("Failed to build structure\n", .{});
-            // Handle the failure case, e.g., notify the player or log the error
-        }
-    }
-
-    fn findBuildPosition(self: *Player, class: u8) [2]u16 {
-        const building = Structure.preset(class);
-        _ = self;
-        //const min_distance: u16 = if (utils.isHorz(self.direction)) (self.width / 2) + (building.width / 2) else (self.height / 2) + (building.height / 2);
-        //const sc_size = utils.Subcell.size;
-        //const compensation: [2]i16 = switch (self.direction) {
-        //    2 => [2]i16{ sc_size / 2, sc_size },
-        //    4 => [2]i16{ 0, sc_size / 2 },
-        //    6 => [2]i16{ sc_size, sc_size / 2 },
-        //    else => [2]i16{ sc_size / 2, 0 },
-        //};
-        // Checks whether to determine by mouse position; if so, determines target subcell via mouse
-        const mouseOffset = rl.getMousePosition().add(rl.Vector2.init(utils.asF32(u16, building.width / 2) * main.canvas_zoom, utils.asF32(u16, building.height / 2) * main.canvas_zoom));
-        return utils.screenToSubcell(mouseOffset).nodeCoordinates();
-        //const mouse_distance = utils.screenToPlayer(rl.getMousePosition());
-        //const mouse_max_x = (utils.asF32(u16, min_distance) * main.canvas_zoom) + (utils.asF32(i16, compensation[0]) * main.canvas_zoom);
-        //const mouse_max_y = (utils.asF32(u16, min_distance) * main.canvas_zoom) + (utils.asF32(i16, compensation[1]) * main.canvas_zoom);
-        //if (@abs(mouse_distance.x / main.canvas_zoom) < mouse_max_x and @abs(mouse_distance.y / main.canvas_zoom) < mouse_max_y) {
-        //    const mouseOffset = rl.getMousePosition().add(rl.Vector2.init(utils.asF32(u16, building.width / 2) * main.canvas_zoom, utils.asF32(u16, building.height / 2) * main.canvas_zoom));
-        //    return utils.screenToSubcell(mouseOffset).nodeCoordinates();
-        //}
-        //const compensated_x = utils.u16Clamp(i16, @as(i16, @intCast(@as(i16, @intCast(self.x)) + compensation[0])));
-        //const compensated_y = utils.u16Clamp(i16, @as(i16, @intCast(@as(i16, @intCast(self.y)) + compensation[1])));
-        //const shifted_xy = utils.dirOffset(@as(u16, @intCast(compensated_x)), @as(u16, @intCast(compensated_y)), self.direction, min_distance);
-        //const map_x = utils.mapClampX(@as(i16, @intCast(shifted_xy[0])), building.width);
-        //const map_y = utils.mapClampY(@as(i16, @intCast(shifted_xy[1])), building.height);
-        //const subcell_xy = utils.Subcell.snapToNode(map_x, map_y, building.width, building.height);
-        //return subcell_xy;
     }
 
     pub fn createLocal(x: u16, y: u16) !*Player {
@@ -313,26 +268,6 @@ pub const Player = struct {
         try main.grid.addToCell(entity, null, null);
         return player;
     }
-
-    pub fn drawGuide(self: *Player, class: u8) void {
-        const xy = self.findBuildPosition(class);
-        const building = Structure.preset(class);
-        const collides = main.grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;
-        if (collides != null or !isInBuildDistance(class) or !utils.isInMap(xy[0], xy[1], building.width, building.height)) {
-            utils.drawGuideFail(xy[0], xy[1], building.width, building.height, building.color);
-        } else {
-            utils.drawGuide(xy[0], xy[1], building.width, building.height, building.color);
-        }
-    }
-
-    fn isInBuildDistance(class: u8) bool {
-        const subcell = utils.screenToSubcell(rl.getMousePosition());
-        const subcell_node_onscreen = utils.mapToCanvas(@as(i32, subcell.center()[0]), @as(i32, subcell.center()[1]));
-        const mouse_max = utils.asF32(u16, Structure.preset(class).width + Structure.preset(class).height);
-        const mouse_distance = utils.screenToPlayer(rl.Vector2.init(utils.asF32(i32, subcell_node_onscreen[0]), utils.asF32(i32, subcell_node_onscreen[1])));
-        const zoom_offset = (utils.Subcell.size / 2) * main.canvas_zoom;
-        return (@abs((mouse_distance.x - zoom_offset) / main.canvas_zoom) < mouse_max and @abs((mouse_distance.y - zoom_offset) / main.canvas_zoom) < mouse_max);
-    }
 };
 
 // Unit
@@ -345,12 +280,12 @@ pub const Unit = struct {
     width: u16,
     height: u16,
     life: i16,
-    target: utils.Point,
-    last_step: utils.Point,
+    target: u.Point,
+    last_step: u.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
 
     pub fn draw(self: *Unit) void {
-        utils.drawEntityInterpolated(self.x, self.y, self.width, self.height, self.color(), self.last_step, self.life);
+        u.drawEntityInterpolated(self.x, self.y, self.width, self.height, self.color(), self.last_step, self.life);
     }
 
     pub fn update(self: *Unit) !void {
@@ -359,7 +294,7 @@ pub const Unit = struct {
             return;
         }
         if (main.moveDivison(self.life)) {
-            self.last_step = utils.Point.at(self.x, self.y);
+            self.last_step = u.Point.at(self.x, self.y);
             const step = self.getStep();
             try self.move(step.x, step.y);
         }
@@ -372,13 +307,13 @@ pub const Unit = struct {
         const old_y = self.y;
 
         // If step is out of bounds, clamps to map (ignoring collision) if needed, and retargets
-        if (!utils.isInMap(new_x, new_y, self.width, self.height)) {
-            if (!utils.isInMap(old_x, old_y, self.width, self.height)) {
-                const clamped_x = utils.mapClampX(@as(i16, @intCast(new_x)), self.width);
-                const clamped_y = utils.mapClampY(@as(i16, @intCast(new_y)), self.height);
+        if (!u.isInMap(new_x, new_y, self.width, self.height)) {
+            if (!u.isInMap(old_x, old_y, self.width, self.height)) {
+                const clamped_x = u.mapClampX(@as(i16, @intCast(new_x)), self.width);
+                const clamped_y = u.mapClampY(@as(i16, @intCast(new_y)), self.height);
                 _ = self.tryMove(clamped_x, clamped_y, old_x, old_y);
             }
-            _ = self.retarget(utils.randomU16(main.map_width), utils.randomU16(main.map_height)); // <--- just testing
+            _ = self.retarget(u.randomU16(main.map_width), u.randomU16(main.map_height)); // <--- just testing
             return;
         }
 
@@ -387,7 +322,7 @@ pub const Unit = struct {
         }
 
         if (old_x == self.x and old_y == self.y) { // If no change after moving, retarget
-            _ = self.retarget(utils.randomU16(main.map_width), utils.randomU16(main.map_height)); // <--- just testing
+            _ = self.retarget(u.randomU16(main.map_width), u.randomU16(main.map_height)); // <--- just testing
             return;
         }
     }
@@ -431,7 +366,7 @@ pub const Unit = struct {
 
     /// Iterates through entities from current cell's index of `Grid.sections`. Checks for AABB collisions. Returns the first colliding `*Entity`, otherwise null.
     fn checkCollision(self: *Unit, x: u16, y: u16) ?*Entity {
-        const entities = main.grid.sectionEntities(utils.Grid.x(x), utils.Grid.y(y));
+        const entities = main.grid.sectionEntities(u.Grid.x(x), u.Grid.y(y));
         if (entities != null) {
             const half_width = @divTrunc(self.width, 2);
             const half_height = @divTrunc(self.height, 2);
@@ -479,7 +414,7 @@ pub const Unit = struct {
         self.width = preset(self.class).width - 1;
         self.height = preset(self.class).height - 1;
 
-        if (!utils.isInMap(new_x, new_y, self.width, self.height)) return moved_distance;
+        if (!u.isInMap(new_x, new_y, self.width, self.height)) return moved_distance;
 
         const obstacle = main.grid.collidesWith(new_x, new_y, self.width, self.height, self.entity) catch null;
 
@@ -495,9 +430,9 @@ pub const Unit = struct {
             if (obstacle_unit.width != preset(obstacle_unit.class).width or obstacle_unit.height != preset(obstacle_unit.class).height) {
                 moved_distance = moved_distance / 2;
             } else {
-                moved_distance = pushed(obstacle_unit, angle, @min(distance, distance * utils.sizeFactor(self.width, self.height, obstacle_unit.width, obstacle_unit.height)));
+                moved_distance = pushed(obstacle_unit, angle, @min(distance, distance * u.sizeFactor(self.width, self.height, obstacle_unit.width, obstacle_unit.height)));
 
-                const push_delta_xy = utils.vectorToDelta(angle, moved_distance);
+                const push_delta_xy = u.vectorToDelta(angle, moved_distance);
                 const push_new_x = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + push_delta_xy[0]));
                 const push_new_yY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + push_delta_xy[1]));
 
@@ -512,12 +447,12 @@ pub const Unit = struct {
     }
 
     fn calculatePushPosition(self: *Unit, angle: f32, distance: f32) [2]u16 {
-        const delta_xy = utils.vectorToDelta(angle, distance);
+        const delta_xy = u.vectorToDelta(angle, distance);
         const new_x_float: f32 = @round(@as(f32, @floatFromInt(self.x)) + delta_xy[0]);
         const new_y_float: f32 = @round(@as(f32, @floatFromInt(self.y)) + delta_xy[1]);
 
-        const new_x = @as(u16, @intFromFloat(utils.u16Clamp(f32, new_x_float)));
-        const new_y = @as(u16, @intFromFloat(utils.u16Clamp(f32, new_y_float)));
+        const new_x = @as(u16, @intFromFloat(u.u16Clamp(f32, new_x_float)));
+        const new_y = @as(u16, @intFromFloat(u.u16Clamp(f32, new_y_float)));
 
         return [2]u16{ new_x, new_y };
     }
@@ -527,47 +462,47 @@ pub const Unit = struct {
         const prev_target = self.target;
         // do more stuff here for pathing
 
-        self.target = utils.Point.at(x, y);
+        self.target = u.Point.at(x, y);
         return prev_target.x != self.target.x or prev_target.y != self.target.y;
     }
 
     /// Calculates and returns the unit's immediate move based on its current `target` and `class` (not implemented yet).
-    fn getStep(self: *Unit) utils.Point {
+    fn getStep(self: *Unit) u.Point {
 
         // Get the current position of unit and overall distance to target
-        const current = utils.Point.at(self.x, self.y);
-        const distance = utils.distanceSquared(current, self.target);
+        const current = u.Point.at(self.x, self.y);
+        const distance = u.distanceSquared(current, self.target);
 
         // Check if within cell of target
-        if (utils.Grid.x(current.x) == utils.Grid.y(self.target.x) and utils.Grid.y(current.y) == utils.Grid.y(self.target.y)) {
+        if (u.Grid.x(current.x) == u.Grid.y(self.target.x) and u.Grid.y(current.y) == u.Grid.y(self.target.y)) {
             std.debug.print("Within target cell at {},{}. Target is at {},{}.\n", .{ self.x, self.y, self.target.x, self.target.y });
             const dx = @as(i32, @intCast(self.target.x)) - @as(i32, @intCast(self.x));
             const dy = @as(i32, @intCast(self.target.y)) - @as(i32, @intCast(self.y));
 
             // If within a subcell of the target point, retarget
-            if (distance <= utils.Subcell.size) {
+            if (distance <= u.Subcell.size) {
                 std.debug.print("Reached target directly, retargeting.\n", .{});
                 return current; // Pause triggers retarget
-                //_ = self.retarget(utils.randomU16(main.map_width), utils.randomU16(main.map_height)); // <--- just testing
+                //_ = self.retarget(u.randomU16(main.map_width), u.randomU16(main.map_height)); // <--- just testing
             }
             // Otherwise go directly towards the target
-            const angle = utils.deltaToAngle(dx, dy);
+            const angle = u.deltaToAngle(dx, dy);
             const magnitude = @min(self.speed(), @as(f32, @floatFromInt(distance)));
-            const vector = utils.vectorToDelta(angle, magnitude);
-            return utils.deltaPoint(self.x, self.y, vector[0], vector[1]);
+            const vector = u.vectorToDelta(angle, magnitude);
+            return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
             //
         } else { // If farther than a subcell away, move by waypoints towards the target
 
-            const waypoint = utils.waypoint.closestTowards(current, self.target, @intFromFloat(self.speed()), distance);
+            const waypoint = u.waypoint.closestTowards(current, self.target, @intFromFloat(self.speed()), distance);
 
             // Get the offset from the upcoming waypoint
             const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(waypoint.x));
             const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(waypoint.y));
 
             // Translates it into vector to get the new step
-            const angle = utils.deltaToAngle(dx, dy);
-            const vector = utils.vectorToDelta(angle, self.speed());
-            return utils.deltaPoint(self.x, self.y, vector[0], vector[1]);
+            const angle = u.deltaToAngle(dx, dy);
+            const vector = u.vectorToDelta(angle, self.speed());
+            return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
         }
     }
 
@@ -584,8 +519,8 @@ pub const Unit = struct {
             .life = from_class.life,
             .x = x,
             .y = y,
-            .target = utils.Point.at(utils.randomU16(main.map_width), utils.randomU16(main.map_height)), // <--- just testing
-            .last_step = utils.Point.at(x, y),
+            .target = u.Point.at(u.randomU16(main.map_width), u.randomU16(main.map_height)), // <--- just testing
+            .last_step = u.Point.at(x, y),
             .cached_cellsigns = [_]u32{0} ** 9,
         };
 
@@ -607,13 +542,13 @@ pub const Unit = struct {
         } else { // Unknown cause of death, very sad
 
         }
-        self.life = -utils.i16max; // Flagged for destruction in main update
+        self.life = -u.i16max; // Flagged for destruction in main update
     }
 
     pub fn remove(self: *Unit) !void {
         try main.grid.removeFromCell(self.entity, null, null); // Removes entity from grid
         try main.grid.removeFromAllSections(self.entity);
-        try utils.findAndSwapRemove(Unit, &units, self); // Removes unit from the units collection
+        try u.findAndSwapRemove(Unit, &units, self); // Removes unit from the units collection
         for (units.items) |unit| {
             std.debug.assert(unit != self); // For debugging, unit must be removed at this point
         }
@@ -687,12 +622,12 @@ pub const Structure = struct {
     }
 
     pub fn draw(self: *const Structure) void {
-        utils.drawEntity(self.x, self.y, self.width, self.height, self.color);
+        u.drawEntity(self.x, self.y, self.width, self.height, self.color);
     }
 
     pub fn update(self: *Structure) void {
         self.elapsed += 1;
-        const tempo_ticks = utils.ticksFromSecs(self.tempo);
+        const tempo_ticks = u.ticksFromSecs(self.tempo);
         if (self.elapsed >= tempo_ticks) {
             self.elapsed -= tempo_ticks; // Subtracting interval accounts for possible overshoot
             if (self.capacity > 0) {
@@ -703,7 +638,7 @@ pub const Structure = struct {
                     std.debug.print("Failed to spawn unit: {}. May want some sort of indication.\n", .{err});
                 }
             }
-            self.capacity = self.capacity + 1; // passive regeneration?
+            // self.capacity = self.capacity + 1; // passive regeneration?
         }
     }
 
@@ -746,7 +681,7 @@ pub const Structure = struct {
 
     pub fn construct(x: u16, y: u16, class: u8) ?*Structure {
         const collides = main.grid.collidesWith(x, y, preset(class).width, preset(class).height, null) catch return null;
-        if (collides != null or !utils.isInMap(x, y, preset(class).width, preset(class).height)) {
+        if (collides != null or !u.isInMap(x, y, preset(class).width, preset(class).height)) {
             return null;
         }
         const structure = Structure.create(x, y, class) catch return null;
@@ -766,7 +701,7 @@ pub const Structure = struct {
 
     pub fn spawnPoint(self: *Structure, unit_width: u16, unit_height: u16) ![2]u16 {
         var side_indices = [_]usize{ 0, 1, 2, 3 }; // Indices representing the 4 sides
-        utils.shuffleArray(usize, &side_indices); // Shuffles indices to randomize check order
+        u.shuffleArray(usize, &side_indices); // Shuffles indices to randomize check order
 
         const offset_x = @divTrunc(self.width, 2) + @divTrunc(unit_width, 2);
         const offset_y = @divTrunc(self.height, 2) + @divTrunc(unit_height, 2);
@@ -796,7 +731,7 @@ pub const Structure = struct {
                 else => @panic("Unrecognized side"),
             }
             // Check if the calculated spawn point is valid
-            if (try main.grid.collidesWith(spawn_x, spawn_y, unit_width, unit_height, null) == null and utils.isInMap(spawn_x, spawn_y, unit_width, unit_height)) {
+            if (try main.grid.collidesWith(spawn_x, spawn_y, unit_width, unit_height, null) == null and u.isInMap(spawn_x, spawn_y, unit_width, unit_height)) {
                 return [2]u16{ spawn_x, spawn_y };
             }
         }
@@ -817,9 +752,9 @@ pub const Projectile = struct {
     class: u8,
 
     pub fn update(self: Projectile) void {
-        const delta = utils.vectorToDelta(self.angle, self.speed);
-        self.x = utils.u16AddFloat(f32, self.x, delta[0]);
-        self.y = utils.u16AddFloat(f32, self.y, delta[1]);
+        const delta = u.vectorToDelta(self.angle, self.speed);
+        self.x = u.u16AddFloat(f32, self.x, delta[0]);
+        self.y = u.u16AddFloat(f32, self.y, delta[1]);
         self.life -= 1;
         if (self.life <= 0) {
             self.destroy();
@@ -844,7 +779,7 @@ pub const Projectile = struct {
     }
 
     pub fn draw(self: *Projectile) void {
-        utils.drawEntity(self.x, self.y, self.width, self.height, preset(self.class).color);
+        u.drawEntity(self.x, self.y, self.width, self.height, preset(self.class).color);
     }
 
     pub fn impact(self: *Projectile) void {
@@ -854,7 +789,7 @@ pub const Projectile = struct {
 
     pub fn destroy(self: *Projectile) !void {
         try main.grid.removeFromCell(self.entity, null, null);
-        // no array list of Projectiles, otherwise: try utils.findAndSwapRemove(Projectile, &projectiles, @constCast(&self));
+        // no array list of Projectiles, otherwise: try u.findAndSwapRemove(Projectile, &projectiles, @constCast(&self));
     }
 };
 
@@ -863,7 +798,7 @@ pub const Projectile = struct {
 
 pub const Grid = struct {
     allocator: *std.mem.Allocator,
-    cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.SpatialHash.Context, 80) = undefined,
+    cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), u.SpatialHash.Context, 80) = undefined,
     cellsigns: []u32, // A slice into a contiguous block of memory
     entity_buffer: []*Entity, // Allocated once, rewritten each tick
     buffer_offset: usize, // Tracks the current usage of the buffer
@@ -875,7 +810,7 @@ pub const Grid = struct {
 
     pub fn init(self: *Grid, allocator: *std.mem.Allocator, columns: usize, rows: usize, buffer_size: usize) !void {
         self.allocator = allocator;
-        self.cells = std.hash_map.HashMap(u64, std.ArrayList(*Entity), utils.SpatialHash.Context, 80).init(allocator.*);
+        self.cells = std.hash_map.HashMap(u64, std.ArrayList(*Entity), u.SpatialHash.Context, 80).init(allocator.*);
 
         self.columns = columns;
         self.rows = rows;
@@ -942,7 +877,7 @@ pub const Grid = struct {
     /// Sections are lists of entities within 3x3 cells. An entity is referenced in the grid.section of any cell falling within its own grid.section. Even though sections overlap, cellsigns are
     /// cell-specific, so updating one section does not automatically trigger an update of overlapping sections. This function removes an entity from the central section as well as all overlapping sections.
     fn removeFromNearbySections(self: *Grid, x: usize, y: usize, entity: *Entity) !void {
-        const neighbor_offsets = utils.Grid.section();
+        const neighbor_offsets = u.Grid.section();
         for (neighbor_offsets) |offset| {
             const nx = @as(isize, @intCast(x)) + offset[0];
             const ny = @as(isize, @intCast(y)) + offset[1];
@@ -990,7 +925,7 @@ pub const Grid = struct {
 
     fn updateSection(self: *Grid, x: usize, y: usize) !void {
         const index = y * self.columns + x;
-        const entities = try self.sectionSearch(@as(u16, @intCast(x * utils.Grid.cell_size)), @as(u16, @intCast(y * utils.Grid.cell_size)), main.UNIT_SEARCH_LIMIT);
+        const entities = try self.sectionSearch(@as(u16, @intCast(x * u.Grid.cell_size)), @as(u16, @intCast(y * u.Grid.cell_size)), main.UNIT_SEARCH_LIMIT);
         self.sections[index].clearAndFree();
 
         for (entities) |entity| {
@@ -1011,7 +946,7 @@ pub const Grid = struct {
     pub fn addToCell(self: *Grid, entity: *Entity, new_x: ?u16, new_y: ?u16) !void {
         const x = new_x orelse entity.x();
         const y = new_y orelse entity.y();
-        const key = utils.SpatialHash.hash(x, y);
+        const key = u.SpatialHash.hash(x, y);
 
         //std.log.info("Adding entity {} to grid cell at {},{}, using key: {}.\n", .{ @intFromPtr(entity), x, y, key });
 
@@ -1033,13 +968,13 @@ pub const Grid = struct {
     pub fn removeFromCell(self: *Grid, entity: *Entity, old_x: ?u16, old_y: ?u16) !void {
         const x = std.math.clamp(old_x orelse entity.x(), 0, main.map_width);
         const y = std.math.clamp(old_y orelse entity.y(), 0, main.map_height);
-        const key = utils.SpatialHash.hash(x, y);
+        const key = u.SpatialHash.hash(x, y);
 
         //std.log.info("Removing entity {} from grid cell at {},{} (hash {}).", .{ @intFromPtr(entity), x, y, key });
 
         if (self.cells.get(key)) |*listConst| {
             const list = @constCast(listConst);
-            try utils.findAndSwapRemove(Entity, list, entity);
+            try u.findAndSwapRemove(Entity, list, entity);
 
             if (list.items.len == 0) {
                 //std.debug.print("Cell {} is now empty, removing cell from grid.\n", .{key});
@@ -1066,10 +1001,10 @@ pub const Grid = struct {
     }
 
     pub fn updateCellMembership(self: *Grid, entity: *Entity, old_x: u16, old_y: u16) void {
-        const oldKey = utils.SpatialHash.hash(old_x, old_y);
+        const oldKey = u.SpatialHash.hash(old_x, old_y);
         const curX = entity.x();
         const curY = entity.y();
-        const newKey = utils.SpatialHash.hash(curX, curY);
+        const newKey = u.SpatialHash.hash(curX, curY);
 
         if (oldKey != newKey) {
             // std.debug.print("(Grid update start) Moving entity with ptr {} from cell hash {} to cell hash {}.\n", .{ @intFromPtr(entity), oldKey, newKey });
@@ -1090,7 +1025,7 @@ pub const Grid = struct {
 
     /// Generates a fresh `Cellsign` from `x`,`y` coordinates. Returns a `Cellsign` if hashmap value is found for location, otherwise `null`.
     pub fn getFreshCellsign(self: *Grid, x: u16, y: u16) ?Cellsign {
-        const key = utils.SpatialHash.hash(x, y);
+        const key = u.SpatialHash.hash(x, y);
         if (self.cells.get(key)) |entity_list| {
             return generateCellsign(@constCast(&entity_list));
         }
@@ -1101,7 +1036,7 @@ pub const Grid = struct {
     pub fn updateCellsigns(self: *Grid) void {
         for (0..self.rows) |y| {
             for (0..self.columns) |x| {
-                const key = utils.SpatialHash.hash(@truncate(x * utils.Grid.cell_size), @truncate(y * utils.Grid.cell_size));
+                const key = u.SpatialHash.hash(@truncate(x * u.Grid.cell_size), @truncate(y * u.Grid.cell_size));
                 if (self.cells.get(key)) |entity_list| {
                     const sign = generateCellsign(@constCast(&entity_list));
                     self.cellsigns[y * self.columns + x] = sign;
@@ -1137,12 +1072,12 @@ pub const Grid = struct {
             return error.BufferOverflow;
         }
 
-        const offsets = utils.Grid.sectionFromPoint(x, y, main.map_width, main.map_height);
+        const offsets = u.Grid.sectionFromPoint(x, y, main.map_width, main.map_height);
 
         for (offsets) |offset| {
             const neighbor_x = offset[0];
             const neighbor_y = offset[1];
-            const neighbor_key = utils.SpatialHash.hash(neighbor_x, neighbor_y);
+            const neighbor_key = u.SpatialHash.hash(neighbor_x, neighbor_y);
 
             if (self.cells.get(neighbor_key)) |list| {
                 for (list.items) |entity| {

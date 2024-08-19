@@ -1,6 +1,6 @@
 const rl = @import("raylib");
 const std: type = @import("std");
-const utils = @import("utils.zig");
+const u = @import("utils.zig");
 const entity = @import("entity.zig");
 
 // Config
@@ -14,13 +14,13 @@ pub var last_tick_time: f64 = 0.0;
 pub var frame_number: u64 = 0;
 pub var profile_mode = false;
 pub var profile_timer = [4]f64{ 0, 0, 0, 0 };
-pub var keys: utils.Key = undefined; // Keybindings
+pub var keys: u.Key = undefined; // Keybindings
 pub var tick_number: u64 = undefined; // Ersatz server tick
 
 // Camera
 pub const SCROLL_SPEED: f16 = 25.0;
-pub var screen_width: i16 = 1920;
-pub var screen_height: i16 = 1080;
+pub var screen_width: i16 = 1920 / 2;
+pub var screen_height: i16 = 1080 / 2;
 pub var canvas_offset_x: f32 = 0.0;
 pub var canvas_offset_y: f32 = 0.0;
 pub var canvas_zoom: f32 = 1.0;
@@ -78,7 +78,7 @@ pub fn main() anyerror!void {
 
     // Initialize utility
     //--------------------------------------------------------------------------------------
-    utils.rngInit();
+    u.rngInit();
     tick_number = 0; // <-- Here, would fetch value from server
     var stored_mouse_input: [2]rl.Vector2 = [2]rl.Vector2{ rl.Vector2.zero(), rl.Vector2.zero() };
     var stored_mousewheel: f32 = 0.0;
@@ -88,11 +88,11 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     setMapSize(STARTING_MAP_WIDTH, STARTING_MAP_HEIGHT);
     // Define grid dimensions
-    const gridWidth: usize = @intCast(utils.ceilDiv(map_width, utils.Grid.cell_size));
-    const gridHeight: usize = @intCast(utils.ceilDiv(map_height, utils.Grid.cell_size));
+    const gridWidth: usize = @intCast(u.ceilDiv(map_width, u.Grid.cell_size));
+    const gridHeight: usize = @intCast(u.ceilDiv(map_height, u.Grid.cell_size));
 
     std.debug.print("Grid Width: {}, Grid Height: {}\n", .{ gridWidth, gridHeight });
-    std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ map_width, map_height, utils.Grid.cell_size });
+    std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ map_width, map_height, u.Grid.cell_size });
 
     // Initialize the grid
     try grid.init(&allocator, gridWidth, gridHeight, BUFFERSIZE);
@@ -132,11 +132,11 @@ pub fn main() anyerror!void {
     //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
     //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
     //for (0..5000) |_| {
-    //    try entity.units.append(try entity.Unit.create(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(utils.randomU16(3)))));
+    //    try entity.units.append(try entity.Unit.create(u.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(u.randomU16(3)))));
     //}
     for (0..0) |_| {
-        const class = @as(u8, @intCast(utils.randomU16(3)));
-        const xy = utils.subcell.snapPosition(utils.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), utils.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), entity.Structure.preset(class).width, entity.Structure.preset(class).height);
+        const class = @as(u8, @intCast(u.randomU16(3)));
+        const xy = u.subcell.snapPosition(u.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), entity.Structure.preset(class).width, entity.Structure.preset(class).height);
         _ = entity.Structure.construct(xy[0], xy[1], class);
     }
 
@@ -150,7 +150,7 @@ pub fn main() anyerror!void {
     // Initialize user interface
     //--------------------------------------------------------------------------------------
     try keys.init(&allocator); // Initializes and activates default keybindings
-    utils.canvasOnPlayer(); // Centers camera
+    u.canvasOnPlayer(); // Centers camera
 
     // Main game loop
     //--------------------------------------------------------------------------------------
@@ -158,23 +158,23 @@ pub fn main() anyerror!void {
 
         // Profiling
         //----------------------------------------------------------------------------------
-        const profile_frame = (profile_mode and utils.perFrame(45));
+        const profile_frame = (profile_mode and u.perFrame(45));
         if (profile_frame) {
-            utils.startTimer(3, "\nSTART OF FRAME :::");
+            u.startTimer(3, "\nSTART OF FRAME :::");
             std.debug.print("{} (TICK {}).\n\n", .{ frame_number, tick_number });
         }
 
         // Input
         //----------------------------------------------------------------------------------
-        if (profile_frame) utils.startTimer(0, "INPUT PHASE.\n");
-        if (profile_frame) utils.startTimer(1, "- Processing input.");
+        if (profile_frame) u.startTimer(0, "INPUT PHASE.\n");
+        if (profile_frame) u.startTimer(1, "- Processing input.");
         processInput(&stored_mouse_input[0], &stored_mouse_input[1], &stored_mousewheel, &stored_key_input);
-        if (profile_frame) utils.endTimer(1, "Processing input took {} seconds.");
-        if (profile_frame) utils.endTimer(0, "Input phase took {} seconds in total.\n");
+        if (profile_frame) u.endTimer(1, "Processing input took {} seconds.");
+        if (profile_frame) u.endTimer(0, "Input phase took {} seconds in total.\n");
 
         // Logic
         //----------------------------------------------------------------------------------
-        if (profile_frame) utils.startTimer(0, "LOGIC PHASE.\n");
+        if (profile_frame) u.startTimer(0, "LOGIC PHASE.\n");
 
         var elapsed_time: f64 = rl.getTime() - last_tick_time;
         var updates_performed: usize = 0;
@@ -184,16 +184,16 @@ pub fn main() anyerror!void {
         // Perform updates if enough time has elapsed
         while (elapsed_time >= TICK_DURATION) {
             try updateEntities(stored_key_input, profile_frame);
-            if (profile_frame) utils.startTimer(1, "- Removing dead entities.");
+            if (profile_frame) u.startTimer(1, "- Removing dead entities.");
             try removeEntities();
-            if (profile_frame) utils.endTimer(1, "Removing dead entities took {} seconds.");
+            if (profile_frame) u.endTimer(1, "Removing dead entities took {} seconds.");
 
-            if (profile_frame) utils.startTimer(1, "- Updating cell signatures.");
+            if (profile_frame) u.startTimer(1, "- Updating cell signatures.");
             grid.updateCellsigns(); // Updates Grid.cellsigns array
-            if (profile_frame) utils.endTimer(1, "Updating cell signatures took {} seconds.");
-            if (profile_frame) utils.startTimer(1, "- Updating grid sections.");
+            if (profile_frame) u.endTimer(1, "Updating cell signatures took {} seconds.");
+            if (profile_frame) u.startTimer(1, "- Updating grid sections.");
             grid.updateSections(cellsigns_cache); // Updates Grid.sections array by cellsign comparison
-            if (profile_frame) utils.endTimer(1, "Updating grid sections took {} seconds.");
+            if (profile_frame) u.endTimer(1, "Updating grid sections took {} seconds.");
 
             updateControls(stored_mouse_input[0], stored_mouse_input[1], stored_mousewheel, stored_key_input, profile_frame);
 
@@ -214,25 +214,25 @@ pub fn main() anyerror!void {
         last_tick_time += @as(f64, @floatFromInt(updates_performed)) * TICK_DURATION;
         frame_number += 1;
 
-        if (profile_frame) utils.endTimer(0, "Logic phase took {} seconds in total.\n");
+        if (profile_frame) u.endTimer(0, "Logic phase took {} seconds in total.\n");
 
         // Drawing
         //----------------------------------------------------------------------------------
-        if (profile_frame) utils.startTimer(0, "DRAWING PHASE.\n");
+        if (profile_frame) u.startTimer(0, "DRAWING PHASE.\n");
 
         rl.beginDrawing();
         defer rl.endDrawing();
 
         rl.clearBackground(rl.Color.white);
         draw(profile_frame);
-        if (profile_frame) utils.endTimer(0, "Drawing phase took {} seconds in total.\n");
+        if (profile_frame) u.endTimer(0, "Drawing phase took {} seconds in total.\n");
 
         // Profiling
         if (profile_frame) {
-            utils.endTimer(3, "END OF FRAME ::: {} seconds in total.\n");
+            u.endTimer(3, "END OF FRAME ::: {} seconds in total.\n");
             std.debug.print("Current FPS: {}.\n", .{rl.getFPS()});
-            utils.printGridEntities(&grid);
-            utils.printGridCells(&grid);
+            u.printGridEntities(&grid);
+            u.printGridCells(&grid);
         }
     }
 }
@@ -240,7 +240,7 @@ pub fn main() anyerror!void {
 fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vector2, stored_mousewheel: *f32, stored_key_input: *u32) void {
     if (build_guide != null) { // While build guide is active
         stored_mouse_input_l.* = rl.getMousePosition(); // Sets stored_mouse_input[0] to mouse position
-        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) stored_key_input.* |= utils.Key.inputFromAction(&keys, utils.Key.Action.BuildConfirm); // L mouse-click confirms build
+        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) stored_key_input.* |= u.Key.inputFromAction(&keys, u.Key.Action.BuildConfirm); // L mouse-click confirms build
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_right)) stored_mouse_input_r.y = 0.01; // R mouse-click cancels build
     } else { // Whenever build guide is not active
         if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left)) stored_mouse_input_l.* = rl.getMousePosition(); // Sets stored_mouse_input[0] to position on left-click
@@ -251,41 +251,41 @@ fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vec
     // For debugging mouse / map position
     //const mousex = rl.getMouseX();
     //const mousey = rl.getMouseY();
-    //const map_coords = utils.screenToMap(rl.Vector2.init(@as(f32, @floatFromInt(mousex)), @as(f32, @floatFromInt(mousey))));
-    //std.debug.print("mouse x: {}, mouse y: {}, canvasX: {}, canvasY: {}. - Map x: {}, map y: {}. - Player's actual x: {}, y: {}.\n", .{ mousex, mousey, utils.canvasX(mousex, canvas_offset_x, canvas_zoom), utils.canvasY(mousey, canvas_offset_y, canvas_zoom), map_coords[0], map_coords[1], player.x, player.y });
+    //const map_coords = u.screenToMap(rl.Vector2.init(@as(f32, @floatFromInt(mousex)), @as(f32, @floatFromInt(mousey))));
+    //std.debug.print("mouse x: {}, mouse y: {}, canvasX: {}, canvasY: {}. - Map x: {}, map y: {}. - Player's actual x: {}, y: {}.\n", .{ mousex, mousey, u.canvasX(mousex, canvas_offset_x, canvas_zoom), u.canvasY(mousey, canvas_offset_y, canvas_zoom), map_coords[0], map_coords[1], player.x, player.y });
 
     // Number keys bitmasking
-    if (rl.isKeyPressed(rl.KeyboardKey.key_z)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Z);
-    if (rl.isKeyPressed(rl.KeyboardKey.key_one)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.One);
-    if (rl.isKeyPressed(rl.KeyboardKey.key_two)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Two);
-    if (rl.isKeyPressed(rl.KeyboardKey.key_three)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Three);
-    if (rl.isKeyPressed(rl.KeyboardKey.key_four)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Four);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_z)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Z);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_one)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.One);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_two)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Two);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_three)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Three);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_four)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Four);
 
     // Direction keys bitmasking
-    if (rl.isKeyDown(rl.KeyboardKey.key_w) or rl.isKeyDown(rl.KeyboardKey.key_up)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Up);
-    if (rl.isKeyDown(rl.KeyboardKey.key_a) or rl.isKeyDown(rl.KeyboardKey.key_left)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Left);
-    if (rl.isKeyDown(rl.KeyboardKey.key_s) or rl.isKeyDown(rl.KeyboardKey.key_down)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Down);
-    if (rl.isKeyDown(rl.KeyboardKey.key_d) or rl.isKeyDown(rl.KeyboardKey.key_right)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Right);
+    if (rl.isKeyDown(rl.KeyboardKey.key_w) or rl.isKeyDown(rl.KeyboardKey.key_up)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Up);
+    if (rl.isKeyDown(rl.KeyboardKey.key_a) or rl.isKeyDown(rl.KeyboardKey.key_left)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Left);
+    if (rl.isKeyDown(rl.KeyboardKey.key_s) or rl.isKeyDown(rl.KeyboardKey.key_down)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Down);
+    if (rl.isKeyDown(rl.KeyboardKey.key_d) or rl.isKeyDown(rl.KeyboardKey.key_right)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Right);
 
     // Special keys bitmasking
-    if (rl.isKeyDown(rl.KeyboardKey.key_space)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Space);
-    if (rl.isKeyPressed(rl.KeyboardKey.key_left_control) or rl.isKeyPressed(rl.KeyboardKey.key_right_control)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Ctrl);
-    if (rl.isKeyPressed(rl.KeyboardKey.key_enter) or rl.isKeyPressed(rl.KeyboardKey.key_kp_enter)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Enter);
+    if (rl.isKeyDown(rl.KeyboardKey.key_space)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Space);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_left_control) or rl.isKeyPressed(rl.KeyboardKey.key_right_control)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Ctrl);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_enter) or rl.isKeyPressed(rl.KeyboardKey.key_kp_enter)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Enter);
 }
 
 fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vector2, mousewheel_delta: f32, key_input: u32, profile_frame: bool) void {
-    if (profile_frame) utils.startTimer(1, "- Updating controls.");
+    if (profile_frame) u.startTimer(1, "- Updating controls.");
     if (build_guide != null) {
         if (stored_mouse_input_r.y == 0.01) { // Cancels build guide if mouse right pressed
             build_guide = null;
-        } else if (utils.mouseMoved(rl.getMouseDelta())) { // Left mouse changes player direction
-            player.direction = utils.vectorToDir(utils.screenToPlayer(stored_mouse_input_l)); // <- build guide mouse move control
+        } else if (u.mouseMoved(rl.getMouseDelta())) { // Left mouse changes player direction
+            player.direction = u.vectorToDir(u.screenToPlayer(stored_mouse_input_l)); // <- build guide mouse move control
         }
     }
     updateCanvasZoom(mousewheel_delta);
     updateCanvasPosition(stored_mouse_input_r, key_input);
-    if (keys.actionActive(key_input, utils.Key.Action.SpecialEnter)) profile_mode = !profile_mode; // Enter toggles profile mode (verbose logs) for now
-    if (profile_frame) utils.endTimer(1, "Updating controls took {} seconds.");
+    if (keys.actionActive(key_input, u.Key.Action.SpecialEnter)) profile_mode = !profile_mode; // Enter toggles profile mode (verbose logs) for now
+    if (profile_frame) u.endTimer(1, "Updating controls took {} seconds.");
 }
 
 fn updateEntities(key_input: u32, profile_frame: bool) !void {
@@ -297,7 +297,7 @@ fn updateEntities(key_input: u32, profile_frame: bool) !void {
     // which ***should*** ensure that any reference is removed from the grid after removeEntities runs.
 
     // Players
-    if (profile_frame) utils.startTimer(1, "- Updating players.");
+    if (profile_frame) u.startTimer(1, "- Updating players.");
     for (entity.players.items) |p| {
         // Life / lifecycle ?
         if (p == player) {
@@ -306,29 +306,29 @@ fn updateEntities(key_input: u32, profile_frame: bool) !void {
             try p.update(null);
         }
     }
-    if (profile_frame) utils.endTimer(1, "Updating players took {} seconds.");
+    if (profile_frame) u.endTimer(1, "Updating players took {} seconds.");
 
     // Structures
-    if (profile_frame) utils.startTimer(1, "- Updating structures.");
+    if (profile_frame) u.startTimer(1, "- Updating structures.");
     for (entity.structures.items) |structure| {
-        if (structure.life == -utils.i16max) {
+        if (structure.life == -u.i16max) {
             try dead_structures.append(structure); // To be destroyed in removeEntities
         } else {
             structure.update();
         }
     }
-    if (profile_frame) utils.endTimer(1, "Updating structures took {} seconds.");
+    if (profile_frame) u.endTimer(1, "Updating structures took {} seconds.");
 
     // Units
-    if (profile_frame) utils.startTimer(1, "- Updating units.");
+    if (profile_frame) u.startTimer(1, "- Updating units.");
     for (entity.units.items) |unit| {
-        if (unit.life == -utils.i16max) {
+        if (unit.life == -u.i16max) {
             try dead_units.append(unit); // To be destroyed in removeEntities
         } else {
             try unit.update();
         }
     }
-    if (profile_frame) utils.endTimer(1, "Updating units took {} seconds.");
+    if (profile_frame) u.endTimer(1, "Updating units took {} seconds.");
 }
 
 fn removeEntities() !void {
@@ -340,19 +340,19 @@ fn removeEntities() !void {
 }
 
 fn draw(profile_frame: bool) void {
-    if (profile_frame) utils.startTimer(1, "- Drawing map.");
+    if (profile_frame) u.startTimer(1, "- Drawing map.");
     drawMap();
-    if (profile_frame) utils.endTimer(1, "Drawing map took {} seconds.");
-    if (profile_frame) utils.startTimer(1, "- Drawing entities.");
+    if (profile_frame) u.endTimer(1, "Drawing map took {} seconds.");
+    if (profile_frame) u.startTimer(1, "- Drawing entities.");
     drawEntities();
-    if (profile_frame) utils.endTimer(1, "Drawing entities took {} seconds.");
-    if (profile_frame) utils.startTimer(1, "- Drawing UI.");
+    if (profile_frame) u.endTimer(1, "Drawing entities took {} seconds.");
+    if (profile_frame) u.startTimer(1, "- Drawing UI.");
     drawInterface();
-    if (profile_frame) utils.endTimer(1, "Drawing UI took {} seconds.");
+    if (profile_frame) u.endTimer(1, "Drawing UI took {} seconds.");
 }
 
 pub fn updateCanvasZoom(mousewheel_delta: f32) void {
-    canvas_max = utils.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), map_width, map_height); // For window resizing
+    canvas_max = u.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), map_width, map_height); // For window resizing
     if (mousewheel_delta != 0) {
         const old_zoom: f32 = canvas_zoom;
         const zoom_change: f32 = 1 + (0.025 * mousewheel_delta); // zoom rate
@@ -382,7 +382,7 @@ pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
     const effective_speed: f32 = @as(f32, @floatCast(SCROLL_SPEED)) / @max(1, canvas_zoom * 0.1);
 
     if ((key_input & (1 << 9)) != 0) { // Space key centers camera on player
-        utils.canvasOnPlayer();
+        u.canvasOnPlayer();
     } else if (mouse_input_r.x != 0 or mouse_input_r.y != 0) { // Right-button drags canvas
         canvas_offset_x += mouse_input_r.x * 2;
         canvas_offset_y += mouse_input_r.y * 2;
@@ -418,33 +418,43 @@ pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
 /// Draws map and grid markers relative to current canvas
 pub fn drawMap() void {
     // Draw the map area
-    utils.drawRect(0, 0, map_width, map_height, rl.Color.ray_white);
-    // Draw grid lines
+    u.drawRect(0, 0, map_width, map_height, rl.Color.ray_white);
+    // Draw subgrid lines
     var rowIndex: i32 = 1;
-    while (rowIndex * utils.Grid.cell_size < map_height) : (rowIndex += 1) {
-        utils.drawRect(0, @as(i32, @intCast(utils.Grid.cell_size * rowIndex)), map_width, 5, rl.Color.light_gray);
+    while (rowIndex * u.Subcell.size < map_height) : (rowIndex += 1) {
+        u.drawRect(0, @as(i32, @intCast(u.Subcell.size * rowIndex)), map_width, 2, rl.Color.light_gray);
     }
     var colIndex: i32 = 1;
-    while (colIndex * utils.Grid.cell_size < map_width) : (colIndex += 1) {
-        utils.drawRect(@as(i32, @intCast(utils.Grid.cell_size * colIndex)), 0, 5, map_height, rl.Color.light_gray);
+    while (colIndex * u.Subcell.size < map_width) : (colIndex += 1) {
+        u.drawRect(@as(i32, @intCast(u.Subcell.size * colIndex)), 0, 2, map_height, rl.Color.light_gray);
+    }
+
+    // Draw grid lines
+    rowIndex = 1;
+    while (rowIndex * u.Grid.cell_size < map_height) : (rowIndex += 1) {
+        u.drawRect(0, @as(i32, @intCast(u.Grid.cell_size * rowIndex)), map_width, 5, rl.Color.light_gray);
+    }
+    colIndex = 1;
+    while (colIndex * u.Grid.cell_size < map_width) : (colIndex += 1) {
+        u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 5, map_height, rl.Color.light_gray);
     }
     // Draw the edges of the map
-    utils.drawRect(0, -10, map_width, 20, rl.Color.dark_gray); // Top edge
-    utils.drawRect(0, map_height - 10, map_width, 20, rl.Color.dark_gray); // Bottom edge
-    utils.drawRect(-10, 0, 20, map_height, rl.Color.dark_gray); // Left edge
-    utils.drawRect(map_width - 10, 0, 20, map_height, rl.Color.dark_gray); // Right edge
+    u.drawRect(0, -10, map_width, 20, rl.Color.dark_gray); // Top edge
+    u.drawRect(0, map_height - 10, map_width, 20, rl.Color.dark_gray); // Bottom edge
+    u.drawRect(-10, 0, 20, map_height, rl.Color.dark_gray); // Left edge
+    u.drawRect(map_width - 10, 0, 20, map_height, rl.Color.dark_gray); // Right edge
 
 }
 
 fn drawEntities() void {
-    for (entity.units.items) |u| u.draw(); // Possibly interpolate
-    for (entity.structures.items) |s| s.draw();
-    for (entity.players.items) |p| p.draw();
+    for (entity.units.items) |e| e.draw(); // Interpolates in method
+    for (entity.structures.items) |e| e.draw();
+    for (entity.players.items) |e| e.draw();
 }
 
 /// Draws user interface
 pub fn drawInterface() void {
-    if (build_guide != null) player.drawGuide(build_guide.?);
+    if (build_guide != null) drawGuide(build_guide.?);
 
     // Development tools
     rl.drawFPS(40, 40);
@@ -454,22 +464,22 @@ pub fn drawInterface() void {
 pub fn setMapSize(width: u16, height: u16) void {
     map_width = width;
     map_height = height;
-    canvas_max = utils.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), map_width, map_height);
+    canvas_max = u.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), map_width, map_height);
 }
 
 // Game conditions
 //----------------------------------------------------------------------------------
-pub fn startingLocations(allocator: *std.mem.Allocator, player_count: u8) ![]utils.Point {
-    const offset = utils.Grid.cell_size * 3;
-    const coordinates: [4]utils.Point = [_]utils.Point{
-        utils.Point{ .x = offset, .y = offset },
-        utils.Point{ .x = map_width - offset, .y = map_height - offset },
-        utils.Point{ .x = map_width - offset, .y = offset },
-        utils.Point{ .x = offset, .y = map_height - offset },
+pub fn startingLocations(allocator: *std.mem.Allocator, player_count: u8) ![]u.Point {
+    const offset = u.Grid.cell_size * 3;
+    const coordinates: [4]u.Point = [_]u.Point{
+        u.Point{ .x = offset, .y = offset },
+        u.Point{ .x = map_width - offset, .y = map_height - offset },
+        u.Point{ .x = map_width - offset, .y = offset },
+        u.Point{ .x = offset, .y = map_height - offset },
     };
 
     // Allocate memory for the slice
-    const slice = try allocator.alloc(utils.Point, player_count);
+    const slice = try allocator.alloc(u.Point, player_count);
     for (slice, 0..) |*coord, i| {
         coord.* = coordinates[i];
     }
@@ -485,4 +495,50 @@ pub fn startingLocations(allocator: *std.mem.Allocator, player_count: u8) ![]uti
 
 pub fn moveDivison(life: i16) bool {
     return @rem(life, MOVEMENT_DIVISIONS) == 0;
+}
+
+// Maybe refactor to abstract the build_index/class relation to allow tech trees
+pub fn executeBuild(build_index: u8) void {
+    const class = build_index; // <-- change this?
+    if (!isInBuildDistance(class)) return;
+    const xy = findBuildPosition(build_index);
+    const built = entity.Structure.construct(xy[0], xy[1], class);
+    if (built) |building| {
+        std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
+        // Do something with the structure
+    } else {
+        std.debug.print("Failed to build structure\n", .{});
+        // Handle the failure case, e.g., notify the player or log the error
+    }
+}
+
+fn findBuildPosition(class: u8) [2]u16 {
+    const building = entity.Structure.preset(class);
+    const x_offset = u.asF32(u16, building.width) / 2 * canvas_zoom;
+    const y_offset = u.asF32(u16, building.height) / 2 * canvas_zoom;
+    const mouse_position = rl.getMousePosition();
+
+    const adjusted_position = mouse_position.add(rl.Vector2.init(x_offset, y_offset));
+    const subcell = u.screenToSubcell(adjusted_position);
+    const snapped = u.Subcell.snapToNode(subcell.node.x, subcell.node.y, building.width, building.height);
+
+    return [2]u16{ snapped[0], snapped[1] };
+}
+
+fn isInBuildDistance(class: u8) bool {
+    const subcell_center = u.screenToSubcell(rl.getMousePosition()).center();
+    const distance_max = u.asU32(u16, entity.Structure.preset(class).width + entity.Structure.preset(class).height);
+    const distance = std.math.sqrt(u.distanceSquared(u.Point.at(player.x, player.y), u.Point.at(subcell_center[0], subcell_center[1])));
+    return distance <= distance_max;
+}
+
+pub fn drawGuide(class: u8) void {
+    const xy = findBuildPosition(class);
+    const building = entity.Structure.preset(class);
+    const collides = grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;
+    if (collides != null or !isInBuildDistance(class) or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
+        u.drawGuideFail(xy[0], xy[1], building.width, building.height, building.color);
+    } else {
+        u.drawGuide(xy[0], xy[1], building.width, building.height, building.color);
+    }
 }
