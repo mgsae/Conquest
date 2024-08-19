@@ -221,10 +221,12 @@ pub const Player = struct {
         }
     }
 
-    // Maybe refactor to abstract the build_index/class relation, to support tech trees
+    // Maybe refactor to abstract the build_index/class relation to allow tech trees
     fn executeBuild(self: *Player, build_index: u8) void {
+        const class = build_index; // <-- change this?
+        if (!isInBuildDistance(class)) return;
         const xy = findBuildPosition(self, build_index);
-        const built = Structure.construct(xy[0], xy[1], build_index);
+        const built = Structure.construct(xy[0], xy[1], class);
         if (built) |building| {
             std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
             // Do something with the structure
@@ -236,21 +238,32 @@ pub const Player = struct {
 
     fn findBuildPosition(self: *Player, class: u8) [2]u16 {
         const building = Structure.preset(class);
-        const min_distance = if (utils.isHorz(self.direction)) (self.width / 2) + (building.width / 2) else (self.height / 2) + (building.height / 2);
-        const sc_size = utils.Subcell.size;
-        const compensation: [2]i16 = switch (self.direction) {
-            2 => [2]i16{ sc_size / 2, sc_size },
-            4 => [2]i16{ 0, sc_size / 2 },
-            6 => [2]i16{ sc_size, sc_size / 2 },
-            else => [2]i16{ sc_size / 2, 0 },
-        };
-        const compensated_x = utils.u16Clamped(i16, @as(i16, @intCast(@as(i16, @intCast(self.x)) + compensation[0])));
-        const compensated_y = utils.u16Clamped(i16, @as(i16, @intCast(@as(i16, @intCast(self.y)) + compensation[1])));
-        const shifted_xy = utils.dirOffset(@as(u16, @intCast(compensated_x)), @as(u16, @intCast(compensated_y)), self.direction, min_distance);
-        const map_x = utils.mapClampX(@as(i16, @intCast(shifted_xy[0])), building.width);
-        const map_y = utils.mapClampY(@as(i16, @intCast(shifted_xy[1])), building.height);
-        const subcell_xy = utils.Subcell.snapToNode(map_x, map_y, building.width, building.height);
-        return subcell_xy;
+        _ = self;
+        //const min_distance: u16 = if (utils.isHorz(self.direction)) (self.width / 2) + (building.width / 2) else (self.height / 2) + (building.height / 2);
+        //const sc_size = utils.Subcell.size;
+        //const compensation: [2]i16 = switch (self.direction) {
+        //    2 => [2]i16{ sc_size / 2, sc_size },
+        //    4 => [2]i16{ 0, sc_size / 2 },
+        //    6 => [2]i16{ sc_size, sc_size / 2 },
+        //    else => [2]i16{ sc_size / 2, 0 },
+        //};
+        // Checks whether to determine by mouse position; if so, determines target subcell via mouse
+        const mouseOffset = rl.getMousePosition().add(rl.Vector2.init(utils.asF32(u16, building.width / 2) * main.canvas_zoom, utils.asF32(u16, building.height / 2) * main.canvas_zoom));
+        return utils.screenToSubcell(mouseOffset).nodeCoordinates();
+        //const mouse_distance = utils.screenToPlayer(rl.getMousePosition());
+        //const mouse_max_x = (utils.asF32(u16, min_distance) * main.canvas_zoom) + (utils.asF32(i16, compensation[0]) * main.canvas_zoom);
+        //const mouse_max_y = (utils.asF32(u16, min_distance) * main.canvas_zoom) + (utils.asF32(i16, compensation[1]) * main.canvas_zoom);
+        //if (@abs(mouse_distance.x / main.canvas_zoom) < mouse_max_x and @abs(mouse_distance.y / main.canvas_zoom) < mouse_max_y) {
+        //    const mouseOffset = rl.getMousePosition().add(rl.Vector2.init(utils.asF32(u16, building.width / 2) * main.canvas_zoom, utils.asF32(u16, building.height / 2) * main.canvas_zoom));
+        //    return utils.screenToSubcell(mouseOffset).nodeCoordinates();
+        //}
+        //const compensated_x = utils.u16Clamp(i16, @as(i16, @intCast(@as(i16, @intCast(self.x)) + compensation[0])));
+        //const compensated_y = utils.u16Clamp(i16, @as(i16, @intCast(@as(i16, @intCast(self.y)) + compensation[1])));
+        //const shifted_xy = utils.dirOffset(@as(u16, @intCast(compensated_x)), @as(u16, @intCast(compensated_y)), self.direction, min_distance);
+        //const map_x = utils.mapClampX(@as(i16, @intCast(shifted_xy[0])), building.width);
+        //const map_y = utils.mapClampY(@as(i16, @intCast(shifted_xy[1])), building.height);
+        //const subcell_xy = utils.Subcell.snapToNode(map_x, map_y, building.width, building.height);
+        //return subcell_xy;
     }
 
     pub fn createLocal(x: u16, y: u16) !*Player {
@@ -305,11 +318,20 @@ pub const Player = struct {
         const xy = self.findBuildPosition(class);
         const building = Structure.preset(class);
         const collides = main.grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;
-        if (collides != null or !utils.isInMap(xy[0], xy[1], building.width, building.height)) {
+        if (collides != null or !isInBuildDistance(class) or !utils.isInMap(xy[0], xy[1], building.width, building.height)) {
             utils.drawGuideFail(xy[0], xy[1], building.width, building.height, building.color);
         } else {
             utils.drawGuide(xy[0], xy[1], building.width, building.height, building.color);
         }
+    }
+
+    fn isInBuildDistance(class: u8) bool {
+        const subcell = utils.screenToSubcell(rl.getMousePosition());
+        const subcell_node_onscreen = utils.mapToCanvas(@as(i32, subcell.center()[0]), @as(i32, subcell.center()[1]));
+        const mouse_max = utils.asF32(u16, Structure.preset(class).width + Structure.preset(class).height);
+        const mouse_distance = utils.screenToPlayer(rl.Vector2.init(utils.asF32(i32, subcell_node_onscreen[0]), utils.asF32(i32, subcell_node_onscreen[1])));
+        const zoom_offset = (utils.Subcell.size / 2) * main.canvas_zoom;
+        return (@abs((mouse_distance.x - zoom_offset) / main.canvas_zoom) < mouse_max and @abs((mouse_distance.y - zoom_offset) / main.canvas_zoom) < mouse_max);
     }
 };
 
@@ -494,8 +516,8 @@ pub const Unit = struct {
         const new_x_float: f32 = @round(@as(f32, @floatFromInt(self.x)) + delta_xy[0]);
         const new_y_float: f32 = @round(@as(f32, @floatFromInt(self.y)) + delta_xy[1]);
 
-        const new_x = @as(u16, @intFromFloat(utils.u16Clamped(f32, new_x_float)));
-        const new_y = @as(u16, @intFromFloat(utils.u16Clamped(f32, new_y_float)));
+        const new_x = @as(u16, @intFromFloat(utils.u16Clamp(f32, new_x_float)));
+        const new_y = @as(u16, @intFromFloat(utils.u16Clamp(f32, new_y_float)));
 
         return [2]u16{ new_x, new_y };
     }

@@ -238,9 +238,21 @@ pub fn main() anyerror!void {
 }
 
 fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vector2, stored_mousewheel: *f32, stored_key_input: *u32) void {
-    if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) stored_mouse_input_l.* = rl.getMousePosition(); // Sets stored_mouse_input[0] to left-clicked position
-    if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_right)) stored_mouse_input_r.* = rl.getMouseDelta(); // Sets stored_mouse_input[1] to right-mouse down delta
+    if (build_guide != null) { // While build guide is active
+        stored_mouse_input_l.* = rl.getMousePosition(); // Sets stored_mouse_input[0] to mouse position
+        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) stored_key_input.* |= utils.Key.inputFromAction(&keys, utils.Key.Action.BuildConfirm); // L mouse-click confirms build
+        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_right)) stored_mouse_input_r.y = 0.01; // R mouse-click cancels build
+    } else { // Whenever build guide is not active
+        if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left)) stored_mouse_input_l.* = rl.getMousePosition(); // Sets stored_mouse_input[0] to position on left-click
+        if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_right)) stored_mouse_input_r.* = rl.getMouseDelta(); // Sets stored_mouse_input[1] to right-mouse down delta
+    }
     stored_mousewheel.* += rl.getMouseWheelMove();
+
+    // For debugging mouse / map position
+    //const mousex = rl.getMouseX();
+    //const mousey = rl.getMouseY();
+    //const map_coords = utils.screenToMap(rl.Vector2.init(@as(f32, @floatFromInt(mousex)), @as(f32, @floatFromInt(mousey))));
+    //std.debug.print("mouse x: {}, mouse y: {}, canvasX: {}, canvasY: {}. - Map x: {}, map y: {}. - Player's actual x: {}, y: {}.\n", .{ mousex, mousey, utils.canvasX(mousex, canvas_offset_x, canvas_zoom), utils.canvasY(mousey, canvas_offset_y, canvas_zoom), map_coords[0], map_coords[1], player.x, player.y });
 
     // Number keys bitmasking
     if (rl.isKeyPressed(rl.KeyboardKey.key_z)) stored_key_input.* |= @intFromEnum(utils.Key.InputValue.Z);
@@ -262,10 +274,14 @@ fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vec
 }
 
 fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vector2, mousewheel_delta: f32, key_input: u32, profile_frame: bool) void {
-    // use for clicks selection etc.:
-    _ = stored_mouse_input_l;
-
     if (profile_frame) utils.startTimer(1, "- Updating controls.");
+    if (build_guide != null) {
+        if (stored_mouse_input_r.y == 0.01) { // Cancels build guide if mouse right pressed
+            build_guide = null;
+        } else if (utils.mouseMoved(rl.getMouseDelta())) { // Left mouse changes player direction
+            player.direction = utils.vectorToDir(utils.screenToPlayer(stored_mouse_input_l)); // <- build guide mouse move control
+        }
+    }
     updateCanvasZoom(mousewheel_delta);
     updateCanvasPosition(stored_mouse_input_r, key_input);
     if (keys.actionActive(key_input, utils.Key.Action.SpecialEnter)) profile_mode = !profile_mode; // Enter toggles profile mode (verbose logs) for now
@@ -276,9 +292,9 @@ fn updateEntities(key_input: u32, profile_frame: bool) !void {
     // Reminder:
     // Entities rely on sectionSearch for collision, which retrieves a list from grid.sections.
     // The updateSections function is responsible for regenerating grid.sections based on the current state of grid.cells.
-    // This means that any entity removed from grid.cells via grid.removeFromCell (e.g. removeEntities -> unit.remove() -> grid.removeFromCell)
-    // should no longer appear in grid.sections ***after*** updateSections has run.
-    // So, the correct order: removeEntities -> updateSections -> updateEntities.
+    // This means that any entity removed from grid.cells via grid.removeFromCell (e.g. removeEntities -> unit.remove -> grid.removeFromCell)
+    // should no longer appear in grid.sections ***after*** updateSections has run. But have now added removeFromAllSections to unit.remove,
+    // which ***should*** ensure that any reference is removed from the grid after removeEntities runs.
 
     // Players
     if (profile_frame) utils.startTimer(1, "- Updating players.");

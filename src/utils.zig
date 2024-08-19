@@ -64,40 +64,138 @@ const Predicate = fn (entity: *entity.Entity) bool; // Function pointer to an en
 
 // Value types and conversions
 //----------------------------------------------------------------------------------
+pub const u8max: u8 = std.math.maxInt(u8); // 255
+pub const i8max: i8 = std.math.maxInt(i8); // (-128 to) 127
 pub const u16max: u16 = std.math.maxInt(u16); // 65535
-pub const i16max: i16 = std.math.maxInt(i16); // 32767
+pub const i16max: i16 = std.math.maxInt(i16); // (-32768 to) 32767
+pub const f16max: f16 = std.math.floatMax(f16); // (−65504.0 to) 65504.0
 pub const u32max: u32 = std.math.maxInt(u32); // 4294967295
-pub const i32max: i32 = std.math.maxInt(i32); // 2147483647
+pub const i32max: i32 = std.math.maxInt(i32); // (-2147483648 to) 2147483647
+pub const f32max: f32 = std.math.floatMax(f32); // (-3.4028235e+38 to) 3.4028235e+38
+pub const u64max: u64 = std.math.maxInt(u64); // 18446744073709551615
+pub const i64max: i64 = std.math.maxInt(i64); // (-9223372036854775807 to) 9223372036854775807
+pub const f64max: f64 = std.math.floatMax(f64); // (-1.7976931348623157e+308 to) 1.7976931348623157e+308
 
-pub fn u16Clamped(comptime T: type, value: T) T {
-    const lower_bound: T = @as(T, 0);
-    var upper_bound: T = undefined;
-
-    if (@typeInfo(T) == .Int and u16max <= std.math.maxInt(T)) {
-        upper_bound = @as(T, u16max);
-    } else if (@typeInfo(T) == .Int) {
-        const max_value: T = @as(T, @intCast(std.math.maxInt(T)));
-        const clamped_max: u16 = @as(u16, max_value);
-        upper_bound = @as(T, clamped_max);
-    } else if (@typeInfo(T) == .Float) {
-        upper_bound = @as(T, @floatFromInt(u16max));
-    } else {
-        upper_bound = @as(T, u16max); // Fallback for other types.
+/// Casts `value` from the type `T1` to the type `T2`. Types must be numerical. Clamps the value to the range of `T2`.
+pub fn as(comptime T1: type, value: T1, comptime T2: type) T2 {
+    if ((@typeInfo(T1) != .Float and @typeInfo(T1) != .Int) or (@typeInfo(T2) != .Float and @typeInfo(T2) != .Int)) {
+        std.debug.panic("Attempted to cast to/from a non-numerical type. Type of value: {}. Type of return: {}.", .{ @TypeOf(T1), @TypeOf(T2) });
     }
-
-    return @max(lower_bound, @min(value, upper_bound));
+    // Delegate to the appropriate casting function based on which type T2 is
+    switch (T2) {
+        u8 => return asU8(T1, value),
+        i8 => return asI8(T1, value),
+        u16 => return asU16(T1, value),
+        i16 => return asI16(T1, value),
+        u32 => return asU32(T1, value),
+        i32 => return asI32(T1, value),
+        u64 => return asU64(T1, value),
+        i64 => return asI64(T1, value),
+        f16 => return asF16(T1, value),
+        f32 => return asF32(T1, value),
+        f64 => return asF64(T1, value),
+        else => std.debug.panic("Unsupported target type: {}", .{@TypeOf(T2)}),
+    }
 }
 
-pub fn i16Clamped(comptime T: type, value: T) T {
-    return @max(-i16max, @min(value, i16max));
+/// Casts numerical `value` to type `u8`. Clamps the value range of `T`.
+pub fn asU8(comptime T: type, value: T) u8 {
+    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u8, @intFromFloat(value)) else @as(u8, value), u8max));
 }
 
-pub fn u32Clamped(comptime T: type, value: T) T {
-    return @max(0, @min(value, u32max));
+/// Casts numerical `value` to type `i8`. Clamps the value range of `T`.
+pub fn asI8(comptime T: type, value: T) i8 {
+    return @max(-i8max - 1, @min(if (@typeInfo(T) == .Float) @as(i8, @intFromFloat(value)) else @as(i8, value), i8max));
 }
 
-pub fn i32Clamped(comptime T: type, value: T) T {
-    return @max(-i32max, @min(value, i32max));
+/// Casts numerical `value` to type `u16`. Clamps the value range of `T`.
+pub fn asU16(comptime T: type, value: T) u16 {
+    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u16, @intFromFloat(value)) else @as(u16, value), u16max));
+}
+
+/// Casts numerical `value` to type `i16`. Clamps the value range of `T`.
+pub fn asI16(comptime T: type, value: T) i16 {
+    return @max(-i16max - 1, @min(if (@typeInfo(T) == .Float) @as(i16, @intFromFloat(value)) else @as(i16, value), i16max));
+}
+
+/// Casts numerical `value` to type `f16`. Clamps the value range of `T`.
+pub fn asF16(comptime T: type, value: T) f16 {
+    return @max(-f16max, @min(if (@typeInfo(T) == .Float) @as(f16, value) else @as(f16, @floatFromInt(value)), f16max));
+}
+
+/// Casts numerical `value` to type `u32`. Clamps the value range of `T`.
+pub fn asU32(comptime T: type, value: T) u32 {
+    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u32, @intFromFloat(value)) else @as(u32, value), u32max));
+}
+
+/// Casts numerical `value` to type `i32`. Clamps the value range of `T`.
+pub fn asI32(comptime T: type, value: T) i32 {
+    return @max(-i32max - 1, @min(if (@typeInfo(T) == .Float) @as(i32, @intFromFloat(value)) else @as(i32, value), i32max));
+}
+
+/// Casts numerical `value` to type `f32`. Clamps the value range of `T`.
+pub fn asF32(comptime T: type, value: T) f32 {
+    return @max(-f32max, @min(if (@typeInfo(T) == .Float) @as(f32, value) else @as(f32, @floatFromInt(value)), f32max));
+}
+
+/// Casts numerical `value` to type `u64`.
+pub fn asU64(comptime T: type, value: T) u64 {
+    return @max(0, @min(if (@typeInfo(T) == .Float) @as(u64, @intFromFloat(value)) else @as(u64, value), u64max));
+}
+
+/// Casts numerical `value` to type `i64`.
+pub fn asI64(comptime T: type, value: T) i64 {
+    return @max(-i64max - 1, @min(if (@typeInfo(T) == .Float) @as(i64, @intFromFloat(value)) else @as(i64, value), i64max));
+}
+
+/// Casts numerical `value` to type `f64`.
+pub fn asF64(comptime T: type, value: T) f64 {
+    return @max(-f64max, @min(if (@typeInfo(T) == .Float) @as(f64, value) else @as(f64, @floatFromInt(value)), f64max));
+}
+
+// Clamping value ranges
+pub fn u8Clamp(comptime T: type, value: T) T {
+    return @max(0, @min(value, u8max));
+}
+
+pub fn i8Clamp(comptime T: type, value: T) T {
+    return @max(std.math.minInt(i8), @min(value, i8max));
+}
+
+pub fn u16Clamp(comptime T: type, value: T) T {
+    return @max(@as(T, 0), @min(value, if (@typeInfo(T) == .Int) @as(T, if (u16max <= std.math.maxInt(T)) u16max else @as(u16, std.math.maxInt(T))) else @as(T, @floatFromInt(u16max))));
+}
+
+pub fn i16Clamp(comptime T: type, value: T) T {
+    return @max(std.math.minInt(i16), @min(value, i16max));
+}
+
+pub fn f16Clamp(comptime T: type, value: T) T {
+    const f16_value = if (@typeInfo(T) == .Float) value else @as(f16, @floatFromInt(value));
+    const clamped = @max(-f16max, @min(f16_value, f16max));
+    return if (@typeInfo(T) == .Float) clamped else @as(T, @intFromFloat(clamped));
+}
+
+pub fn u32Clamp(comptime T: type, value: T) T {
+    return @max(@as(T, 0), @min(value, if (@typeInfo(T) == .Int) @as(T, if (u32max <= std.math.maxInt(T)) u32max else @as(u32, std.math.maxInt(T))) else @as(T, @floatFromInt(u32max))));
+}
+
+pub fn i32Clamp(comptime T: type, value: T) T {
+    return @max(std.math.minInt(i32), @min(value, i32max));
+}
+
+pub fn f32Clamp(comptime T: type, value: T) T {
+    const f32_value = if (@typeInfo(T) == .Float) value else @as(f32, @floatFromInt(value));
+    const clamped = @max(-f32max, @min(f32_value, f32max));
+    return if (@typeInfo(T) == .Float) clamped else @as(T, @intFromFloat(clamped));
+}
+
+pub fn u64Clamp(comptime T: type, value: T) T {
+    return @max(0, @min(value, @as(T, u64max)));
+}
+
+pub fn i64Clamp(comptime T: type, value: T) T {
+    return @max(std.math.minInt(i64), @min(value, @as(T, i64max)));
 }
 
 // Data structures
@@ -203,7 +301,20 @@ pub const Key = struct {
             return false;
         }
     }
+
+    pub fn inputFromAction(self: *Key, action: Key.Action) u32 {
+        const inputValue = self.bindings.get(action);
+        if (inputValue) |input| {
+            return @intFromEnum(input);
+        } else {
+            return 0;
+        }
+    }
 };
+
+pub fn mouseMoved(vector: rl.Vector2) bool {
+    return vector.x < -0.5 or vector.x > 0.5 or vector.y < -0.5 or vector.y > 0.5;
+}
 
 // RNG
 //----------------------------------------------------------------------------------
@@ -223,7 +334,7 @@ pub fn randomI16(max: u16) i16 {
 
 /// Fisher-Yates shuffle: iterates over the array and swaps each element with a randomly chosen element that comes after it (or itself).
 pub fn shuffleArray(comptime T: type, array: []T) void {
-    const len = u16Clamped(usize, array.len);
+    const len = u16Clamp(usize, array.len);
     for (array, 0..) |_, i| {
         const j = @as(usize, randomU16(@as(u16, @intCast(len - 1))));
         const temp = array[i];
@@ -255,7 +366,7 @@ pub fn i32TimesFloat(comptime T: type, int: i32, floatValue: T) i32 {
 pub fn u16AddFloat(comptime T: type, int: u16, floatValue: T) u16 {
     const floatyboy = @as(T, @floatFromInt(int));
     const resultFloat = floatyboy + floatValue;
-    const clampedResult = @max(@as(T, 0), @min(@as(T, 65535), resultFloat));
+    const clampedResult = @max(@as(T, 0), @min(@as(T, u16max), resultFloat));
     return @as(u16, @intFromFloat(clampedResult));
 }
 
@@ -286,6 +397,13 @@ pub const Point = struct {
             .y = y,
         };
     }
+
+    pub fn shift(self: *Point, x_shift: i32, y_shift: i32) void {
+        const cur_x = @as(i32, @intCast(self.x));
+        const cur_y = @as(i32, @intCast(self.y));
+        self.x = @as(u16, @intCast(u16Clamp(i32, cur_x + x_shift)));
+        self.y = @as(u16, @intCast(u16Clamp(i32, cur_y + y_shift)));
+    }
 };
 
 pub fn deltaXy(x1: u16, y1: u16, x2: u16, y2: u16) [2]i16 {
@@ -303,6 +421,17 @@ pub fn dirDelta(dir: u8) [2]i8 {
         else => return [2]i8{ 0, 0 },
     }
     return [2]i8{ x, y };
+}
+
+/// Returns 2,4,6,8 depending on the dominant vector axis and direction.
+pub fn vectorToDir(vector: rl.Vector2) u8 {
+    if (@abs(vector.x) > @abs(vector.y)) {
+        if (vector.x > 0) return 6;
+        return 4;
+    } else {
+        if (vector.y > 0) return 2;
+        return 8;
+    }
 }
 
 /// Takes `x`,`y` and `dir`, and returns the new `x`,`y` after offsetting by `distance`. Return values are `>= 0`.
@@ -589,33 +718,40 @@ pub const Subcell = struct {
 
     pub const size = Grid.cell_size / 10;
 
+    /// Returns the subcell corresponding to the `x`,`y` coordinates.
     pub fn at(x: u16, y: u16) Subcell {
-        const subcell = try main.grid.allocator.create(Subcell); // Memory
-        subcell.* = Subcell{
-            .node = Point.at(x, y),
+        return Subcell{
+            .node = nodePoint(x, y),
         };
-        return subcell;
+    }
+
+    pub fn nodeCoordinates(self: Subcell) [2]u16 {
+        return [2]u16{ self.node.x, self.node.y };
+    }
+
+    pub fn center(self: Subcell) [2]u16 {
+        return [2]u16{ self.node.x + (size / 2), self.node.y + (size / 2) };
     }
 
     /// Returns the top left `x`,`y` of the closest 10th part of a cell to `x`,`y`.
-    pub fn node(x: u16, y: u16) [2]u16 {
+    pub fn nodeFromCoordinates(x: u16, y: u16) [2]u16 {
         const closest_x = @divTrunc(x, Subcell.size) * Subcell.size;
         const closest_y = @divTrunc(y, Subcell.size) * Subcell.size;
         return [2]u16{ closest_x, closest_y };
     }
 
     pub fn pointNode(point: Point) [2]u16 {
-        return node(point.x, point.y)[0];
+        return nodeFromCoordinates(point.x, point.y)[0];
     }
 
     pub fn nodePoint(x: u16, y: u16) Point {
-        const xy = node(x, y);
+        const xy = nodeFromCoordinates(x, y);
         return Point.at(xy[0], xy[1]);
     }
 
     /// Aligns the top left of the rectangle centered on `x`,`y` with the top left of its closest subcell.
     pub fn snapToNode(x: u16, y: u16, width: u16, height: u16) [2]u16 {
-        const snapped_center = Subcell.node(x - width / 2, y - height / 2);
+        const snapped_center = Subcell.nodeFromCoordinates(x - width / 2, y - height / 2);
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
     }
 
@@ -772,13 +908,13 @@ pub fn concentricSearch(grid: *entity.Grid, origin: Point, condition: Predicate)
 
 // Canvas
 //----------------------------------------------------------------------------------
-/// Returns drawing position from world `x` given camera `offset_x` and `zoom`.
+/// Returns the drawn position of world-coordinate `x` given camera `offset_x` and `zoom`.
 pub fn canvasX(x: i32, offset_x: f32, zoom: f32) i32 {
     const zoomed_x = @as(f32, @floatFromInt(x)) * zoom;
     return @as(i32, @intFromFloat(zoomed_x + offset_x));
 }
 
-/// Returns drawing position from world `y` given camera `offset_y` and `zoom`.
+/// Returns the drawn position of world-coordinate `y` given camera `offset_y` and `zoom`.
 pub fn canvasY(y: i32, offset_y: f32, zoom: f32) i32 {
     const zoomed_y = @as(f32, @floatFromInt(y)) * zoom;
     return @as(i32, @intFromFloat(zoomed_y + offset_y));
@@ -788,6 +924,11 @@ pub fn canvasY(y: i32, offset_y: f32, zoom: f32) i32 {
 pub fn canvasScale(scale: i32, zoom: f32) i32 {
     const scaled_value = zoom * @as(f32, @floatFromInt(scale));
     return @as(i32, @intFromFloat(scaled_value));
+}
+
+/// Returns the drawn screen-coordinates of world-coordinates `x`,`y` given current camera.
+pub fn mapToCanvas(x: i32, y: i32) [2]i32 {
+    return [2]i32{ canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom) };
 }
 
 /// Sets canvas offset values to center on the player position.
@@ -805,6 +946,28 @@ pub fn maxCanvasSize(screen_width: i32, screen_height: i32, map_width: u16, map_
     } else {
         return @as(f32, @floatFromInt(screen_height)) / @as(f32, @floatFromInt(map_height));
     }
+}
+
+/// Returns the `x`,`y` map coordinates currently corresponding to what's drawn to the canvas at `screen_position` (e.g. mouse) in the viewport.
+pub fn screenToMap(screen_position: rl.Vector2) [2]u16 {
+    const x = u16Clamp(f32, screen_position.x - main.canvas_offset_x);
+    const y = u16Clamp(f32, screen_position.y - main.canvas_offset_y);
+    const zoomed_x = @as(u16, @intFromFloat(x / main.canvas_zoom));
+    const zoomed_y = @as(u16, @intFromFloat(y / main.canvas_zoom));
+    return [2]u16{ zoomed_x, zoomed_y };
+}
+
+/// Returns vector distance from `screen_position` to the current canvas position of the local player.
+pub fn screenToPlayer(screen_position: rl.Vector2) rl.Vector2 {
+    const player_x = canvasX(main.player.x - @divTrunc(main.player.width, 2), main.canvas_offset_x, main.canvas_zoom);
+    const player_y = canvasY(main.player.y - @divTrunc(main.player.height, 2), main.canvas_offset_y, main.canvas_zoom);
+    return rl.Vector2.init(screen_position.x - @as(f32, @floatFromInt(player_x)), screen_position.y - @as(f32, @floatFromInt(player_y)));
+}
+
+/// Returns the subcell corresponding to `screen_position` given the current zoom and canvas offset.
+pub fn screenToSubcell(screen_position: rl.Vector2) Subcell {
+    const map_coords = screenToMap(screen_position);
+    return Subcell.at(map_coords[0], map_coords[1]);
 }
 
 // Drawing
