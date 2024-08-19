@@ -9,7 +9,7 @@ pub var units: std.ArrayList(*Unit) = undefined;
 pub var structures: std.ArrayList(*Structure) = undefined;
 pub var resources: std.ArrayList(*Resource) = undefined;
 
-const Kind = enum {
+pub const Kind = enum {
     Player,
     Unit,
     Structure,
@@ -18,46 +18,46 @@ const Kind = enum {
 
 pub const Entity = struct {
     kind: Kind,
-    content: union(Kind) { // Stores pointer to the actual data
+    ref: union(Kind) { // Stores pointer to the actual attributes
         Player: *Player,
         Unit: *Unit,
         Structure: *Structure,
-        Resource: *Structure,
+        Resource: *Resource,
     },
 
     pub fn width(self: *Entity) u16 {
         return switch (self.kind) {
-            Kind.Player => self.content.Player.width,
-            Kind.Unit => self.content.Unit.width,
-            Kind.Structure => self.content.Structure.width,
-            Kind.Resource => self.content.Resource.width,
+            Kind.Player => self.ref.Player.width,
+            Kind.Unit => self.ref.Unit.width,
+            Kind.Structure => self.ref.Structure.width,
+            Kind.Resource => self.ref.Resource.width,
         };
     }
 
     pub fn height(self: *Entity) u16 {
         return switch (self.kind) {
-            Kind.Player => self.content.Player.height,
-            Kind.Unit => self.content.Unit.height,
-            Kind.Structure => self.content.Structure.height,
-            Kind.Resource => self.content.Resource.height,
+            Kind.Player => self.ref.Player.height,
+            Kind.Unit => self.ref.Unit.height,
+            Kind.Structure => self.ref.Structure.height,
+            Kind.Resource => self.ref.Resource.height,
         };
     }
 
     pub fn x(self: *Entity) u16 {
         return switch (self.kind) {
-            Kind.Player => self.content.Player.x,
-            Kind.Unit => self.content.Unit.x,
-            Kind.Structure => self.content.Structure.x,
-            Kind.Resource => self.content.Resource.x,
+            Kind.Player => self.ref.Player.x,
+            Kind.Unit => self.ref.Unit.x,
+            Kind.Structure => self.ref.Structure.x,
+            Kind.Resource => self.ref.Resource.x,
         };
     }
 
     pub fn y(self: *Entity) u16 {
         return switch (self.kind) {
-            Kind.Player => self.content.Player.y,
-            Kind.Unit => self.content.Unit.y,
-            Kind.Structure => self.content.Structure.y,
-            Kind.Resource => self.content.Resource.y,
+            Kind.Player => self.ref.Player.y,
+            Kind.Unit => self.ref.Unit.y,
+            Kind.Structure => self.ref.Structure.y,
+            Kind.Resource => self.ref.Resource.y,
         };
     }
 
@@ -157,7 +157,7 @@ pub const Player = struct {
 
                 // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
                 std.debug.print("Pushing horizontally, angle: {}, distance: {}\n", .{ u.angleFromDir(self.direction), speed * force });
-                const push_distance = obstacleX.?.content.Unit.pushed(u.angleFromDir(self.direction), speed * force);
+                const push_distance = obstacleX.?.ref.Unit.pushed(u.angleFromDir(self.direction), speed * force);
                 std.debug.print("Horizontal push distance: {}\n", .{push_distance});
                 if (push_distance >= speed * force) {
                     obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.entity) catch null;
@@ -181,7 +181,7 @@ pub const Player = struct {
 
                 // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
                 std.debug.print("Pushing vertically, angle: {}, distance: {}\n", .{ u.angleFromDir(self.direction), speed * force });
-                const push_distance = obstacleY.?.content.Unit.pushed(u.angleFromDir(self.direction), speed * force);
+                const push_distance = obstacleY.?.ref.Unit.pushed(u.angleFromDir(self.direction), speed * force);
                 std.debug.print("Vertical push distance: {}\n", .{push_distance});
                 if (push_distance >= speed * force) {
                     obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.entity) catch null;
@@ -244,7 +244,7 @@ pub const Player = struct {
         };
         entity.* = Entity{
             .kind = Kind.Player,
-            .content = .{ .Player = player },
+            .ref = .{ .Player = player },
         };
 
         std.debug.print("Created local player at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entity) });
@@ -268,7 +268,7 @@ pub const Player = struct {
         };
         entity.* = Entity{
             .kind = Kind.Player,
-            .content = .{ .Player = player },
+            .ref = .{ .Player = player },
         };
 
         std.debug.print("Created remote player at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entity) });
@@ -293,6 +293,9 @@ pub const Unit = struct {
 
     pub fn draw(self: *Unit) void {
         u.drawEntityInterpolated(self.x, self.y, self.width, self.height, self.color(), self.last_step, self.life);
+        if (main.selected == self.entity) { // If selected, draws target point
+            u.drawRect(self.target.x, self.target.y, 100, 100, u.opacity(self.color(), 0.5));
+        }
     }
 
     pub fn update(self: *Unit) !void {
@@ -431,7 +434,7 @@ pub const Unit = struct {
             main.grid.updateCellMembership(self.entity, old_x, old_y);
         } else if (obstacle.?.kind == Kind.Unit) { // Pushed unit collides with another unit
 
-            const obstacle_unit = obstacle.?.content.Unit;
+            const obstacle_unit = obstacle.?.ref.Unit;
 
             // Checks that obstacle_unit isn't already a pushee
             if (obstacle_unit.width != preset(obstacle_unit.class).width or obstacle_unit.height != preset(obstacle_unit.class).height) {
@@ -478,37 +481,36 @@ pub const Unit = struct {
 
         // Get the current position of unit and overall distance to target
         const current = u.Point.at(self.x, self.y);
-        const distance = u.distanceSquared(current, self.target);
+        const distance = u.fastSqrt(u.asF32(u32, u.distanceSquared(current, self.target)));
 
         // Check if within cell of target
-        if (u.Grid.x(current.x) == u.Grid.y(self.target.x) and u.Grid.y(current.y) == u.Grid.y(self.target.y)) {
-            std.debug.print("Within target cell at {},{}. Target is at {},{}.\n", .{ self.x, self.y, self.target.x, self.target.y });
-            const dx = @as(i32, @intCast(self.target.x)) - @as(i32, @intCast(self.x));
-            const dy = @as(i32, @intCast(self.target.y)) - @as(i32, @intCast(self.y));
+        if (distance <= u.Grid.cell_size) {
+            // std.debug.print("Within target cell at {},{}. Target is at {},{}.\n", .{ self.x, self.y, self.target.x, self.target.y });
+            const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(self.target.x));
+            const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(self.target.y));
 
             // If within a subcell of the target point, retarget
             if (distance <= u.Subcell.size) {
                 std.debug.print("Reached target directly, retargeting.\n", .{});
-                return current; // Pause triggers retarget
-                //_ = self.retarget(u.randomU16(main.map_width), u.randomU16(main.map_height)); // <--- just testing
+                return current; // Pause to trigger retarget
             }
             // Otherwise go directly towards the target
             const angle = u.deltaToAngle(dx, dy);
-            const magnitude = @min(self.speed(), @as(f32, @floatFromInt(distance)));
+            const magnitude = @min(self.speed(), distance);
             const vector = u.vectorToDelta(angle, magnitude);
             return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
             //
         } else { // If farther than a subcell away, move by waypoints towards the target
 
-            const waypoint = u.waypoint.closestTowards(current, self.target, @intFromFloat(self.speed()), distance);
-
+            const waypoint = u.waypoint.closestTowards(current, self.target, u.asU32(f32, distance), self.last_step);
+            const magnitude = u.adjustToDistance(current, waypoint, self.speed(), self.speed());
             // Get the offset from the upcoming waypoint
             const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(waypoint.x));
             const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(waypoint.y));
 
             // Translates it into vector to get the new step
             const angle = u.deltaToAngle(dx, dy);
-            const vector = u.vectorToDelta(angle, self.speed());
+            const vector = u.vectorToDelta(angle, magnitude);
             return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
         }
     }
@@ -533,7 +535,7 @@ pub const Unit = struct {
 
         entity.* = Entity{
             .kind = Kind.Unit,
-            .content = .{ .Unit = unit }, // Store the pointer to the Unit
+            .ref = .{ .Unit = unit }, // Store the pointer to the Unit
         };
 
         try main.grid.addToCell(entity, null, null);
@@ -679,7 +681,7 @@ pub const Structure = struct {
         };
         entity.* = Entity{
             .kind = Kind.Structure,
-            .content = .{ .Structure = structure },
+            .ref = .{ .Structure = structure },
         };
 
         try main.grid.addToCell(entity, null, null);

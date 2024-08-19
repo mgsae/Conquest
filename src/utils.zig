@@ -1,7 +1,7 @@
 const rl = @import("raylib");
 const std: type = @import("std");
 const main = @import("main.zig");
-const entity = @import("entity.zig");
+const e = @import("entity.zig");
 const math = @import("std").math;
 var rng: std.Random.DefaultPrng = undefined;
 
@@ -29,15 +29,15 @@ pub fn assert(condition: bool, failureMsg: []const u8) void {
 }
 
 /// Prints the number of key-value pairs stored across all grid cells.
-pub fn printGridEntities(grid: *entity.Grid) void {
+pub fn printGridEntities(grid: *e.Grid) void {
     var total_entities: usize = 0;
     var it = grid.cells.iterator();
     while (it.next()) |entry| {
         total_entities += entry.value_ptr.items.len;
     }
-    const players = entity.players.items.len;
-    const structures = entity.structures.items.len;
-    const units = entity.units.items.len;
+    const players = e.players.items.len;
+    const structures = e.structures.items.len;
+    const units = e.units.items.len;
     std.debug.print("Total entities on the grid: {} ({} players, {} structures, {} units).\n", .{ total_entities, players, structures, units });
     if (total_entities != players + structures + units) {
         std.log.err("DISCREPANCY DETECTED! Number of entities does not match the combined number of players, structures, and units.\n", .{});
@@ -46,7 +46,7 @@ pub fn printGridEntities(grid: *entity.Grid) void {
 
 /// Prints the number of cells currently stored in the hashmap, corresponding to the
 /// number of distinct cells that contain one or more entities.
-pub fn printGridCells(grid: *entity.Grid) void {
+pub fn printGridCells(grid: *e.Grid) void {
     std.debug.print("Currently active cells on the grid: {} (out of {} cells, {} rows, {} columns).\n", .{ grid.cells.count(), grid.rows * grid.columns, grid.rows, grid.columns });
 }
 
@@ -60,7 +60,7 @@ pub fn scaleToTickRate(float: f32) f32 { // Delta time capped to tickrate
 
 // Metaprogramming
 //----------------------------------------------------------------------------------
-const Predicate = fn (entity: *entity.Entity) bool; // Function pointer to an entity
+const Predicate = fn (entity: *e.Entity) bool; // Function pointer to an entity
 
 // Value types and conversions
 //----------------------------------------------------------------------------------
@@ -528,19 +528,64 @@ pub fn interpolateStep(last_x: u16, last_y: u16, x: i32, y: i32, frame: i16, int
     return [2]i32{ interp_x, interp_y };
 }
 
+/// Squares the `x`,`y` distance between `a` and `b`. Allows for accurate distance comparisons, but does not represent the actual distance.
 pub fn distanceSquared(a: Point, b: Point) u32 {
     const dx = @as(i32, a.x) - @as(i32, b.x);
     const dy = @as(i32, a.y) - @as(i32, b.y);
     return @as(u32, @intCast(dx * dx)) + @as(u32, @intCast(dy * dy));
 }
 
-fn entityDistance(
-    e1: *entity.Entity,
-    e2: *entity.Entity,
-) u32 {
+/// Compares `a` and `b` coordinates and checks whether both differences are lower than `distance`.
+pub fn withinSquare(a: Point, b: Point, distance: f16) bool {
+    const dx = asF32(u16, a.x) - asF32(u16, b.x);
+    const dy = asF32(u16, a.y) - asF32(u16, b.y);
+    return dx < distance and dy < distance;
+}
+
+/// Compares `a` and `b` coordinates. Returns `max` if outside `threshold` square, returns remaining distance (clamping < 0.1) if within. Useful for adjusting speed when arriving at target.
+pub fn adjustToDistance(a: Point, b: Point, threshold: f16, max: f16) f16 {
+    const dx = asF32(u16, a.x) - asF32(u16, b.x);
+    const dy = asF32(u16, a.y) - asF32(u16, b.y);
+    const dist_squared = dx * dx + dy * dy;
+    const dist_threshold_squared = threshold * threshold;
+    if (dist_squared > dist_threshold_squared) {
+        return max;
+    } else {
+        const sqrt = @as(f16, @floatCast(fastSqrt(dist_squared)));
+        return if (sqrt < 0.1) 0.0 else sqrt;
+    }
+}
+
+/// Takes the square root of the distance squared between `a` and `b`. Use for exact representation, prefer `distanceSquared` for comparisons.
+pub fn euclideanDistance(a: Point, b: Point) f32 {
+    const dist_squared = distanceSquared(a, b);
+    return @sqrt(@as(f32, dist_squared));
+}
+
+/// Squares the `x`,`y` distance between `e1` and `e2`. Allows for accurate distance comparisons, but does not represent the actual distance.
+pub fn entityDistance(e1: *e.Entity, e2: *e.Entity) u32 {
     const a = Point.at(e1.x(), e1.y());
     const b = Point.at(e2.x(), e2.y());
     return distanceSquared(a, b);
+}
+
+/// Fast inverse square root (Quake III algorithm)
+pub fn qRsqrt(number: f32) f32 {
+    var i: i32 = @as(i32, @bitCast(number));
+    const x2: f32 = number * 0.5;
+    var y: f32 = number;
+    const threehalfs: f32 = 1.5;
+
+    i = 0x5f3759df - (i >> 1);
+    y = @as(f32, @bitCast(i));
+    y = y * (threehalfs - (x2 * y * y));
+
+    return y;
+}
+
+/// Computes the square root using the Quake III inverse square root algorithm.
+pub fn fastSqrt(number: f32) f32 {
+    return 1.0 / qRsqrt(number);
 }
 
 // Hashmap
@@ -656,7 +701,7 @@ pub const Grid = struct {
         return closestNode(offset_xy[0], offset_xy[1]);
     }
 
-    pub fn entityCount(self: *entity.Grid) usize {
+    pub fn entityCount(self: *e.Grid) usize {
         var total_entities: usize = 0;
         var it = self.cells.iterator();
         while (it.next()) |entry| {
@@ -806,7 +851,7 @@ pub const waypoint: type = struct {
         }
     }
 
-    pub fn closestTowards(current: Point, target: Point, step_size: i32, total_distance: u32) Point {
+    pub fn closestTowards(current: Point, target: Point, total_distance: u32, previous_step: Point) Point {
         const current_cell_center = Grid.cellCenter(current.x, current.y);
         const closest_grid_x = Grid.x(current_cell_center.x);
         const closest_grid_y = Grid.y(current_cell_center.y);
@@ -818,7 +863,10 @@ pub const waypoint: type = struct {
 
         var best_waypoint: ?Point = null;
         var best_distance = total_distance;
-        const overstep_threshold = step_size;
+        var best_biased_alignment: f32 = 0;
+
+        // Bias factor to discourage oscillation
+        const bias_factor = 0.5; // The lower, the stronger bias away from previous_step
 
         for (waypoints) |wp| {
             // Vector from current to the waypoint under consideration
@@ -826,24 +874,44 @@ pub const waypoint: type = struct {
             const wp_dy = @as(i32, wp.y) - @as(i32, current.y);
 
             // Dot product, degree of alignment with the overall vector
-            const alignment = dx * wp_dx + dy * wp_dy;
+            const alignment: f32 = asF32(i32, dx * wp_dx + dy * wp_dy);
 
-            if (alignment > 0) {
-                const distance_to_target = distanceSquared(wp, target);
+            // Vector from previous step to current waypoint
+            const prev_dx = @as(i32, wp.x) - @as(i32, previous_step.x);
+            const prev_dy = @as(i32, wp.y) - @as(i32, previous_step.y);
+            const prev_alignment = dx * prev_dx + dy * prev_dy;
 
-                if (best_waypoint == null or (distance_to_target < best_distance and alignment > overstep_threshold)) {
-                    best_distance = distance_to_target;
+            // Apply bias if waypoint is in the direction of the previous step
+            const biased_alignment = if (prev_alignment > 0) alignment * bias_factor else alignment;
+
+            if (biased_alignment >= 0) {
+                const wp_to_target = distanceSquared(wp, target);
+                const current_to_wp = distanceSquared(current, wp);
+                const new_distance = current_to_wp + wp_to_target;
+
+                // Compare both distance and biased alignment
+                if (best_waypoint == null or (new_distance < best_distance) or (new_distance == best_distance and biased_alignment > best_biased_alignment)) {
+                    best_distance = new_distance;
+                    best_biased_alignment = biased_alignment;
                     best_waypoint = wp;
+                } else if (new_distance == best_distance and biased_alignment == best_biased_alignment) {
+                    // Tie-breaking using lexicographical ordering if distance and alignment are the same
+                    if (wp.x < best_waypoint.?.x or (wp.x == best_waypoint.?.x and wp.y < best_waypoint.?.y)) {
+                        best_waypoint = wp;
+                    }
                 }
             }
         }
 
         // Return the waypoint closest to the target, otherwise center of current cell
-        if (best_waypoint == null) std.debug.print("No best waypoint found.\n", .{});
-        return best_waypoint orelse current_cell_center;
+        if (best_waypoint) |point| {
+            return point;
+        } else {
+            std.debug.print("No best waypoint found.\n", .{});
+            return Point.at(randomU16(main.map_width), randomU16(main.map_height));
+        }
     }
 };
-
 pub fn isOnMap(x: u16, y: u16) bool {
     return x >= 0 and x < main.map_width and y >= 0 and y <= main.map_height;
 }
@@ -871,10 +939,10 @@ pub fn mapClampY(y: i16, height: u16) u16 {
 }
 
 /// Searches for `Entity` that satisfies the `condition`, starting with the section at the `origin` point.
-pub fn concentricSearch(grid: *entity.Grid, origin: Point, condition: Predicate) ?*entity.Entity {
+pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.Entity {
     const origin_col = Grid.x(origin.x);
     const origin_row = Grid.y(origin.y);
-    var closest_entity: ?*entity.Entity = null;
+    var closest_entity: ?*e.Entity = null;
     var closest_distance = std.math.inf(f32);
 
     var radius: i32 = 0;
@@ -892,14 +960,14 @@ pub fn concentricSearch(grid: *entity.Grid, origin: Point, condition: Predicate)
 
             for (&offsets) |offset| {
                 if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.cols and offset.y < grid.rows) {
-                    const entities: ?*std.ArrayList(*entity.Entity) = grid.sectionEntities(offset.x, offset.y);
+                    const entities: ?*std.ArrayList(*e.Entity) = grid.sectionEntities(offset.x, offset.y);
                     if (entities != null) {
                         found_any_entity = true;
-                        for (entities.?.items) |e| {
-                            if (condition(e)) {
-                                const distance = distanceSquared(origin, Point.at(e.x(), e.y()));
+                        for (entities.?.items) |entity| {
+                            if (condition(entity)) {
+                                const distance = distanceSquared(origin, Point.at(entity.x(), entity.y()));
                                 if (distance < closest_distance) {
-                                    closest_entity = e;
+                                    closest_entity = entity;
                                     closest_distance = distance;
                                 }
                             }
@@ -952,6 +1020,21 @@ pub fn canvasOnPlayer() void {
     main.canvas_offset_y = -(@as(f32, @floatFromInt(main.player.y)) * main.canvas_zoom) + (screen_height_f / 2);
 }
 
+/// Sets canvas offset values to center on the position of `entity`.
+pub fn canvasOnEntity(entity: *e.Entity) void {
+    const screen_width_f = @as(f32, @floatFromInt(rl.getScreenWidth()));
+    const screen_height_f = @as(f32, @floatFromInt(rl.getScreenHeight()));
+    if (entity.kind == e.Kind.Unit) { // If entity is unit, movement is interpolated
+        const unit = entity.ref.Unit;
+        const xy = interpolateStep(unit.last_step.x, unit.last_step.y, unit.x, unit.y, unit.life, main.MOVEMENT_DIVISIONS);
+        main.canvas_offset_x = -(@as(f32, @floatFromInt(xy[0])) * main.canvas_zoom) + (screen_width_f / 2);
+        main.canvas_offset_y = -(@as(f32, @floatFromInt(xy[1])) * main.canvas_zoom) + (screen_height_f / 2);
+    } else {
+        main.canvas_offset_x = -(@as(f32, @floatFromInt(entity.x())) * main.canvas_zoom) + (screen_width_f / 2);
+        main.canvas_offset_y = -(@as(f32, @floatFromInt(entity.y())) * main.canvas_zoom) + (screen_height_f / 2);
+    }
+}
+
 /// Calculates and returns the maximum zoom out possible while remaining within the given map dimensions.
 pub fn maxCanvasSize(screen_width: i32, screen_height: i32, map_width: u16, map_height: u16) f32 {
     if (screen_width > screen_height) {
@@ -999,7 +1082,7 @@ pub fn drawGuide(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
 }
 
 pub fn drawGuideFail(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
-    drawEntity(x, y, width, height, opacity(col, 0.15));
+    drawEntity(x, y, width, height, opacity(col, 0.125));
 }
 
 /// Uses raylib to draw rectangle scaled and positioned to canvas.

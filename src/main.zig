@@ -42,6 +42,7 @@ pub var player: *entity.Player = undefined;
 var dead_players: std.ArrayList(*entity.Player) = undefined;
 var dead_structures: std.ArrayList(*entity.Structure) = undefined;
 var dead_units: std.ArrayList(*entity.Unit) = undefined;
+var dead_resources: std.ArrayList(*entity.Resource) = undefined;
 
 pub fn main() anyerror!void {
 
@@ -109,6 +110,7 @@ pub fn main() anyerror!void {
     dead_players = std.ArrayList(*entity.Player).init(allocator);
     dead_structures = std.ArrayList(*entity.Structure).init(allocator);
     dead_units = std.ArrayList(*entity.Unit).init(allocator);
+    dead_resources = std.ArrayList(*entity.Resource).init(allocator);
 
     const startCoords = try startingLocations(&allocator, 2); // players
     for (startCoords, 0..) |coord, i| {
@@ -144,9 +146,11 @@ pub fn main() anyerror!void {
     defer entity.units.deinit();
     defer entity.structures.deinit();
     defer entity.players.deinit();
+    defer entity.resources.deinit();
     defer dead_units.deinit();
     defer dead_structures.deinit();
     defer dead_players.deinit();
+    defer dead_resources.deinit();
 
     // Initialize user interface
     //--------------------------------------------------------------------------------------
@@ -229,6 +233,7 @@ pub fn main() anyerror!void {
         if (profile_frame) u.endTimer(0, "Drawing phase took {} seconds in total.\n");
 
         // Profiling
+        //----------------------------------------------------------------------------------
         if (profile_frame) {
             u.endTimer(3, "END OF FRAME ::: {} seconds in total.\n");
             std.debug.print("Current FPS: {}.\n", .{rl.getFPS()});
@@ -244,7 +249,7 @@ fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vec
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) stored_key_input.* |= u.Key.inputFromAction(&keys, u.Key.Action.BuildConfirm); // L mouse-click confirms build
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_right)) stored_mouse_input_r.y = 0.01; // R mouse-click cancels build
     } else { // Whenever build guide is not active
-        if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left)) stored_mouse_input_l.* = rl.getMousePosition(); // Sets stored_mouse_input[0] to position on left-click
+        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) stored_mouse_input_l.* = rl.getMousePosition(); // Sets stored_mouse_input[0] to position on left-click
         if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_right)) stored_mouse_input_r.* = rl.getMouseDelta(); // Sets stored_mouse_input[1] to right-mouse down delta
     }
     stored_mousewheel.* += rl.getMouseWheelMove();
@@ -276,11 +281,21 @@ fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vec
 
 fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vector2, mousewheel_delta: f32, key_input: u32, profile_frame: bool) void {
     if (profile_frame) u.startTimer(1, "- Updating controls.");
-    if (build_guide != null) {
-        if (stored_mouse_input_r.y == 0.01) { // Cancels build guide if mouse right pressed
+    if (build_guide != null) { // While build guide is active
+        if (stored_mouse_input_r.equals(rl.Vector2.zero()) == 0) { // If mouse right is pressed, cancels build guide
             build_guide = null;
-        } else if (u.mouseMoved(rl.getMouseDelta())) { // Left mouse changes player direction
-            player.direction = u.vectorToDir(u.screenToPlayer(stored_mouse_input_l)); // <- build guide mouse move control
+        } else if (u.mouseMoved(rl.getMouseDelta())) { // Left mouse movement
+            player.direction = u.vectorToDir(u.screenToPlayer(stored_mouse_input_l)); // Changes player direction
+        }
+    } else { // Whenever build guide is inactive
+        if (stored_mouse_input_l.equals(rl.Vector2.zero()) == 0) { // If mouse left is clicked, checks/stores selection
+            const map_coords = u.screenToMap(stored_mouse_input_l);
+            selected = grid.collidesWith(map_coords[0], map_coords[1], 1, 1, null) catch null; // Sets variable directly to entity or null
+            if (selected) |s| {
+                std.debug.print("Selected entity {}.\n", .{@intFromPtr(s)});
+            } else {
+                std.debug.print("Deselected entity.\n", .{});
+            }
         }
     }
     updateCanvasZoom(mousewheel_delta);
@@ -382,8 +397,8 @@ pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
     const margin_h: f32 = screen_height_float / 10.0;
     const effective_speed: f32 = @as(f32, @floatCast(SCROLL_SPEED)) / @max(1, canvas_zoom * 0.1);
 
-    if ((key_input & (1 << 9)) != 0) { // Space key centers camera on player
-        u.canvasOnPlayer();
+    if ((key_input & (1 << 9)) != 0) { // Space key centers camera on player/selected
+        if (selected == null) u.canvasOnPlayer() else u.canvasOnEntity(selected.?);
     } else if (mouse_input_r.x != 0 or mouse_input_r.y != 0) { // Right-button drags canvas
         canvas_offset_x += mouse_input_r.x * 2;
         canvas_offset_y += mouse_input_r.y * 2;
