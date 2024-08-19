@@ -500,7 +500,7 @@ pub fn moveDivison(life: i16) bool {
 // Maybe refactor to abstract the build_index/class relation to allow tech trees
 pub fn executeBuild(build_index: u8) void {
     const class = build_index; // <-- change this?
-    if (!isInBuildDistance(class)) return;
+    if (!isInBuildDistance()) return;
     const xy = findBuildPosition(build_index);
     const built = entity.Structure.construct(xy[0], xy[1], class);
     if (built) |building| {
@@ -514,8 +514,8 @@ pub fn executeBuild(build_index: u8) void {
 
 fn findBuildPosition(class: u8) [2]u16 {
     const building = entity.Structure.preset(class);
-    const x_offset = u.asF32(u16, building.width) / 2 * canvas_zoom;
-    const y_offset = u.asF32(u16, building.height) / 2 * canvas_zoom;
+    const x_offset = u.asF32(u16, u.Subcell.size) * canvas_zoom;
+    const y_offset = u.asF32(u16, u.Subcell.size) * canvas_zoom;
     const mouse_position = rl.getMousePosition();
 
     const adjusted_position = mouse_position.add(rl.Vector2.init(x_offset, y_offset));
@@ -525,9 +525,9 @@ fn findBuildPosition(class: u8) [2]u16 {
     return [2]u16{ snapped[0], snapped[1] };
 }
 
-fn isInBuildDistance(class: u8) bool {
+fn isInBuildDistance() bool {
     const subcell_center = u.screenToSubcell(rl.getMousePosition()).center();
-    const distance_max = u.asU32(u16, entity.Structure.preset(class).width + entity.Structure.preset(class).height);
+    const distance_max = u.Grid.cell_half; //u.asU32(u16, entity.Structure.preset(class).width + entity.Structure.preset(class).height);
     const distance = std.math.sqrt(u.distanceSquared(u.Point.at(player.x, player.y), u.Point.at(subcell_center[0], subcell_center[1])));
     return distance <= distance_max;
 }
@@ -536,7 +536,7 @@ pub fn drawGuide(class: u8) void {
     const xy = findBuildPosition(class);
     const building = entity.Structure.preset(class);
     const collides = grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;
-    if (collides != null or !isInBuildDistance(class) or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
+    if (collides != null or !isInBuildDistance() or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
         u.drawGuideFail(xy[0], xy[1], building.width, building.height, building.color);
     } else {
         u.drawGuide(xy[0], xy[1], building.width, building.height, building.color);
