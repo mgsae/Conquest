@@ -1063,18 +1063,169 @@ pub fn screenToMap(screen_position: rl.Vector2) [2]u16 {
     return [2]u16{ zoomed_x, zoomed_y };
 }
 
-/// Returns vector distance from `screen_position` to the current canvas position of the local player.
-pub fn screenToPlayer(screen_position: rl.Vector2) rl.Vector2 {
-    const player_x = canvasX(main.player.x - @divTrunc(main.player.width, 2), main.canvas_offset_x, main.canvas_zoom);
-    const player_y = canvasY(main.player.y - @divTrunc(main.player.height, 2), main.canvas_offset_y, main.canvas_zoom);
-    return rl.Vector2.init(screen_position.x - @as(f32, @floatFromInt(player_x)), screen_position.y - @as(f32, @floatFromInt(player_y)));
-}
-
 /// Returns the subcell corresponding to `screen_position` given the current zoom and canvas offset.
 pub fn screenToSubcell(screen_position: rl.Vector2) Subcell {
     const map_coords = screenToMap(screen_position);
     return Subcell.at(map_coords[0], map_coords[1]);
 }
+
+/// Returns vector distance from `screen_position` to the current canvas position of the local player.
+pub fn screenToPlayerVector(screen_position: rl.Vector2) rl.Vector2 {
+    const player_x = canvasX(main.player.x - @divTrunc(main.player.width, 2), main.canvas_offset_x, main.canvas_zoom);
+    const player_y = canvasY(main.player.y - @divTrunc(main.player.height, 2), main.canvas_offset_y, main.canvas_zoom);
+    return rl.Vector2.init(screen_position.x - @as(f32, @floatFromInt(player_x)), screen_position.y - @as(f32, @floatFromInt(player_y)));
+}
+
+// Animation
+//----------------------------------------------------------------------------------
+const Interpolation = struct {
+    pub fn getProgress(start_frame: u64, current_frame: u64, duration: u64) f32 {
+        return asF32(u64, (current_frame - start_frame)) / asF32(u64, duration);
+    }
+
+    pub fn linear(t: f32, p0: Point, p1: Point) Point {
+        const x = p0.x + (p1.x - p0.x) * t;
+        const y = p0.y + (p1.y - p0.y) * t;
+        return Point{ .x = x, .y = y };
+    }
+
+    pub fn quadratic(t: f32, p0: Point, p1: Point, p2: Point) Point {
+        const one_minus_t = 1.0 - t;
+        const x = one_minus_t * one_minus_t * p0.x + 2.0 * one_minus_t * t * p1.x + t * t * p2.x;
+        const y = one_minus_t * one_minus_t * p0.y + 2.0 * one_minus_t * t * p1.y + t * t * p2.y;
+        return Point{ .x = x, .y = y };
+    }
+
+    pub fn bezier(t: f32, p0: Point, p1: Point, p2: Point, p3: Point) Point {
+        const one_minus_t = 1.0 - t;
+        const x = one_minus_t * one_minus_t * one_minus_t * p0.x +
+            3.0 * one_minus_t * one_minus_t * t * p1.x +
+            3.0 * one_minus_t * t * t * p2.x +
+            t * t * t * p3.x;
+        const y = one_minus_t * one_minus_t * one_minus_t * p0.y +
+            3.0 * one_minus_t * one_minus_t * t * p1.y +
+            3.0 * one_minus_t * t * t * p2.y +
+            t * t * t * p3.y;
+        return Point{ .x = x, .y = y };
+    }
+
+    pub fn catmullrom(t: f32, p0: Point, p1: Point, p2: Point, p3: Point) Point {
+        const t2 = t * t;
+        const t3 = t2 * t;
+
+        const x = 0.5 * ((2.0 * p1.x) +
+            (-p0.x + p2.x) * t +
+            (2.0 * p0.x - 5.0 * p1.x + 4.0 * p2.x - p3.x) * t2 +
+            (-p0.x + 3.0 * p1.x - 3.0 * p2.x + p3.x) * t3);
+
+        const y = 0.5 * ((2.0 * p1.y) +
+            (-p0.y + p2.y) * t +
+            (2.0 * p0.y - 5.0 * p1.y + 4.0 * p2.y - p3.y) * t2 +
+            (-p0.y + 3.0 * p1.y - 3.0 * p2.y + p3.y) * t3);
+
+        return Point{ .x = x, .y = y };
+    }
+};
+
+const Joint = struct {
+    point: Point,
+    connected_joints: []const Joint, // Array of references to connected joints
+    distance: f32, // The distance to the connected joint
+};
+
+const Model = struct {
+    joints: []Joint, // Array of joints in the model
+
+    pub fn new(joints: []Joint) Model {
+        return Model{
+            .joints = joints,
+        };
+    }
+
+    pub fn update(self: *Model, anchor_index: usize, new_anchor_position: Point) void {
+        // Move the anchor joint to the new position
+        self.joints[anchor_index].point = new_anchor_position;
+
+        // Adjust other joints based on their constraints
+        for (self.joints, 0..) |*joint, i| {
+            if (i == anchor_index) continue;
+
+            for (joint.connected_joints, 0..) |connected_index, j| {
+                const connected_joint = &self.joints[connected_index];
+                const target_distance = joint.distances[j];
+
+                // Calculate current distance
+                const dx = connected_joint.point.x - joint.point.x;
+                const dy = connected_joint.point.y - joint.point.y;
+                const current_distance = fastSqrt(dx * dx + dy * dy);
+
+                if (current_distance != target_distance) {
+                    const correction = (target_distance - current_distance) / current_distance;
+                    joint.point.x += dx * correction;
+                    joint.point.y += dy * correction;
+                }
+            }
+        }
+    }
+
+    pub fn addJoint(self: *Model, point: Point, connections: []usize, distances: []f32) void {
+        assert(connections.len == distances.len);
+        const new_joint = Joint{
+            .point = point,
+            .connected_joints = connections,
+            .distances = distances,
+        };
+        self.joints.append(new_joint);
+    }
+
+    pub fn getJoints(self: *Model) []const Point {
+        var points = []Point{};
+        for (self.joints) |joint| {
+            points.append(joint.point);
+        }
+        return points;
+    }
+
+    fn calculateDistance(p0: Point, p1: Point) f32 {
+        const dx = p1.x - p0.x;
+        const dy = p1.y - p0.y;
+        return fastSqrt(dx * dx + dy * dy);
+    }
+
+    /// Creates a snake-like model with the specified number of joints
+    /// starting from an initial position and with a specified distance between joints.
+    pub fn createSnake(joint_count: usize, initial_position: Point, distance: f32) Model {
+        var joints = []Joint{};
+        const dx = distance;
+
+        // Create the first joint (anchor)
+        joints.append(Joint{
+            .point = initial_position,
+            .connected_joints = &[_]usize{1},
+            .distances = &[_]f32{distance},
+        });
+
+        // Create subsequent joints
+        for (1..joint_count) |i| {
+            joints.append(Joint{
+                .point = Point{
+                    .x = initial_position.x + @as(f32, i) * dx,
+                    .y = initial_position.y,
+                },
+                .connected_joints = &[_]usize{ i - 1, i + 1 },
+                .distances = &[_]f32{ distance, distance },
+            });
+        }
+
+        // Adjust the last joint to only connect to the previous one
+        if (joint_count > 1) {
+            joints[joint_count - 1].connected_joints = &[_]usize{joint_count - 2};
+            joints[joint_count - 1].distances = &[_]f32{distance};
+        }
+
+        return Model.new(joints);
+    }
+};
 
 // Drawing
 //----------------------------------------------------------------------------------

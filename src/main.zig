@@ -11,15 +11,18 @@ pub const Config = struct {
     pub const PLAYER_SEARCH_LIMIT = 2056; // Player collision search limit, must exceed #entities in 3x3 cells
     pub const UNIT_SEARCH_LIMIT = 1028; // Unit collision search limit
     pub const BUFFERSIZE = 65536; // Limit to number of entities updated via sectionSearch per tick
-    pub var last_tick_time: f64 = 0.0;
     pub var frame_number: u64 = 0;
+    pub var tick_number: u64 = undefined; // Ersatz server tick
+    pub var last_tick_time: f64 = 0.0;
     pub var profile_mode = false;
     pub var profile_timer = [4]f64{ 0, 0, 0, 0 };
     pub var keys: u.Key = undefined; // Keybindings
-    pub var tick_number: u64 = undefined; // Ersatz server tick
 };
 
 // Camera
+pub const Camera = struct {
+    // move frame_number here
+};
 pub const SCROLL_SPEED: f16 = 25.0;
 pub const SCROLL_RATE: f16 = 25.0; // use when setting canvas_offset_x/y target
 pub const ZOOM_MAX = 10.0; // Larger number = further zoomed in
@@ -282,6 +285,8 @@ fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vec
     if (rl.isKeyPressed(rl.KeyboardKey.key_enter) or rl.isKeyPressed(rl.KeyboardKey.key_kp_enter)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Enter);
 }
 
+// Game loop: Controls
+//----------------------------------------------------------------------------------
 fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vector2, mousewheel_delta: f32, key_input: u32, profile_frame: bool) void {
     if (profile_frame) u.startTimer(1, "- Updating controls.");
     if (build_guide != null) { // While build guide is active
@@ -307,69 +312,6 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
     updateCanvasPosition(stored_mouse_input_r, key_input);
     if (Config.keys.actionActive(key_input, u.Key.Action.SpecialEnter)) Config.profile_mode = !Config.profile_mode; // Enter toggles profile mode (verbose logs) for now
     if (profile_frame) u.endTimer(1, "Updating controls took {} seconds.");
-}
-
-fn updateEntities(key_input: u32, profile_frame: bool) !void {
-    // Reminder:
-    // Entities rely on sectionSearch for collision, which retrieves a list from grid.sections.
-    // The updateSections function is responsible for regenerating grid.sections based on the current state of grid.cells.
-    // This means that any entity removed from grid.cells via grid.removeFromCell (e.g. removeEntities -> unit.remove -> grid.removeFromCell)
-    // should no longer appear in grid.sections ***after*** updateSections has run. But have now added removeFromAllSections to unit.remove,
-    // which ***should*** ensure that any reference is removed from the grid after removeEntities runs.
-
-    // Players
-    if (profile_frame) u.startTimer(1, "- Updating players.");
-    for (e.players.items) |p| {
-        // Life / lifecycle ?
-        if (p == player) {
-            try p.update(key_input);
-        } else {
-            try p.update(null);
-        }
-    }
-    if (profile_frame) u.endTimer(1, "Updating players took {} seconds.");
-
-    // Structures
-    if (profile_frame) u.startTimer(1, "- Updating structures.");
-    for (e.structures.items) |structure| {
-        if (structure.life == -u.i16max) {
-            try dead_structures.append(structure); // To be destroyed in removeEntities
-        } else {
-            structure.update();
-        }
-    }
-    if (profile_frame) u.endTimer(1, "Updating structures took {} seconds.");
-
-    // Units
-    if (profile_frame) u.startTimer(1, "- Updating units.");
-    for (e.units.items) |unit| {
-        if (unit.life == -u.i16max) {
-            try dead_units.append(unit); // To be destroyed in removeEntities
-        } else {
-            try unit.update();
-        }
-    }
-    if (profile_frame) u.endTimer(1, "Updating units took {} seconds.");
-}
-
-fn removeEntities() !void {
-    for (dead_units.items) |unit| { // Second: Destroys units that were marked for destruction
-        //std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
-        try unit.remove();
-    }
-    dead_units.clearAndFree();
-}
-
-fn draw(profile_frame: bool) void {
-    if (profile_frame) u.startTimer(1, "- Drawing map.");
-    drawMap();
-    if (profile_frame) u.endTimer(1, "Drawing map took {} seconds.");
-    if (profile_frame) u.startTimer(1, "- Drawing entities.");
-    drawEntities();
-    if (profile_frame) u.endTimer(1, "Drawing entities took {} seconds.");
-    if (profile_frame) u.startTimer(1, "- Drawing UI.");
-    drawInterface();
-    if (profile_frame) u.endTimer(1, "Drawing UI took {} seconds.");
 }
 
 pub fn updateCanvasZoom(mousewheel_delta: f32) void {
@@ -443,6 +385,74 @@ pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
     if (canvas_offset_y < min_offset_y) canvas_offset_y = min_offset_y;
 }
 
+// Game loop: Entities
+//----------------------------------------------------------------------------------
+// Reminder:
+// Entities rely on sectionSearch for collision, which retrieves a list from grid.sections.
+// The updateSections function is responsible for regenerating grid.sections based on the current state of grid.cells.
+// This means that any entity removed from grid.cells (e.g. removeEntities -> unit.remove -> grid.removeFromCell)
+// should no longer appear in grid.sections ***after*** updateSections has run. But have now added removeFromAllSections
+// to unit.remove, which ***should*** ensure that any reference is removed from the grid after removeEntities runs.
+
+fn updateEntities(key_input: u32, profile_frame: bool) !void {
+    // Players
+    if (profile_frame) u.startTimer(1, "- Updating players.");
+    for (e.players.items) |p| {
+        // Life / lifecycle ?
+        if (p == player) {
+            try p.update(key_input);
+        } else {
+            try p.update(null);
+        }
+    }
+    if (profile_frame) u.endTimer(1, "Updating players took {} seconds.");
+
+    // Structures
+    if (profile_frame) u.startTimer(1, "- Updating structures.");
+    for (e.structures.items) |structure| {
+        if (structure.life == -u.i16max) {
+            try dead_structures.append(structure); // To be destroyed in removeEntities
+        } else {
+            structure.update();
+        }
+    }
+    if (profile_frame) u.endTimer(1, "Updating structures took {} seconds.");
+
+    // Units
+    if (profile_frame) u.startTimer(1, "- Updating units.");
+    for (e.units.items) |unit| {
+        if (unit.life == -u.i16max) {
+            try dead_units.append(unit); // To be destroyed in removeEntities
+        } else {
+            try unit.update();
+        }
+    }
+    if (profile_frame) u.endTimer(1, "Updating units took {} seconds.");
+}
+
+fn removeEntities() !void {
+    for (dead_units.items) |unit| { // Second: Destroys units that were marked for destruction
+        //std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
+        try unit.remove();
+    }
+    dead_units.clearAndFree();
+}
+
+// Game loop: Drawing
+//----------------------------------------------------------------------------------
+
+fn draw(profile_frame: bool) void {
+    if (profile_frame) u.startTimer(1, "- Drawing map.");
+    drawMap();
+    if (profile_frame) u.endTimer(1, "Drawing map took {} seconds.");
+    if (profile_frame) u.startTimer(1, "- Drawing entities.");
+    drawEntities();
+    if (profile_frame) u.endTimer(1, "Drawing entities took {} seconds.");
+    if (profile_frame) u.startTimer(1, "- Drawing UI.");
+    drawInterface();
+    if (profile_frame) u.endTimer(1, "Drawing UI took {} seconds.");
+}
+
 /// Draws map and grid markers relative to current canvas
 pub fn drawMap() void {
     // Draw the map area
@@ -497,15 +507,15 @@ pub fn drawInterface() void {
     rl.drawFPS(40, 40);
 }
 
-/// Sets map dimensions and updates the camera zoom out limit.
+// Game conditions
+//----------------------------------------------------------------------------------
+
 pub fn setMapSize(width: u16, height: u16) void {
     map_width = width;
-    map_height = height;
+    map_height = height; // Updates camera zoom out limit
     canvas_max = u.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), map_width, map_height);
 }
 
-// Game conditions
-//----------------------------------------------------------------------------------
 pub fn startingLocations(allocator: *std.mem.Allocator, player_count: u8) ![]u.Point {
     const offset = u.Grid.cell_size * 3;
     const coordinates: [4]u.Point = [_]u.Point{
@@ -534,6 +544,8 @@ pub fn moveDivision(life: i16) bool {
     return @rem(life, MOVEMENT_DIVISIONS) == 0;
 }
 
+// Game controls interaction
+//----------------------------------------------------------------------------------
 pub fn executeBuild(class: u8) void {
     if (!isInBuildDistance()) return;
     const xy = findBuildPosition(class);
@@ -568,6 +580,8 @@ fn isInBuildDistance() bool {
     return distance <= distance_max;
 }
 
+// Interface
+//----------------------------------------------------------------------------------
 pub fn drawGuide(class: u8) void {
     const xy = findBuildPosition(class);
     const building = e.Structure.preset(class);
