@@ -84,22 +84,22 @@ pub const Player = struct {
     local: bool = false,
 
     pub fn draw(self: Player, alpha: f32) void {
-        if (main.selected == self.entity) { // If selected, draws circle
+        if (main.Player.selected == self.entity) { // If selected by local player, draws circle
             u.drawCircle(self.x, self.y, u.Grid.cell_half, u.opacity(self.color, alpha * 0.125));
         }
         u.drawPlayer(self.x, self.y, self.width, self.height, u.opacity(self.color, alpha));
     }
 
-    pub fn update(self: *Player, key_input: ?u32) anyerror!void {
+    pub fn update(self: *Player) anyerror!void {
         if (self.local) { // Local player
-            if (key_input) |input| {
-                if (input > 0) {
-                    // std.debug.print("Key input!\n", .{});
-                    try self.updateMoveInput(input);
-                    updateActionInput(input);
-                } else {
-                    // std.debug.print("No key input.\n", .{});
-                }
+            if (main.Player.changed_x != null or main.Player.changed_y != null) { // Input processed in main
+                try self.executeMovement(main.Player.changed_x, main.Player.changed_y, self.speed);
+                main.Player.changed_x = null;
+                main.Player.changed_y = null;
+            }
+            if (main.Player.build_order != null) { // Input processed in main
+                main.executeBuild(main.Player.build_order.?);
+                main.Player.build_order = null;
             }
         } else { // If AI or remote player
             // updateMoveEvent, determine movement based on network or AI logic
@@ -107,29 +107,7 @@ pub const Player = struct {
         }
     }
 
-    fn updateMoveInput(self: *Player, key_input: u32) !void {
-        const speed = u.scaleToTickRate(self.speed);
-        var changed_x: ?u16 = null;
-        var changed_y: ?u16 = null;
-
-        // Processes movement input
-        if (main.Config.keys.actionActive(key_input, u.Key.Action.MoveUp)) {
-            changed_y = u.mapClampY(@truncate(u.i32SubFloat(f32, self.y, speed)), self.height);
-        }
-        if (main.Config.keys.actionActive(key_input, u.Key.Action.MoveLeft)) {
-            changed_x = u.mapClampX(@truncate(u.i32SubFloat(f32, self.x, speed)), self.width);
-        }
-        if (main.Config.keys.actionActive(key_input, u.Key.Action.MoveDown)) {
-            changed_y = u.mapClampY(@truncate(u.i32AddFloat(f32, self.y, speed)), self.height);
-        }
-        if (main.Config.keys.actionActive(key_input, u.Key.Action.MoveRight)) {
-            changed_x = u.mapClampX(@truncate(u.i32AddFloat(f32, self.x, speed)), self.width);
-        }
-
-        if (changed_x != null or changed_y != null) try executeMovement(self, changed_x, changed_y, speed);
-    }
-
-    fn executeMovement(self: *Player, changed_x: ?u16, changed_y: ?u16, speed: f32) !void {
+    pub fn executeMovement(self: *Player, changed_x: ?u16, changed_y: ?u16, speed: f32) !void {
         const old_x = self.x;
         const old_y = self.y;
         var obstacleX: ?*Entity = null;
@@ -140,11 +118,11 @@ pub const Player = struct {
         // std.debug.print("Player movement direction: {}. Delta to angle: {}. Angle from dir: {}. Vector to delta: {any}.\n", .{ self.direction, @as(i64, @intFromFloat(u.deltaToAngle(deltaXy[0], deltaXy[1]))), u.angleFromDir(self.direction), u.vectorToDelta(u.deltaToAngle(deltaXy[0], deltaXy[1]), speed) });
 
         // Gets potential obstacle entities on both axes
-        if (changed_x != null) obstacleX = main.grid.collidesWith(changed_x.?, self.y, self.width, self.height, self.entity) catch null;
-        if (changed_y != null) obstacleY = main.grid.collidesWith(self.x, changed_y.?, self.width, self.height, self.entity) catch null;
+        if (changed_x != null) obstacleX = main.World.grid.collidesWith(changed_x.?, self.y, self.width, self.height, self.entity) catch null;
+        if (changed_y != null) obstacleY = main.World.grid.collidesWith(self.x, changed_y.?, self.width, self.height, self.entity) catch null;
 
         if (changed_x != null and changed_y != null) { // Executes diagonal movement
-            const diagonal_obstacle = main.grid.collidesWith(changed_x.?, changed_y.?, self.width, self.height, self.entity) catch null;
+            const diagonal_obstacle = main.World.grid.collidesWith(changed_x.?, changed_y.?, self.width, self.height, self.entity) catch null;
             if (diagonal_obstacle == null) {
                 self.x = changed_x.?;
                 self.y = changed_y.?;
@@ -171,7 +149,7 @@ pub const Player = struct {
 
         // If new movement, updates game grid
         if ((changed_x != null and changed_x.? != old_x) or (changed_y != null and changed_y.? != old_y)) {
-            main.grid.updateCellMembership(self.entity, old_x, old_y);
+            main.World.grid.updateCellMembership(self.entity, old_x, old_y);
         }
     }
 
@@ -186,10 +164,10 @@ pub const Player = struct {
         const push_distance = obstacle.ref.Unit.pushed(angle, speed * force);
         std.debug.print("Pushing horizontally, angle: {}, distance: {}", .{ angle, speed * force });
         if (push_distance >= speed * force) {
-            second_obstacle = main.grid.collidesWith(pushed_x, self.y, self.width, self.height, self.entity) catch null;
+            second_obstacle = main.World.grid.collidesWith(pushed_x, self.y, self.width, self.height, self.entity) catch null;
         } else {
             pushed_x = @as(u16, @intCast(@as(i32, old_x) + @as(i32, @intFromFloat(push_distance)))); // Moves effective push distance and re-checks collision
-            second_obstacle = main.grid.collidesWith(pushed_x, self.y, self.width, self.height, self.entity) catch null;
+            second_obstacle = main.World.grid.collidesWith(pushed_x, self.y, self.width, self.height, self.entity) catch null;
         }
         std.debug.print("self.x was {}, pushed x now: {}. but second obstacle? {any}\n", .{ self.x, pushed_x, second_obstacle });
         if (second_obstacle == null) self.x = pushed_x; // If no collision now, repositions x
@@ -206,47 +184,18 @@ pub const Player = struct {
         const push_distance = obstacle.ref.Unit.pushed(angle, speed * force);
         std.debug.print("Pushing vertically, angle: {}, distance: {}\n", .{ angle, speed * force });
         if (push_distance >= speed * force) {
-            second_obstacle = main.grid.collidesWith(self.x, pushed_y, self.width, self.height, self.entity) catch null;
+            second_obstacle = main.World.grid.collidesWith(self.x, pushed_y, self.width, self.height, self.entity) catch null;
         } else {
             pushed_y = @as(u16, @intCast(@as(i32, old_y) + @as(i32, @intFromFloat(push_distance)))); // Moves effective push distance and re-checks collision
-            second_obstacle = main.grid.collidesWith(self.x, pushed_y, self.width, self.height, self.entity) catch null;
+            second_obstacle = main.World.grid.collidesWith(self.x, pushed_y, self.width, self.height, self.entity) catch null;
         }
         std.debug.print("self.y was {}, pushed y now: {}. but second obstacle? {any}\n", .{ self.y, pushed_y, second_obstacle });
         if (second_obstacle == null) self.y = pushed_y; // If no collision now, repositions x
     }
 
-    // Maybe move to main
-    fn updateActionInput(key_input: u32) void {
-        if (main.Config.keys.actionActive(key_input, u.Key.Action.BuildConfirm)) {
-            if (main.build_guide != null) {
-                main.executeBuild(main.build_guide.?);
-            }
-            return;
-        }
-
-        var build_index: ?u8 = null;
-        if (main.Config.keys.actionActive(key_input, u.Key.Action.BuildOne)) {
-            build_index = 0;
-        } else if (main.Config.keys.actionActive(key_input, u.Key.Action.BuildTwo)) {
-            build_index = 1;
-        } else if (main.Config.keys.actionActive(key_input, u.Key.Action.BuildThree)) {
-            build_index = 2;
-        } else if (main.Config.keys.actionActive(key_input, u.Key.Action.BuildFour)) {
-            build_index = 3;
-        }
-
-        if (build_index != null) { // Sets build guide
-            if (main.build_guide == null or main.build_guide.? != build_index.?) {
-                main.build_guide = build_index;
-            } else {
-                main.build_guide = null;
-            }
-        }
-    }
-
     pub fn createLocal(x: u16, y: u16) !*Player {
-        const entity = try main.grid.allocator.create(Entity); // Allocate memory for the parent entity
-        const player = try main.grid.allocator.create(Player); // Allocate memory for Player and get a pointer
+        const entity = try main.World.grid.allocator.create(Entity); // Allocate memory for the parent entity
+        const player = try main.World.grid.allocator.create(Player); // Allocate memory for Player and get a pointer
 
         player.* = Player{
             .entity = entity,
@@ -264,13 +213,13 @@ pub const Player = struct {
         };
 
         std.debug.print("Created local player at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entity) });
-        try main.grid.addToCell(entity, null, null);
+        try main.World.grid.addToCell(entity, null, null);
         return player;
     }
 
     pub fn createRemote(x: u16, y: u16) !*Player {
-        const entity = try main.grid.allocator.create(Entity); // Allocate memory for the parent entity
-        const player = try main.grid.allocator.create(Player); // Allocate memory for Player and get a pointer
+        const entity = try main.World.grid.allocator.create(Entity); // Allocate memory for the parent entity
+        const player = try main.World.grid.allocator.create(Player); // Allocate memory for Player and get a pointer
 
         player.* = Player{
             .entity = entity,
@@ -288,7 +237,7 @@ pub const Player = struct {
         };
 
         std.debug.print("Created remote player at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entity) });
-        try main.grid.addToCell(entity, null, null);
+        try main.World.grid.addToCell(entity, null, null);
         return player;
     }
 };
@@ -310,7 +259,7 @@ pub const Unit = struct {
 
     pub fn draw(self: *Unit, alpha: f32) void {
         u.drawEntityInterpolated(self.x, self.y, self.width, self.height, u.opacity(self.color(), alpha), self.last_step, self.life);
-        if (main.selected == self.entity) { // If selected, draws target point
+        if (main.Player.selected == self.entity) { // If selected by player, draws target point
             u.drawCircleLine(self.target.x, self.target.y, 100, u.opacity(self.color(), alpha / 2));
         }
     }
@@ -340,7 +289,7 @@ pub const Unit = struct {
                 const clamped_y = u.mapClampY(@as(i16, @intCast(new_y)), self.height);
                 _ = self.tryMove(clamped_x, clamped_y, old_x, old_y);
             }
-            _ = self.retarget(u.randomU16(main.map_width), u.randomU16(main.map_height)); // <--- just testing
+            _ = self.retarget(u.randomU16(main.World.width), u.randomU16(main.World.height)); // <--- just testing
             return;
         }
 
@@ -349,7 +298,7 @@ pub const Unit = struct {
         }
 
         if (old_x == self.x and old_y == self.y) { // If no change after moving, retarget
-            _ = self.retarget(u.randomU16(main.map_width), u.randomU16(main.map_height)); // <--- just testing
+            _ = self.retarget(u.randomU16(main.World.width), u.randomU16(main.World.height)); // <--- just testing
             return;
         }
     }
@@ -367,7 +316,7 @@ pub const Unit = struct {
         if (collision == null) { // No obstacle, move
             self.x = new_x;
             self.y = new_y;
-            main.grid.updateCellMembership(self.entity, old_x, old_y);
+            main.World.grid.updateCellMembership(self.entity, old_x, old_y);
             return true;
         }
         return false;
@@ -393,7 +342,7 @@ pub const Unit = struct {
 
     /// Iterates through entities from current cell's index of `Grid.sections`. Checks for AABB collisions. Returns the first colliding `*Entity`, otherwise null.
     fn checkCollision(self: *Unit, x: u16, y: u16) ?*Entity {
-        const entities = main.grid.sectionEntities(u.Grid.x(x), u.Grid.y(y));
+        const entities = main.World.grid.sectionEntities(u.Grid.x(x), u.Grid.y(y));
         if (entities != null) {
             const half_width = @divTrunc(self.width, 2);
             const half_height = @divTrunc(self.height, 2);
@@ -446,12 +395,12 @@ pub const Unit = struct {
 
         if (!u.isInMap(new_x, new_y, self.width, self.height)) return moved_distance;
 
-        const obstacle = main.grid.collidesWith(new_x, new_y, self.width, self.height, self.entity) catch null;
+        const obstacle = main.World.grid.collidesWith(new_x, new_y, self.width, self.height, self.entity) catch null;
 
         if (obstacle == null) { // Pushing doesn't collide with another obstacle
             self.x = new_x;
             self.y = new_y;
-            main.grid.updateCellMembership(self.entity, old_x, old_y);
+            main.World.grid.updateCellMembership(self.entity, old_x, old_y);
         } else if (obstacle.?.kind == Kind.Unit) { // Pushed unit collides with another unit
 
             const obstacle_unit = obstacle.?.ref.Unit;
@@ -540,8 +489,8 @@ pub const Unit = struct {
     }
 
     pub fn create(x: u16, y: u16, class: u8) !*Unit {
-        const entity = try main.grid.allocator.create(Entity); // Memory for the parent entity
-        const unit = try main.grid.allocator.create(Unit); // Memory for Unit
+        const entity = try main.World.grid.allocator.create(Entity); // Memory for the parent entity
+        const unit = try main.World.grid.allocator.create(Unit); // Memory for Unit
         const from_class = Unit.preset(class);
 
         unit.* = Unit{
@@ -552,7 +501,7 @@ pub const Unit = struct {
             .life = from_class.life,
             .x = x,
             .y = y,
-            .target = u.Point.at(u.randomU16(main.map_width), u.randomU16(main.map_height)), // <--- just testing
+            .target = u.Point.at(u.randomU16(main.World.width), u.randomU16(main.World.height)), // <--- just testing
             .last_step = u.Point.at(x, y),
             .cached_cellsigns = [_]u32{0} ** 9,
             .mode = 0,
@@ -563,7 +512,7 @@ pub const Unit = struct {
             .ref = .{ .Unit = unit }, // Store the pointer to the Unit
         };
 
-        try main.grid.addToCell(entity, null, null);
+        try main.World.grid.addToCell(entity, null, null);
         return unit;
     }
 
@@ -580,14 +529,14 @@ pub const Unit = struct {
     }
 
     pub fn remove(self: *Unit) !void {
-        try main.grid.removeFromCell(self.entity, null, null); // Removes entity from grid
-        try main.grid.removeFromAllSections(self.entity);
+        try main.World.grid.removeFromCell(self.entity, null, null); // Removes entity from grid
+        try main.World.grid.removeFromAllSections(self.entity);
         try u.findAndSwapRemove(Unit, &units, self); // Removes unit from the units collection
         for (units.items) |unit| {
             std.debug.assert(unit != self); // For debugging, unit must be removed at this point
         }
-        main.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
-        main.grid.allocator.destroy(self); // Deallocates memory for the Unit
+        main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
+        main.World.grid.allocator.destroy(self); // Deallocates memory for the Unit
     }
 
     /// `Unit` property template fields determined by `class`.
@@ -611,7 +560,7 @@ pub const Unit = struct {
     }
 
     pub fn speed(self: *Unit) f16 {
-        return Unit.preset(self.class).speed * main.MOVEMENT_DIVISIONS;
+        return Unit.preset(self.class).speed * main.World.MOVEMENT_DIVISIONS;
     }
 
     pub fn color(self: *Unit) rl.Color {
@@ -688,8 +637,8 @@ pub const Structure = struct {
     }
 
     pub fn create(x: u16, y: u16, class: u8) !*Structure {
-        const entity: *Entity = try main.grid.allocator.create(Entity);
-        const structure: *Structure = try main.grid.allocator.create(Structure);
+        const entity: *Entity = try main.World.grid.allocator.create(Entity);
+        const structure: *Structure = try main.World.grid.allocator.create(Structure);
         const from_class = Structure.preset(class);
 
         structure.* = Structure{
@@ -709,12 +658,12 @@ pub const Structure = struct {
             .ref = .{ .Structure = structure },
         };
 
-        try main.grid.addToCell(entity, null, null);
+        try main.World.grid.addToCell(entity, null, null);
         return structure;
     }
 
     pub fn construct(x: u16, y: u16, class: u8) ?*Structure {
-        const collides = main.grid.collidesWith(x, y, preset(class).width, preset(class).height, null) catch return null;
+        const collides = main.World.grid.collidesWith(x, y, preset(class).width, preset(class).height, null) catch return null;
         if (collides != null or !u.isInMap(x, y, preset(class).width, preset(class).height)) {
             return null;
         }
@@ -748,14 +697,14 @@ pub const Structure = struct {
             switch (side_index) {
                 0 => { // Bottom side
                     spawn_x = self.x;
-                    spawn_y = if (self.y + offset_y < main.map_height) self.y + offset_y else self.y - offset_y;
+                    spawn_y = if (self.y + offset_y < main.World.height) self.y + offset_y else self.y - offset_y;
                 },
                 1 => { // Left side
                     spawn_x = if (self.x >= offset_x) self.x - offset_x else self.x + offset_x;
                     spawn_y = self.y;
                 },
                 2 => { // Right side
-                    spawn_x = if (self.x + offset_x < main.map_width) self.x + offset_x else self.x - offset_x;
+                    spawn_x = if (self.x + offset_x < main.World.width) self.x + offset_x else self.x - offset_x;
                     spawn_y = self.y;
                 },
                 3 => { // Top side
@@ -765,7 +714,7 @@ pub const Structure = struct {
                 else => @panic("Unrecognized side"),
             }
             // Check if the calculated spawn point is valid
-            if (try main.grid.collidesWith(spawn_x, spawn_y, unit_width, unit_height, null) == null and u.isInMap(spawn_x, spawn_y, unit_width, unit_height)) {
+            if (try main.World.grid.collidesWith(spawn_x, spawn_y, unit_width, unit_height, null) == null and u.isInMap(spawn_x, spawn_y, unit_width, unit_height)) {
                 return [2]u16{ spawn_x, spawn_y };
             }
         }
@@ -838,7 +787,7 @@ pub const Projectile = struct {
     }
 
     pub fn destroy(self: *Projectile) !void {
-        try main.grid.removeFromCell(self.entity, null, null);
+        try main.World.grid.removeFromCell(self.entity, null, null);
         // no array list of Projectiles, otherwise: try u.findAndSwapRemove(Projectile, &projectiles, @constCast(&self));
     }
 };
@@ -1016,8 +965,8 @@ pub const Grid = struct {
     }
 
     pub fn removeFromCell(self: *Grid, entity: *Entity, old_x: ?u16, old_y: ?u16) !void {
-        const x = std.math.clamp(old_x orelse entity.x(), 0, main.map_width);
-        const y = std.math.clamp(old_y orelse entity.y(), 0, main.map_height);
+        const x = std.math.clamp(old_x orelse entity.x(), 0, main.World.width);
+        const y = std.math.clamp(old_y orelse entity.y(), 0, main.World.height);
         const key = u.SpatialHash.hash(x, y);
 
         //std.log.info("Removing entity {} from grid cell at {},{} (hash {}).", .{ @intFromPtr(entity), x, y, key });
@@ -1122,7 +1071,7 @@ pub const Grid = struct {
             return error.BufferOverflow;
         }
 
-        const offsets = u.Grid.sectionFromPoint(x, y, main.map_width, main.map_height);
+        const offsets = u.Grid.sectionFromPoint(x, y, main.World.width, main.World.height);
 
         for (offsets) |offset| {
             const neighbor_x = offset[0];

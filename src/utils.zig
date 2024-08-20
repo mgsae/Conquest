@@ -51,11 +51,23 @@ pub fn printGridCells(grid: *e.Grid) void {
 }
 
 pub fn perFrame(frequency: u64) bool {
-    return @mod(main.Config.frame_number, frequency) == 0;
+    return @mod(main.Camera.frame_number, frequency) == 0;
 }
 
-pub fn scaleToTickRate(float: f32) f32 { // Delta time capped to tickrate
+/// Limits per-frame value down to tickrate-relative value.
+pub fn limitToTickRate(float: f32) f32 { // Delta time capped to tickrate
     return (float * (@max(@as(f32, @floatCast(main.Config.TICK_DURATION)), rl.getFrameTime()))) * main.Config.TICKRATE;
+}
+
+/// Scales tickrate-relative value up to per-frame value.
+pub fn scaleToFPS(float: f32) f32 {
+    return float * (main.Config.TICKRATE / (1.0 / rl.getFrameTime()));
+}
+
+/// Both scales float up to tickrate-relative value, and limits value to tickrate-relative value.
+/// At 30 FPS, frameAdjusted(100) returns 400. At 60 FPS, frameAdjusted(100) returns 100. At 120 FPS, frameAdjusted(100) returns 50. At 1000 FPS, frameAdjusted(100) returns 6.
+pub fn frameAdjusted(float: f32) f32 {
+    return scaleToFPS(limitToTickRate(float));
 }
 
 // Metaprogramming
@@ -592,7 +604,7 @@ pub fn fastSqrt(number: f32) f32 {
 //----------------------------------------------------------------------------------
 
 pub const Grid = struct {
-    pub const cell_size = main.GRID_CELL_SIZE;
+    pub const cell_size = main.World.GRID_CELL_SIZE;
     pub const cell_half: comptime_int = cell_size / 2;
 
     pub inline fn section() [9][2]i16 {
@@ -734,9 +746,9 @@ pub const SpatialHash = struct {
 
 pub fn testHashFunction() void {
     const min_x: u16 = 0;
-    const max_x: u16 = main.map_width;
+    const max_x: u16 = main.World.width;
     const min_y: u16 = 0;
-    const max_y: u16 = main.map_height;
+    const max_y: u16 = main.World.height;
     const step: u16 = 1;
 
     std.log.info("\nTesting hash function. Checking hash values for positions between {}, {} and {}, {}, with an increment of {}.", .{ min_x, min_y, max_x, max_y, step });
@@ -923,7 +935,7 @@ pub const waypoint: type = struct {
 };
 
 pub fn isOnMap(x: u16, y: u16) bool {
-    return x >= 0 and x < main.map_width and y >= 0 and y <= main.map_height;
+    return x >= 0 and x < main.World.width and y >= 0 and y <= main.World.height;
 }
 
 pub fn isInMap(x: u16, y: u16, width: u16, height: u16) bool {
@@ -933,18 +945,18 @@ pub fn isInMap(x: u16, y: u16, width: u16, height: u16) bool {
     const x_signed = @as(i32, @intCast(x));
     const y_signed = @as(i32, @intCast(y));
 
-    return x_signed - half_width >= 0 and x_signed + half_width < @as(i32, @intCast(main.map_width)) and y_signed - half_height >= 0 and y_signed + half_height <= @as(i32, @intCast(main.map_height));
+    return x_signed - half_width >= 0 and x_signed + half_width < @as(i32, @intCast(main.World.width)) and y_signed - half_height >= 0 and y_signed + half_height <= @as(i32, @intCast(main.World.height));
 }
 
 pub fn mapClampX(x: i16, width: u16) u16 {
     const half_width = @as(i16, @intCast(@divTrunc(width, 2)));
-    const clamped_x = @max(half_width, @min(x, @as(i32, @intCast(main.map_width)) - half_width));
+    const clamped_x = @max(half_width, @min(x, @as(i32, @intCast(main.World.width)) - half_width));
     return @as(u16, @intCast(clamped_x));
 }
 
 pub fn mapClampY(y: i16, height: u16) u16 {
     const half_height = @as(i16, @intCast(@divTrunc(height, 2)));
-    const clamped_y = @max(half_height, @min(y, @as(i32, @intCast(main.map_height)) - half_height));
+    const clamped_y = @max(half_height, @min(y, @as(i32, @intCast(main.World.height)) - half_height));
     return @as(u16, @intCast(clamped_y));
 }
 
@@ -1019,15 +1031,15 @@ pub fn canvasScale(scale: i32, zoom: f32) i32 {
 
 /// Returns the drawn screen-coordinates of world-coordinates `x`,`y` given current camera.
 pub fn mapToCanvas(x: i32, y: i32) [2]i32 {
-    return [2]i32{ canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom) };
+    return [2]i32{ canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom) };
 }
 
 /// Sets canvas offset values to center on the player position.
 pub fn canvasOnPlayer() void {
     const screen_width_f = @as(f32, @floatFromInt(rl.getScreenWidth()));
     const screen_height_f = @as(f32, @floatFromInt(rl.getScreenHeight()));
-    main.canvas_offset_x = -(@as(f32, @floatFromInt(main.player.x)) * main.canvas_zoom) + (screen_width_f / 2);
-    main.canvas_offset_y = -(@as(f32, @floatFromInt(main.player.y)) * main.canvas_zoom) + (screen_height_f / 2);
+    main.Camera.canvas_offset_x_target = -(@as(f32, @floatFromInt(main.Player.self.x)) * main.Camera.canvas_zoom) + (screen_width_f / 2);
+    main.Camera.canvas_offset_y_target = -(@as(f32, @floatFromInt(main.Player.self.y)) * main.Camera.canvas_zoom) + (screen_height_f / 2);
 }
 
 /// Sets canvas offset values to center on the position of `entity`.
@@ -1036,12 +1048,12 @@ pub fn canvasOnEntity(entity: *e.Entity) void {
     const screen_height_f = @as(f32, @floatFromInt(rl.getScreenHeight()));
     if (entity.kind == e.Kind.Unit) { // If entity is unit, movement is interpolated
         const unit = entity.ref.Unit;
-        const xy = interpolateStep(unit.last_step.x, unit.last_step.y, unit.x, unit.y, unit.life, main.MOVEMENT_DIVISIONS);
-        main.canvas_offset_x = -(@as(f32, @floatFromInt(xy[0])) * main.canvas_zoom) + (screen_width_f / 2);
-        main.canvas_offset_y = -(@as(f32, @floatFromInt(xy[1])) * main.canvas_zoom) + (screen_height_f / 2);
+        const xy = interpolateStep(unit.last_step.x, unit.last_step.y, unit.x, unit.y, unit.life, main.World.MOVEMENT_DIVISIONS);
+        main.Camera.canvas_offset_x_target = -(@as(f32, @floatFromInt(xy[0])) * main.Camera.canvas_zoom) + (screen_width_f / 2);
+        main.Camera.canvas_offset_y_target = -(@as(f32, @floatFromInt(xy[1])) * main.Camera.canvas_zoom) + (screen_height_f / 2);
     } else {
-        main.canvas_offset_x = -(@as(f32, @floatFromInt(entity.x())) * main.canvas_zoom) + (screen_width_f / 2);
-        main.canvas_offset_y = -(@as(f32, @floatFromInt(entity.y())) * main.canvas_zoom) + (screen_height_f / 2);
+        main.Camera.canvas_offset_x_target = -(@as(f32, @floatFromInt(entity.x())) * main.Camera.canvas_zoom) + (screen_width_f / 2);
+        main.Camera.canvas_offset_y_target = -(@as(f32, @floatFromInt(entity.y())) * main.Camera.canvas_zoom) + (screen_height_f / 2);
     }
 }
 
@@ -1056,10 +1068,10 @@ pub fn maxCanvasSize(screen_width: i32, screen_height: i32, map_width: u16, map_
 
 /// Returns the `x`,`y` map coordinates currently corresponding to what's drawn to the canvas at `screen_position` (e.g. mouse) in the viewport.
 pub fn screenToMap(screen_position: rl.Vector2) [2]u16 {
-    const x = u16Clamp(f32, screen_position.x - main.canvas_offset_x);
-    const y = u16Clamp(f32, screen_position.y - main.canvas_offset_y);
-    const zoomed_x = @as(u16, @intFromFloat(x / main.canvas_zoom));
-    const zoomed_y = @as(u16, @intFromFloat(y / main.canvas_zoom));
+    const x = u16Clamp(f32, screen_position.x - main.Camera.canvas_offset_x);
+    const y = u16Clamp(f32, screen_position.y - main.Camera.canvas_offset_y);
+    const zoomed_x = @as(u16, @intFromFloat(x / main.Camera.canvas_zoom));
+    const zoomed_y = @as(u16, @intFromFloat(y / main.Camera.canvas_zoom));
     return [2]u16{ zoomed_x, zoomed_y };
 }
 
@@ -1071,8 +1083,8 @@ pub fn screenToSubcell(screen_position: rl.Vector2) Subcell {
 
 /// Returns vector distance from `screen_position` to the current canvas position of the local player.
 pub fn screenToPlayerVector(screen_position: rl.Vector2) rl.Vector2 {
-    const player_x = canvasX(main.player.x - @divTrunc(main.player.width, 2), main.canvas_offset_x, main.canvas_zoom);
-    const player_y = canvasY(main.player.y - @divTrunc(main.player.height, 2), main.canvas_offset_y, main.canvas_zoom);
+    const player_x = canvasX(main.Player.self.x - @divTrunc(main.Player.self.width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom);
+    const player_y = canvasY(main.Player.self.y - @divTrunc(main.Player.self.height, 2), main.Camera.canvas_offset_y, main.Camera.canvas_zoom);
     return rl.Vector2.init(screen_position.x - @as(f32, @floatFromInt(player_x)), screen_position.y - @as(f32, @floatFromInt(player_y)));
 }
 
@@ -1248,29 +1260,29 @@ pub fn drawGuideFail(x: i32, y: i32, width: i32, height: i32, col: rl.Color) voi
 
 /// Uses raylib to draw rectangle scaled and positioned to canvas.
 pub fn drawRect(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
-    rl.drawRectangle(canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom), canvasScale(width, main.canvas_zoom), canvasScale(height, main.canvas_zoom), col);
+    rl.drawRectangle(canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(width, main.Camera.canvas_zoom), canvasScale(height, main.Camera.canvas_zoom), col);
 }
 
 /// Uses raylib to draw circle scaled and positioned to canvas.
 pub fn drawCircle(x: i32, y: i32, radius: f32, col: rl.Color) void {
-    const scale = asF32(i32, canvasScale(asI32(f32, radius), main.canvas_zoom));
-    rl.drawCircle(canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom), scale, col);
+    const scale = asF32(i32, canvasScale(asI32(f32, radius), main.Camera.canvas_zoom));
+    rl.drawCircle(canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), scale, col);
 }
 
 /// Uses raylib to draw a circumference scaled and positioned to canvas.
 pub fn drawCircleLine(x: i32, y: i32, radius: f32, col: rl.Color) void {
-    const scale = asF32(i32, canvasScale(asI32(f32, radius), main.canvas_zoom));
-    rl.drawCircleLines(canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom), scale, col);
+    const scale = asF32(i32, canvasScale(asI32(f32, radius), main.Camera.canvas_zoom));
+    rl.drawCircleLines(canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), scale, col);
 }
 
 /// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawEntity(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
-    rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.canvas_offset_x, main.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.canvas_offset_y, main.canvas_zoom), canvasScale(width, main.canvas_zoom), canvasScale(height, main.canvas_zoom), col);
+    rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(width, main.Camera.canvas_zoom), canvasScale(height, main.Camera.canvas_zoom), col);
 }
 
 /// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas, interpolated by `frame` since `last_step`. The full interpolation interval is determined by `MOVEMENT_DIVISIONS`.
 pub fn drawEntityInterpolated(x: i32, y: i32, width: i32, height: i32, col: rl.Color, last_step: Point, frame: i16) void {
-    const interp_xy = interpolateStep(last_step.x, last_step.y, x, y, frame, main.MOVEMENT_DIVISIONS);
+    const interp_xy = interpolateStep(last_step.x, last_step.y, x, y, frame, main.World.MOVEMENT_DIVISIONS);
     drawEntity(interp_xy[0], interp_xy[1], width, height, col);
 }
 
