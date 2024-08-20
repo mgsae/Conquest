@@ -255,11 +255,15 @@ pub const Unit = struct {
     target: u.Point,
     last_step: u.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
+    model: *u.Model,
 
     pub fn draw(self: *Unit, alpha: f32) void {
-        switch (self.class) {
-            0 => 2,
-            else => u.drawEntityInterpolated(self.x, self.y, self.width, self.height, u.opacity(self.color(), alpha), self.last_step, self.life),
+        if (self.class == 0) { // Testing model for class 0
+            // Draw the model based on its current state
+            u.drawModel(self.model, 16, u.opacity(self.color(), alpha), rl.Color.black);
+        } else {
+            // Fallback to the previous method for other classes
+            u.drawEntityInterpolated(self.x, self.y, self.width, self.height, u.opacity(self.color(), alpha), self.last_step, self.life);
         }
         if (main.Player.selected == self.entity) { // If selected by player, draws target point
             u.drawCircleLine(self.target.x, self.target.y, 100, u.opacity(self.color(), alpha / 2));
@@ -275,7 +279,13 @@ pub const Unit = struct {
             self.last_step = u.Point.at(self.x, self.y);
             const step = self.getStep();
             try self.move(step.x, step.y);
+
+            if (self.class == 0) { // Testing model for class 0
+                std.debug.print("Model: {}\n", .{@intFromPtr(self.model)});
+                self.model.update(0, u.Point.at(self.x, self.y));
+            }
         }
+
         self.life -= 1;
     }
 
@@ -493,7 +503,7 @@ pub const Unit = struct {
         const entity = try main.World.grid.allocator.create(Entity); // Memory for the parent entity
         const unit = try main.World.grid.allocator.create(Unit); // Memory for Unit
         const from_class = Unit.preset(class);
-
+        const start_point = u.Point.at(x, y);
         unit.* = Unit{
             .entity = entity,
             .class = class,
@@ -503,8 +513,9 @@ pub const Unit = struct {
             .x = x,
             .y = y,
             .target = u.Point.at(u.randomU16(main.World.width), u.randomU16(main.World.height)), // <--- just testing
-            .last_step = u.Point.at(x, y),
+            .last_step = start_point,
             .cached_cellsigns = [_]u32{0} ** 9,
+            .model = try u.Model.createChain(main.World.grid.allocator, 5, start_point, 10), // do from_class
         };
 
         entity.* = Entity{
@@ -535,6 +546,7 @@ pub const Unit = struct {
         for (units.items) |unit| {
             std.debug.assert(unit != self); // For debugging, unit must be removed at this point
         }
+        self.model.destroy(main.World.grid.allocator); // Deallocates memory for the model
         main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
         main.World.grid.allocator.destroy(self); // Deallocates memory for the Unit
     }

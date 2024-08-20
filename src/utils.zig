@@ -399,6 +399,19 @@ pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
 
 // Geometry
 //----------------------------------------------------------------------------------
+pub const Vector = struct {
+    x: i32,
+    y: i32,
+
+    pub fn toPoint(self: Vector) Point {
+        return Point{ asU16(i32, self.x), asU16(i32, self.y) };
+    }
+
+    pub fn fromPoint(point: Point) Vector {
+        return Vector{ .x = asI32(u16, point.x), .y = asI32(u16, point.y) };
+    }
+};
+
 pub const Point = struct {
     x: u16,
     y: u16,
@@ -1140,12 +1153,12 @@ const Interpolation = struct {
 };
 
 const Joint = struct {
-    point: Point,
-    connected_joints: []const Joint, // Array of references to connected joints
-    distance: f32, // The distance to the connected joint
+    position: Vector,
+    connected_joints: []usize, // Array of indices pointing to connected joints
+    distances: []f32, // Array of distances to each connected joint
 };
 
-const Model = struct {
+pub const Model = struct {
     joints: []Joint, // Array of joints in the model
 
     pub fn new(joints: []Joint) Model {
@@ -1154,27 +1167,41 @@ const Model = struct {
         };
     }
 
+    pub fn destroy(self: *Model, allocator: *std.mem.Allocator) void {
+        // Free all connected_joints and distances arrays
+        for (self.joints) |joint| {
+            allocator.free(joint.connected_joints);
+            allocator.free(joint.distances);
+        }
+        // Free the joints array
+        allocator.free(self.joints);
+        // Free the Model itself
+        allocator.destroy(self);
+    }
+
     pub fn update(self: *Model, anchor_index: usize, new_anchor_position: Point) void {
         // Move the anchor joint to the new position
-        self.joints[anchor_index].point = new_anchor_position;
-
+        self.joints[anchor_index].position = Vector.fromPoint(new_anchor_position);
+        std.debug.print("updating model\n", .{});
         // Adjust other joints based on their constraints
         for (self.joints, 0..) |*joint, i| {
             if (i == anchor_index) continue;
 
-            for (joint.connected_joints, 0..) |connected_index, j| {
-                const connected_joint = &self.joints[connected_index];
+            std.debug.print("adjusting joint {} at position {}\n", .{ i, self.joints[i].position });
+
+            for (joint.connected_joints, 0..) |connected_joint_index, j| {
+                const connected_joint = &self.joints[connected_joint_index]; // Access joint by index
                 const target_distance = joint.distances[j];
 
                 // Calculate current distance
-                const dx = connected_joint.point.x - joint.point.x;
-                const dy = connected_joint.point.y - joint.point.y;
+                const dx = asF32(i32, connected_joint.position.x - joint.position.x);
+                const dy = asF32(i32, connected_joint.position.y - joint.position.y);
                 const current_distance = fastSqrt(dx * dx + dy * dy);
 
                 if (current_distance != target_distance) {
                     const correction = (target_distance - current_distance) / current_distance;
-                    joint.point.x += dx * correction;
-                    joint.point.y += dy * correction;
+                    joint.position.x += asI32(f32, dx * correction);
+                    joint.position.y += asI32(f32, dy * correction);
                 }
             }
         }
@@ -1206,36 +1233,50 @@ const Model = struct {
 
     /// Creates a snake-like model with the specified number of joints
     /// starting from an initial position and with a specified distance between joints.
-    pub fn createSnake(joint_count: usize, initial_position: Point, distance: f32) Model {
-        var joints = []Joint{};
+    pub fn createChain(allocator: *std.mem.Allocator, joint_count: usize, initial_position: Point, distance: f32) !*Model {
+        var joints = try allocator.alloc(Joint, joint_count);
         const dx = distance;
 
-        // Create the first joint (anchor)
-        joints.append(Joint{
-            .point = initial_position,
-            .connected_joints = &[_]usize{1},
-            .distances = &[_]f32{distance},
-        });
+        // Initialize each joint
+        for (0..joint_count) |i| {
+            var connected_joints: []usize = &[_]usize{};
+            var distances: []f32 = &[_]f32{};
 
-        // Create subsequent joints
-        for (1..joint_count) |i| {
-            joints.append(Joint{
-                .point = Point{
-                    .x = initial_position.x + @as(f32, i) * dx,
-                    .y = initial_position.y,
+            if (i == 0) {
+                connected_joints = try allocator.alloc(usize, 1);
+                connected_joints[0] = 1;
+                distances = try allocator.alloc(f32, 1);
+                distances[0] = distance;
+            } else if (i == joint_count - 1) {
+                connected_joints = try allocator.alloc(usize, 1);
+                connected_joints[0] = i - 1;
+                distances = try allocator.alloc(f32, 1);
+                distances[0] = distance;
+            } else {
+                connected_joints = try allocator.alloc(usize, 2);
+                connected_joints[0] = i - 1;
+                connected_joints[1] = i + 1;
+                distances = try allocator.alloc(f32, 2);
+                distances[0] = distance;
+                distances[1] = distance;
+            }
+
+            joints[i] = Joint{
+                .position = Vector{
+                    .x = asI32(u16, initial_position.x + asU16(f32, asF32(usize, i) * dx)),
+                    .y = asI32(u16, initial_position.y),
                 },
-                .connected_joints = &[_]usize{ i - 1, i + 1 },
-                .distances = &[_]f32{ distance, distance },
-            });
+                .connected_joints = connected_joints,
+                .distances = distances,
+            };
         }
 
-        // Adjust the last joint to only connect to the previous one
-        if (joint_count > 1) {
-            joints[joint_count - 1].connected_joints = &[_]usize{joint_count - 2};
-            joints[joint_count - 1].distances = &[_]f32{distance};
-        }
+        const model = try allocator.create(Model);
+        model.* = Model{
+            .joints = joints,
+        };
 
-        return Model.new(joints);
+        return model;
     }
 };
 
@@ -1290,4 +1331,16 @@ pub fn drawEntityInterpolated(x: i32, y: i32, width: i32, height: i32, col: rl.C
 pub fn drawPlayer(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     drawEntity(x, y, width, height, col);
     drawCircleLine(x, y, Grid.cell_half, opacity(col, 0.25));
+}
+
+pub fn drawModel(model: *Model, jointRadius: f32, jointColor: rl.Color, boneColor: rl.Color) void {
+    for (model.joints) |joint| { // Draw bones between joints
+        for (joint.connected_joints) |connected_joint_index| {
+            const connected_joint = model.joints[connected_joint_index];
+            rl.drawLine(canvasX(joint.position.x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(joint.position.y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(connected_joint.position.x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(connected_joint.position.y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), boneColor);
+        }
+    }
+    for (model.joints) |joint| { // Draw each joint as a circle
+        drawCircle(joint.position.x, joint.position.y, jointRadius, jointColor);
+    }
 }
