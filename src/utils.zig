@@ -12,14 +12,14 @@ var rng: std.Random.DefaultPrng = undefined;
 pub fn startTimer(timer: usize, comptime startMsg: []const u8) void {
     const msg = if (startMsg.len > 0 and startMsg[startMsg.len - 1] != '\n') startMsg ++ " " else startMsg;
     std.debug.print(msg, .{});
-    main.profile_timer[timer] = rl.getTime();
+    main.Config.profile_timer[timer] = rl.getTime();
 }
 
 /// Stops `main.profile_timer[timer]` and prints a message. Must write `{}` to add the result argument.
 pub fn endTimer(timer: usize, comptime endMsg: []const u8) void {
-    const result = rl.getTime() - main.profile_timer[timer];
+    const result = rl.getTime() - main.Config.profile_timer[timer];
     std.debug.print(endMsg ++ " \n", .{result});
-    main.profile_timer[timer] = 0;
+    main.Config.profile_timer[timer] = 0;
 }
 
 pub fn assert(condition: bool, failureMsg: []const u8) void {
@@ -51,11 +51,11 @@ pub fn printGridCells(grid: *e.Grid) void {
 }
 
 pub fn perFrame(frequency: u64) bool {
-    return @mod(main.frame_number, frequency) == 0;
+    return @mod(main.Config.frame_number, frequency) == 0;
 }
 
 pub fn scaleToTickRate(float: f32) f32 { // Delta time capped to tickrate
-    return (float * (@max(@as(f32, @floatCast(main.TICK_DURATION)), rl.getFrameTime()))) * main.TICKRATE;
+    return (float * (@max(@as(f32, @floatCast(main.Config.TICK_DURATION)), rl.getFrameTime()))) * main.Config.TICKRATE;
 }
 
 // Metaprogramming
@@ -220,7 +220,7 @@ pub fn findAndSwapRemove(comptime T: type, list: *std.ArrayList(*T), ptr: *T) !v
 }
 
 pub fn ticksFromSecs(seconds: f16) u16 {
-    return @as(u16, @intFromFloat(seconds * main.TICKRATE));
+    return @as(u16, @intFromFloat(seconds * main.Config.TICKRATE));
 }
 
 pub const Key = struct {
@@ -853,8 +853,14 @@ pub const waypoint: type = struct {
 
     pub fn closestTowards(current: Point, target: Point, total_distance: u32, previous_step: Point) Point {
         const current_cell_center = Grid.cellCenter(current.x, current.y);
-        const closest_grid_x = Grid.x(current_cell_center.x);
-        const closest_grid_y = Grid.y(current_cell_center.y);
+        var closest_grid_x = Grid.x(current_cell_center.x);
+        var closest_grid_y = Grid.y(current_cell_center.y);
+
+        if (current.x > current_cell_center.x and (current_cell_center.x + Grid.cell_half) < target.x) closest_grid_x += 1;
+        if (current.x < current_cell_center.x and (current_cell_center.x - Grid.cell_half) > target.x) closest_grid_x -= 1;
+        if (current.y > current_cell_center.y and (current_cell_center.y + Grid.cell_half) < target.y) closest_grid_y += 1;
+        if (current.y < current_cell_center.y and (current_cell_center.y - Grid.cell_half) > target.y) closest_grid_y -= 1;
+
         const waypoints = cellSides(closest_grid_x, closest_grid_y);
 
         // Overall vector from current to target
@@ -907,11 +913,15 @@ pub const waypoint: type = struct {
         if (best_waypoint) |point| {
             return point;
         } else {
-            std.debug.print("No best waypoint found.\n", .{});
-            return Point.at(randomU16(main.map_width), randomU16(main.map_height));
+            // Setting point to a pseudorandom based on last step position and target
+            const random = @rem(previous_step.x + target.y, 4);
+
+            std.debug.print("No best waypoint found. Pseudorandom waypoint chosen. Current: {}, Previous Step: {}, Chose waypoint: {}, at {}.\n", .{ current, previous_step, random, waypoints[random] });
+            return waypoints[random];
         }
     }
 };
+
 pub fn isOnMap(x: u16, y: u16) bool {
     return x >= 0 and x < main.map_width and y >= 0 and y <= main.map_height;
 }
@@ -1090,6 +1100,18 @@ pub fn drawRect(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom), canvasScale(width, main.canvas_zoom), canvasScale(height, main.canvas_zoom), col);
 }
 
+/// Uses raylib to draw circle scaled and positioned to canvas.
+pub fn drawCircle(x: i32, y: i32, radius: f32, col: rl.Color) void {
+    const scale = asF32(i32, canvasScale(asI32(f32, radius), main.canvas_zoom));
+    rl.drawCircle(canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom), scale, col);
+}
+
+/// Uses raylib to draw a circumference scaled and positioned to canvas.
+pub fn drawCircleLine(x: i32, y: i32, radius: f32, col: rl.Color) void {
+    const scale = asF32(i32, canvasScale(asI32(f32, radius), main.canvas_zoom));
+    rl.drawCircleLines(canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom), scale, col);
+}
+
 /// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawEntity(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.canvas_offset_x, main.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.canvas_offset_y, main.canvas_zoom), canvasScale(width, main.canvas_zoom), canvasScale(height, main.canvas_zoom), col);
@@ -1104,5 +1126,5 @@ pub fn drawEntityInterpolated(x: i32, y: i32, width: i32, height: i32, col: rl.C
 /// Draws rectangle and build radius centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawPlayer(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     drawEntity(x, y, width, height, col);
-    rl.drawCircleLines(canvasX(x, main.canvas_offset_x, main.canvas_zoom), canvasY(y, main.canvas_offset_y, main.canvas_zoom), Grid.cell_half * main.canvas_zoom, opacity(col, 0.25));
+    drawCircleLine(x, y, Grid.cell_half, opacity(col, 0.25));
 }

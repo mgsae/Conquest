@@ -1,34 +1,43 @@
 const rl = @import("raylib");
 const std: type = @import("std");
 const u = @import("utils.zig");
-const entity = @import("entity.zig");
+const e = @import("entity.zig");
 
 // Config
-pub const TICKRATE = 60;
-pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
-pub const MAX_TICKS_PER_FRAME = 1;
-pub const PLAYER_SEARCH_LIMIT = 2056; // Player collision search limit, must exceed #entities in 3x3 cells
-pub const UNIT_SEARCH_LIMIT = 1028; // Unit collision search limit
-pub const BUFFERSIZE = 65536; // Limit to number of entities updated via sectionSearch per tick
-pub var last_tick_time: f64 = 0.0;
-pub var frame_number: u64 = 0;
-pub var profile_mode = false;
-pub var profile_timer = [4]f64{ 0, 0, 0, 0 };
-pub var keys: u.Key = undefined; // Keybindings
-pub var tick_number: u64 = undefined; // Ersatz server tick
+pub const Config = struct {
+    pub const TICKRATE = 60;
+    pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
+    pub const MAX_TICKS_PER_FRAME = 1;
+    pub const PLAYER_SEARCH_LIMIT = 2056; // Player collision search limit, must exceed #entities in 3x3 cells
+    pub const UNIT_SEARCH_LIMIT = 1028; // Unit collision search limit
+    pub const BUFFERSIZE = 65536; // Limit to number of entities updated via sectionSearch per tick
+    pub var last_tick_time: f64 = 0.0;
+    pub var frame_number: u64 = 0;
+    pub var profile_mode = false;
+    pub var profile_timer = [4]f64{ 0, 0, 0, 0 };
+    pub var keys: u.Key = undefined; // Keybindings
+    pub var tick_number: u64 = undefined; // Ersatz server tick
+};
 
 // Camera
 pub const SCROLL_SPEED: f16 = 25.0;
+pub const SCROLL_RATE: f16 = 25.0; // use when setting canvas_offset_x/y target
+pub const ZOOM_MAX = 10.0; // Larger number = further zoomed in
+pub const ZOOM_SPEED: f16 = 0.25;
+pub const ZOOM_RATE: f16 = 0.25;
 pub var screen_width: i16 = 1920;
 pub var screen_height: i16 = 1080;
 pub var canvas_offset_x: f32 = 0.0;
 pub var canvas_offset_y: f32 = 0.0;
-pub var canvas_zoom: f32 = 1.0;
 pub var canvas_max: f32 = 1.0; // Recalculated in setMapSize for max map visibility
+pub var canvas_zoom: f32 = 1.0;
+var canvas_offset_x_target: f32 = 0.0;
+var canvas_offset_y_target: f32 = 0.0;
+var canvas_zoom_target: f32 = 1.0;
 
 // Interface
 pub var build_guide: ?u8 = null;
-pub var selected: ?*entity.Entity = null;
+pub var selected: ?*e.Entity = null;
 
 // World
 const STARTING_MAP_WIDTH = 16000; // 1920 * 8; // Limit for u16 coordinates: 65535
@@ -37,12 +46,12 @@ pub const GRID_CELL_SIZE = 1000;
 pub const MOVEMENT_DIVISIONS = 10; // Modulus base for unit movement updates
 pub var map_width: u16 = 0;
 pub var map_height: u16 = 0;
-pub var grid: entity.Grid = undefined;
-pub var player: *entity.Player = undefined;
-var dead_players: std.ArrayList(*entity.Player) = undefined;
-var dead_structures: std.ArrayList(*entity.Structure) = undefined;
-var dead_units: std.ArrayList(*entity.Unit) = undefined;
-var dead_resources: std.ArrayList(*entity.Resource) = undefined;
+pub var grid: e.Grid = undefined;
+pub var player: *e.Player = undefined;
+var dead_players: std.ArrayList(*e.Player) = undefined;
+var dead_structures: std.ArrayList(*e.Structure) = undefined;
+var dead_units: std.ArrayList(*e.Unit) = undefined;
+var dead_resources: std.ArrayList(*e.Resource) = undefined;
 
 pub fn main() anyerror!void {
 
@@ -80,7 +89,7 @@ pub fn main() anyerror!void {
     // Initialize utility
     //--------------------------------------------------------------------------------------
     u.rngInit();
-    tick_number = 0; // <-- Here, would fetch value from server
+    Config.tick_number = 0; // <-- Here, would fetch value from server
     var stored_mouse_input: [2]rl.Vector2 = [2]rl.Vector2{ rl.Vector2.zero(), rl.Vector2.zero() };
     var stored_mousewheel: f32 = 0.0;
     var stored_key_input: u32 = 0;
@@ -96,32 +105,32 @@ pub fn main() anyerror!void {
     std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ map_width, map_height, u.Grid.cell_size });
 
     // Initialize the grid
-    try grid.init(&allocator, gridWidth, gridHeight, BUFFERSIZE);
+    try grid.init(&allocator, gridWidth, gridHeight, Config.BUFFERSIZE);
     const cellsigns_cache = try allocator.alloc(u32, grid.columns * grid.rows);
     defer allocator.free(cellsigns_cache);
     defer grid.deinit(&allocator);
 
     // Initialize entities
     //--------------------------------------------------------------------------------------
-    entity.players = std.ArrayList(*entity.Player).init(allocator);
-    entity.structures = std.ArrayList(*entity.Structure).init(allocator);
-    entity.units = std.ArrayList(*entity.Unit).init(allocator);
-    entity.resources = std.ArrayList(*entity.Resource).init(allocator);
-    dead_players = std.ArrayList(*entity.Player).init(allocator);
-    dead_structures = std.ArrayList(*entity.Structure).init(allocator);
-    dead_units = std.ArrayList(*entity.Unit).init(allocator);
-    dead_resources = std.ArrayList(*entity.Resource).init(allocator);
+    e.players = std.ArrayList(*e.Player).init(allocator);
+    e.structures = std.ArrayList(*e.Structure).init(allocator);
+    e.units = std.ArrayList(*e.Unit).init(allocator);
+    e.resources = std.ArrayList(*e.Resource).init(allocator);
+    dead_players = std.ArrayList(*e.Player).init(allocator);
+    dead_structures = std.ArrayList(*e.Structure).init(allocator);
+    dead_units = std.ArrayList(*e.Unit).init(allocator);
+    dead_resources = std.ArrayList(*e.Resource).init(allocator);
 
     const startCoords = try startingLocations(&allocator, 2); // players
     for (startCoords, 0..) |coord, i| {
         std.debug.print("Player starting at: ({}, {})\n", .{ coord.x, coord.y });
         if (i == 0) {
-            const local = try entity.Player.createLocal(coord.x, coord.y);
-            try entity.players.append(local);
+            const local = try e.Player.createLocal(coord.x, coord.y);
+            try e.players.append(local);
             player = local; // Sets player to local player pointer
         } else {
-            const remote = try entity.Player.createRemote(coord.x, coord.y);
-            try entity.players.append(remote);
+            const remote = try e.Player.createRemote(coord.x, coord.y);
+            try e.players.append(remote);
         }
     }
     allocator.free(startCoords); // Freeing starting positions
@@ -132,21 +141,21 @@ pub fn main() anyerror!void {
     const rangeX: u16 = @intCast(@divTrunc(@as(i32, @intCast(map_width)) * SPREAD, 100));
     const rangeY: u16 = @intCast(@divTrunc(@as(i32, @intCast(map_height)) * SPREAD, 100));
 
-    //try entity.structures.append(try entity.Structure.create(1225, 1225, 0));
-    //try entity.units.append(try entity.Unit.create(2500, 1500, 0));
+    //try e.structures.append(try e.Structure.create(1225, 1225, 0));
+    //try e.units.append(try e.Unit.create(2500, 1500, 0));
     //for (0..5000) |_| {
-    //    try entity.units.append(try entity.Unit.create(u.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(u.randomU16(3)))));
+    //    try e.units.append(try e.Unit.create(u.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), @as(u8, @intCast(u.randomU16(3)))));
     //}
     for (0..0) |_| {
         const class = @as(u8, @intCast(u.randomU16(3)));
-        const xy = u.subcell.snapPosition(u.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), entity.Structure.preset(class).width, entity.Structure.preset(class).height);
-        _ = entity.Structure.construct(xy[0], xy[1], class);
+        const xy = u.subcell.snapPosition(u.randomU16(rangeX) + @divTrunc(map_width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(map_height - rangeY, 2), e.Structure.preset(class).width, e.Structure.preset(class).height);
+        _ = e.Structure.construct(xy[0], xy[1], class);
     }
 
-    defer entity.units.deinit();
-    defer entity.structures.deinit();
-    defer entity.players.deinit();
-    defer entity.resources.deinit();
+    defer e.units.deinit();
+    defer e.structures.deinit();
+    defer e.players.deinit();
+    defer e.resources.deinit();
     defer dead_units.deinit();
     defer dead_structures.deinit();
     defer dead_players.deinit();
@@ -154,7 +163,7 @@ pub fn main() anyerror!void {
 
     // Initialize user interface
     //--------------------------------------------------------------------------------------
-    try keys.init(&allocator); // Initializes and activates default keybindings
+    try Config.keys.init(&allocator); // Initializes and activates default keybindings
     u.canvasOnPlayer(); // Centers camera
 
     // Main game loop
@@ -163,10 +172,10 @@ pub fn main() anyerror!void {
 
         // Profiling
         //----------------------------------------------------------------------------------
-        const profile_frame = (profile_mode and u.perFrame(45));
+        const profile_frame = (Config.profile_mode and u.perFrame(45));
         if (profile_frame) {
             u.startTimer(3, "\nSTART OF FRAME :::");
-            std.debug.print("{} (TICK {}).\n\n", .{ frame_number, tick_number });
+            std.debug.print("{} (TICK {}).\n\n", .{ Config.frame_number, Config.tick_number });
         }
 
         // Input
@@ -181,13 +190,13 @@ pub fn main() anyerror!void {
         //----------------------------------------------------------------------------------
         if (profile_frame) u.startTimer(0, "LOGIC PHASE.\n");
 
-        var elapsed_time: f64 = rl.getTime() - last_tick_time;
+        var elapsed_time: f64 = rl.getTime() - Config.last_tick_time;
         var updates_performed: usize = 0;
 
-        if (profile_frame and elapsed_time < TICK_DURATION) std.debug.print("- Elapsed time < tick duration, skipping logic update this frame.\n", .{});
+        if (profile_frame and elapsed_time < Config.TICK_DURATION) std.debug.print("- Elapsed time < tick duration, skipping logic update this frame.\n", .{});
 
         // Perform updates if enough time has elapsed
-        while (elapsed_time >= TICK_DURATION) {
+        while (elapsed_time >= Config.TICK_DURATION) {
             try updateEntities(stored_key_input, profile_frame);
             if (profile_frame) u.startTimer(1, "- Removing dead entities.");
             try removeEntities();
@@ -207,17 +216,17 @@ pub fn main() anyerror!void {
             stored_mousewheel = 0.0;
             stored_key_input = 0;
 
-            elapsed_time -= TICK_DURATION;
+            elapsed_time -= Config.TICK_DURATION;
             updates_performed += 1;
 
-            if (updates_performed >= MAX_TICKS_PER_FRAME) {
+            if (updates_performed >= Config.MAX_TICKS_PER_FRAME) {
                 break; // Prevent too much work per frame
             }
         }
 
-        tick_number += updates_performed; // <-- tick_number is meant to be server side
-        last_tick_time += @as(f64, @floatFromInt(updates_performed)) * TICK_DURATION;
-        frame_number += 1;
+        Config.tick_number += updates_performed; // <-- tick_number is meant to be server side
+        Config.last_tick_time += @as(f64, @floatFromInt(updates_performed)) * Config.TICK_DURATION;
+        Config.frame_number += 1;
 
         if (profile_frame) u.endTimer(0, "Logic phase took {} seconds in total.\n");
 
@@ -246,19 +255,13 @@ pub fn main() anyerror!void {
 fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vector2, stored_mousewheel: *f32, stored_key_input: *u32) void {
     if (build_guide != null) { // While build guide is active
         stored_mouse_input_l.* = rl.getMousePosition(); // Sets stored_mouse_input[0] to mouse position
-        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) stored_key_input.* |= u.Key.inputFromAction(&keys, u.Key.Action.BuildConfirm); // L mouse-click confirms build
+        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) stored_key_input.* |= u.Key.inputFromAction(&Config.keys, u.Key.Action.BuildConfirm); // L mouse-click confirms build
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_right)) stored_mouse_input_r.y = 0.01; // R mouse-click cancels build
     } else { // Whenever build guide is not active
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) stored_mouse_input_l.* = rl.getMousePosition(); // Sets stored_mouse_input[0] to position on left-click
         if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_right)) stored_mouse_input_r.* = rl.getMouseDelta(); // Sets stored_mouse_input[1] to right-mouse down delta
     }
     stored_mousewheel.* += rl.getMouseWheelMove();
-
-    // For debugging mouse / map position
-    //const mousex = rl.getMouseX();
-    //const mousey = rl.getMouseY();
-    //const map_coords = u.screenToMap(rl.Vector2.init(@as(f32, @floatFromInt(mousex)), @as(f32, @floatFromInt(mousey))));
-    //std.debug.print("mouse x: {}, mouse y: {}, canvasX: {}, canvasY: {}. - Map x: {}, map y: {}. - Player's actual x: {}, y: {}.\n", .{ mousex, mousey, u.canvasX(mousex, canvas_offset_x, canvas_zoom), u.canvasY(mousey, canvas_offset_y, canvas_zoom), map_coords[0], map_coords[1], player.x, player.y });
 
     // Number keys bitmasking
     if (rl.isKeyPressed(rl.KeyboardKey.key_z)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Z);
@@ -282,25 +285,27 @@ fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vec
 fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vector2, mousewheel_delta: f32, key_input: u32, profile_frame: bool) void {
     if (profile_frame) u.startTimer(1, "- Updating controls.");
     if (build_guide != null) { // While build guide is active
+        selected = null; // No selection
         if (stored_mouse_input_r.equals(rl.Vector2.zero()) == 0) { // If mouse right is pressed, cancels build guide
             build_guide = null;
-        } else if (u.mouseMoved(rl.getMouseDelta())) { // Left mouse movement
-            player.direction = u.vectorToDir(u.screenToPlayer(stored_mouse_input_l)); // Changes player direction
         }
     } else { // Whenever build guide is inactive
         if (stored_mouse_input_l.equals(rl.Vector2.zero()) == 0) { // If mouse left is clicked, checks/stores selection
             const map_coords = u.screenToMap(stored_mouse_input_l);
-            selected = grid.collidesWith(map_coords[0], map_coords[1], 1, 1, null) catch null; // Sets variable directly to entity or null
-            if (selected) |s| {
-                std.debug.print("Selected entity {}.\n", .{@intFromPtr(s)});
+            const at_mouse = grid.collidesWith(map_coords[0], map_coords[1], 1, 1, null) catch null;
+            // Sets variable directly to entity or null
+            if (at_mouse) |entity| {
+                selected = if (entity != selected) entity else null;
+                std.debug.print("Selected entity {}.\n", .{@intFromPtr(entity)});
             } else {
+                selected = null;
                 std.debug.print("Deselected entity.\n", .{});
             }
         }
     }
     updateCanvasZoom(mousewheel_delta);
     updateCanvasPosition(stored_mouse_input_r, key_input);
-    if (keys.actionActive(key_input, u.Key.Action.SpecialEnter)) profile_mode = !profile_mode; // Enter toggles profile mode (verbose logs) for now
+    if (Config.keys.actionActive(key_input, u.Key.Action.SpecialEnter)) Config.profile_mode = !Config.profile_mode; // Enter toggles profile mode (verbose logs) for now
     if (profile_frame) u.endTimer(1, "Updating controls took {} seconds.");
 }
 
@@ -314,7 +319,7 @@ fn updateEntities(key_input: u32, profile_frame: bool) !void {
 
     // Players
     if (profile_frame) u.startTimer(1, "- Updating players.");
-    for (entity.players.items) |p| {
+    for (e.players.items) |p| {
         // Life / lifecycle ?
         if (p == player) {
             try p.update(key_input);
@@ -326,7 +331,7 @@ fn updateEntities(key_input: u32, profile_frame: bool) !void {
 
     // Structures
     if (profile_frame) u.startTimer(1, "- Updating structures.");
-    for (entity.structures.items) |structure| {
+    for (e.structures.items) |structure| {
         if (structure.life == -u.i16max) {
             try dead_structures.append(structure); // To be destroyed in removeEntities
         } else {
@@ -337,7 +342,7 @@ fn updateEntities(key_input: u32, profile_frame: bool) !void {
 
     // Units
     if (profile_frame) u.startTimer(1, "- Updating units.");
-    for (entity.units.items) |unit| {
+    for (e.units.items) |unit| {
         if (unit.life == -u.i16max) {
             try dead_units.append(unit); // To be destroyed in removeEntities
         } else {
@@ -369,10 +374,17 @@ fn draw(profile_frame: bool) void {
 
 pub fn updateCanvasZoom(mousewheel_delta: f32) void {
     canvas_max = u.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), map_width, map_height); // For window resizing
+    canvas_zoom_target = std.math.clamp(canvas_zoom_target, canvas_max, ZOOM_MAX); // Re-sizes canvas to current window size
     if (mousewheel_delta != 0) {
+        const zoom_change: f32 = 1 + (ZOOM_RATE * mousewheel_delta); // Zoom rate
+        canvas_zoom_target = @min(@max(canvas_max, canvas_zoom * zoom_change), ZOOM_MAX); // From <1 (full map) to 10 (zoomed in)
+    }
+    if (canvas_zoom != canvas_zoom_target) {
         const old_zoom: f32 = canvas_zoom;
-        const zoom_change: f32 = 1 + (0.025 * mousewheel_delta); // zoom rate
-        canvas_zoom = @min(@max(canvas_max, canvas_zoom * zoom_change), 10.0); // From <1 (full map) to 10 (zoomed in)
+        const lerp_factor: f32 = ZOOM_SPEED;
+        canvas_zoom = canvas_zoom + lerp_factor * (canvas_zoom_target - canvas_zoom);
+        // If difference is very small, snaps to the target to avoid perpetual adjustments
+        if (@abs(canvas_zoom - canvas_zoom_target) < 0.001) canvas_zoom = canvas_zoom_target;
 
         // Adjust offsets to zoom around the mouse position
         const mouse_x = @as(f32, @floatFromInt(rl.getMouseX()));
@@ -435,6 +447,7 @@ pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
 pub fn drawMap() void {
     // Draw the map area
     u.drawRect(0, 0, map_width, map_height, rl.Color.ray_white);
+
     // Draw subgrid lines
     var rowIndex: i32 = 1;
     while (rowIndex * u.Subcell.size < map_height) : (rowIndex += 1) {
@@ -463,9 +476,17 @@ pub fn drawMap() void {
 }
 
 fn drawEntities() void {
-    for (entity.units.items) |e| e.draw(); // Interpolates in method
-    for (entity.structures.items) |e| e.draw();
-    for (entity.players.items) |e| e.draw();
+    if (selected == null) {
+        for (e.units.items) |x| x.draw(1); // Interpolates
+        for (e.structures.items) |x| x.draw(1);
+        for (e.players.items) |x| x.draw(1);
+        // resources ...
+    } else {
+        for (e.units.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
+        for (e.structures.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
+        for (e.players.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
+        // resources ...
+    }
 }
 
 /// Draws user interface
@@ -509,27 +530,26 @@ pub fn startingLocations(allocator: *std.mem.Allocator, player_count: u8) ![]u.P
     return slice;
 }
 
-pub fn moveDivison(life: i16) bool {
+pub fn moveDivision(life: i16) bool {
     return @rem(life, MOVEMENT_DIVISIONS) == 0;
 }
 
-// Maybe refactor to abstract the build_index/class relation to allow tech trees
-pub fn executeBuild(build_index: u8) void {
-    const class = build_index; // <-- change this?
+pub fn executeBuild(class: u8) void {
     if (!isInBuildDistance()) return;
-    const xy = findBuildPosition(build_index);
-    const built = entity.Structure.construct(xy[0], xy[1], class);
+    const xy = findBuildPosition(class);
+    const built = e.Structure.construct(xy[0], xy[1], class);
     if (built) |building| {
         std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
-        // Do something with the structure
+        selected = building.entity; // A hack: sets selected to building to instantly deselect it (in updateControls) by the same click
     } else {
         std.debug.print("Failed to build structure\n", .{});
-        // Handle the failure case, e.g., notify the player or log the error
+        // Handle the failure case, e.g., notify the player
     }
+    build_guide = null;
 }
 
 fn findBuildPosition(class: u8) [2]u16 {
-    const building = entity.Structure.preset(class);
+    const building = e.Structure.preset(class);
     const x_offset = u.asF32(u16, u.Subcell.size) * canvas_zoom;
     const y_offset = u.asF32(u16, u.Subcell.size) * canvas_zoom;
     const mouse_position = rl.getMousePosition();
@@ -543,14 +563,14 @@ fn findBuildPosition(class: u8) [2]u16 {
 
 fn isInBuildDistance() bool {
     const subcell_center = u.screenToSubcell(rl.getMousePosition()).center();
-    const distance_max = u.Grid.cell_half; //u.asU32(u16, entity.Structure.preset(class).width + entity.Structure.preset(class).height);
+    const distance_max = u.Grid.cell_half; //u.asU32(u16, e.Structure.preset(class).width + e.Structure.preset(class).height);
     const distance = std.math.sqrt(u.distanceSquared(u.Point.at(player.x, player.y), u.Point.at(subcell_center[0], subcell_center[1])));
     return distance <= distance_max;
 }
 
 pub fn drawGuide(class: u8) void {
     const xy = findBuildPosition(class);
-    const building = entity.Structure.preset(class);
+    const building = e.Structure.preset(class);
     const collides = grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;
     if (collides != null or !isInBuildDistance() or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
         u.drawGuideFail(xy[0], xy[1], building.width, building.height, building.color);

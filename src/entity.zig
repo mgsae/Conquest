@@ -81,11 +81,13 @@ pub const Player = struct {
     height: u16,
     color: rl.Color,
     speed: f16 = 5,
-    direction: u8 = 2,
     local: bool = false,
 
-    pub fn draw(self: Player) void {
-        u.drawPlayer(self.x, self.y, self.width, self.height, self.color);
+    pub fn draw(self: Player, alpha: f32) void {
+        if (main.selected == self.entity) { // If selected, draws circle
+            u.drawCircle(self.x, self.y, u.Grid.cell_half, u.opacity(self.color, alpha * 0.125));
+        }
+        u.drawPlayer(self.x, self.y, self.width, self.height, u.opacity(self.color, alpha));
     }
 
     pub fn update(self: *Player, key_input: ?u32) anyerror!void {
@@ -111,21 +113,17 @@ pub const Player = struct {
         var changed_y: ?u16 = null;
 
         // Processes movement input
-        if (main.keys.actionActive(key_input, u.Key.Action.MoveUp)) {
+        if (main.Config.keys.actionActive(key_input, u.Key.Action.MoveUp)) {
             changed_y = u.mapClampY(@truncate(u.i32SubFloat(f32, self.y, speed)), self.height);
-            self.direction = 8; // Numpad direction
         }
-        if (main.keys.actionActive(key_input, u.Key.Action.MoveLeft)) {
+        if (main.Config.keys.actionActive(key_input, u.Key.Action.MoveLeft)) {
             changed_x = u.mapClampX(@truncate(u.i32SubFloat(f32, self.x, speed)), self.width);
-            self.direction = 4; // Numpad direction
         }
-        if (main.keys.actionActive(key_input, u.Key.Action.MoveDown)) {
+        if (main.Config.keys.actionActive(key_input, u.Key.Action.MoveDown)) {
             changed_y = u.mapClampY(@truncate(u.i32AddFloat(f32, self.y, speed)), self.height);
-            self.direction = 2; // Numpad direction
         }
-        if (main.keys.actionActive(key_input, u.Key.Action.MoveRight)) {
+        if (main.Config.keys.actionActive(key_input, u.Key.Action.MoveRight)) {
             changed_x = u.mapClampX(@truncate(u.i32AddFloat(f32, self.x, speed)), self.width);
-            self.direction = 6; // Numpad direction
         }
 
         if (changed_x != null or changed_y != null) try executeMovement(self, changed_x, changed_y, speed);
@@ -134,88 +132,106 @@ pub const Player = struct {
     fn executeMovement(self: *Player, changed_x: ?u16, changed_y: ?u16, speed: f32) !void {
         const old_x = self.x;
         const old_y = self.y;
-        var new_x: ?u16 = changed_x;
-        var new_y: ?u16 = changed_y;
         var obstacleX: ?*Entity = null;
         var obstacleY: ?*Entity = null;
+        const delta = u.deltaXy(self.x, self.y, changed_x orelse self.x, changed_y orelse self.y);
+        const angle = u.deltaToAngle(delta[0], delta[1]);
         // const deltaXy = u.deltaXy(old_x, old_y, new_x orelse old_x, new_y orelse old_y);
         // std.debug.print("Player movement direction: {}. Delta to angle: {}. Angle from dir: {}. Vector to delta: {any}.\n", .{ self.direction, @as(i64, @intFromFloat(u.deltaToAngle(deltaXy[0], deltaXy[1]))), u.angleFromDir(self.direction), u.vectorToDelta(u.deltaToAngle(deltaXy[0], deltaXy[1]), speed) });
 
         // Gets potential obstacle entities on both axes
-        if (new_x != null) obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.entity) catch null;
-        if (new_y != null) obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.entity) catch null;
+        if (changed_x != null) obstacleX = main.grid.collidesWith(changed_x.?, self.y, self.width, self.height, self.entity) catch null;
+        if (changed_y != null) obstacleY = main.grid.collidesWith(self.x, changed_y.?, self.width, self.height, self.entity) catch null;
 
-        // Executes horizontal movement
-        if (new_x != null) {
-            if (obstacleX == null) {
-                self.x = new_x.?;
-            } else if (new_y == null and (obstacleX.?.kind == Kind.Unit)) { // If unit obstacle, try pushing horizontally
-                const resistance = 0.1; // maybe depend on size relation
-                const force = (1.0 - resistance);
-                const difference = @as(f64, @floatFromInt(@as(i32, new_x.?) - @as(i32, old_x)));
-                new_x = u.asU16(i32, u.asI32(u16, old_x) + u.asI32(f64, @round(difference * force)));
+        if (changed_x != null and changed_y != null) { // Executes diagonal movement
+            const diagonal_obstacle = main.grid.collidesWith(changed_x.?, changed_y.?, self.width, self.height, self.entity) catch null;
+            if (diagonal_obstacle == null) {
+                self.x = changed_x.?;
+                self.y = changed_y.?;
+            } else {
+                if (obstacleX == null) self.x = changed_x.?;
+                if (obstacleY == null) self.y = changed_y.?;
 
-                // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
-                std.debug.print("Pushing horizontally, angle: {}, distance: {}\n", .{ u.angleFromDir(self.direction), speed * force });
-                const push_distance = obstacleX.?.ref.Unit.pushed(u.angleFromDir(self.direction), speed * force);
-                std.debug.print("Horizontal push distance: {}\n", .{push_distance});
-                if (push_distance >= speed * force) {
-                    obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.entity) catch null;
-                } else {
-                    new_x = @as(u16, @intCast(@as(i32, old_x) + @as(i32, @intFromFloat(push_distance)))); // Moves effective push distance and re-checks collision
-                    obstacleX = main.grid.collidesWith(new_x.?, self.y, self.width, self.height, self.entity) catch null;
-                }
-                if (obstacleX == null) self.x = new_x.?; // If no collision now, repositions x
+                if (obstacleX != null and obstacleX.?.kind == Kind.Unit) handleHorizontalCollision(self, old_x, changed_x.?, speed, angle, obstacleX.?);
+                if (obstacleY != null and obstacleY.?.kind == Kind.Unit) handleVerticalCollision(self, old_y, changed_y.?, speed, angle, obstacleY.?);
             }
-        }
-
-        // Executes vertical movement
-        if (new_y != null) {
+        } else if (changed_x != null) { // Executes horizontal movement
+            if (obstacleX == null) {
+                self.x = changed_x.?;
+            } else if (obstacleX.?.kind == Kind.Unit) { // If unit obstacle, try horizontal push
+                handleHorizontalCollision(self, old_x, changed_x.?, speed, angle, obstacleX.?);
+            }
+        } else if (changed_y != null) { // Executes vertical movement
             if (obstacleY == null) {
-                self.y = new_y.?;
-            } else if (new_x == null and (obstacleY.?.kind == Kind.Unit)) { // If unit collider, try pushing vertically
-                const resistance = 0.1; // maybe depend on size relation
-                const force = (1.0 - resistance);
-                const difference = @as(f64, @floatFromInt(@as(i32, new_y.?) - @as(i32, old_y)));
-                new_y = @as(u16, @intCast(@as(i32, old_y) + @as(i32, @intFromFloat(@round(difference * force)))));
-
-                // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
-                std.debug.print("Pushing vertically, angle: {}, distance: {}\n", .{ u.angleFromDir(self.direction), speed * force });
-                const push_distance = obstacleY.?.ref.Unit.pushed(u.angleFromDir(self.direction), speed * force);
-                std.debug.print("Vertical push distance: {}\n", .{push_distance});
-                if (push_distance >= speed * force) {
-                    obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.entity) catch null;
-                } else {
-                    new_y = @as(u16, @intCast(@as(i32, old_y) + @as(i32, @intFromFloat(push_distance)))); // Moves effective push distance and re-checks collision
-                    obstacleY = main.grid.collidesWith(self.x, new_y.?, self.width, self.height, self.entity) catch null;
-                }
-                if (obstacleY == null) self.y = new_y.?; // If no collision now, repositions y
+                self.y = changed_y.?;
+            } else if (obstacleY.?.kind == Kind.Unit) { // If unit collider, try vertical push
+                handleVerticalCollision(self, old_y, changed_y.?, speed, angle, obstacleY.?);
             }
         }
 
         // If new movement, updates game grid
-        if ((new_x != null and new_x.? != old_x) or (new_y != null and new_y.? != old_y)) {
+        if ((changed_x != null and changed_x.? != old_x) or (changed_y != null and changed_y.? != old_y)) {
             main.grid.updateCellMembership(self.entity, old_x, old_y);
         }
     }
 
+    fn handleHorizontalCollision(self: *Player, old_x: u16, new_x: u16, speed: f32, angle: f32, obstacle: *Entity) void {
+        const resistance = 0.1; // maybe depend on size relation
+        const force = (1.0 - resistance);
+        const difference = @as(f64, @floatFromInt(@as(i32, new_x) - @as(i32, old_x)));
+        var pushed_x = u.asU16(f64, u.asF64(u16, old_x) + @round(difference * force));
+        var second_obstacle: ?*Entity = null;
+
+        // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
+        const push_distance = obstacle.ref.Unit.pushed(angle, speed * force);
+        std.debug.print("Pushing horizontally, angle: {}, distance: {}", .{ angle, speed * force });
+        if (push_distance >= speed * force) {
+            second_obstacle = main.grid.collidesWith(pushed_x, self.y, self.width, self.height, self.entity) catch null;
+        } else {
+            pushed_x = @as(u16, @intCast(@as(i32, old_x) + @as(i32, @intFromFloat(push_distance)))); // Moves effective push distance and re-checks collision
+            second_obstacle = main.grid.collidesWith(pushed_x, self.y, self.width, self.height, self.entity) catch null;
+        }
+        std.debug.print("self.x was {}, pushed x now: {}. but second obstacle? {any}\n", .{ self.x, pushed_x, second_obstacle });
+        if (second_obstacle == null) self.x = pushed_x; // If no collision now, repositions x
+    }
+
+    fn handleVerticalCollision(self: *Player, old_y: u16, new_y: u16, speed: f32, angle: f32, obstacle: *Entity) void {
+        const resistance = 0.1; // maybe depend on size relation
+        const force = (1.0 - resistance);
+        const difference = @as(f64, @floatFromInt(@as(i32, new_y) - @as(i32, old_y)));
+        var pushed_y = u.asU16(f64, u.asF64(u16, old_y) + @round(difference * force));
+        var second_obstacle: ?*Entity = null;
+
+        // Pushes obstacle, and checks whether push was unhindered, or if pushed obstacle in turn ran into a further obstacle
+        const push_distance = obstacle.ref.Unit.pushed(angle, speed * force);
+        std.debug.print("Pushing vertically, angle: {}, distance: {}\n", .{ angle, speed * force });
+        if (push_distance >= speed * force) {
+            second_obstacle = main.grid.collidesWith(self.x, pushed_y, self.width, self.height, self.entity) catch null;
+        } else {
+            pushed_y = @as(u16, @intCast(@as(i32, old_y) + @as(i32, @intFromFloat(push_distance)))); // Moves effective push distance and re-checks collision
+            second_obstacle = main.grid.collidesWith(self.x, pushed_y, self.width, self.height, self.entity) catch null;
+        }
+        std.debug.print("self.y was {}, pushed y now: {}. but second obstacle? {any}\n", .{ self.y, pushed_y, second_obstacle });
+        if (second_obstacle == null) self.y = pushed_y; // If no collision now, repositions x
+    }
+
+    // Maybe move to main
     fn updateActionInput(key_input: u32) void {
-        if (main.keys.actionActive(key_input, u.Key.Action.BuildConfirm)) {
+        if (main.Config.keys.actionActive(key_input, u.Key.Action.BuildConfirm)) {
             if (main.build_guide != null) {
                 main.executeBuild(main.build_guide.?);
-                main.build_guide = null;
             }
             return;
         }
 
         var build_index: ?u8 = null;
-        if (main.keys.actionActive(key_input, u.Key.Action.BuildOne)) {
+        if (main.Config.keys.actionActive(key_input, u.Key.Action.BuildOne)) {
             build_index = 0;
-        } else if (main.keys.actionActive(key_input, u.Key.Action.BuildTwo)) {
+        } else if (main.Config.keys.actionActive(key_input, u.Key.Action.BuildTwo)) {
             build_index = 1;
-        } else if (main.keys.actionActive(key_input, u.Key.Action.BuildThree)) {
+        } else if (main.Config.keys.actionActive(key_input, u.Key.Action.BuildThree)) {
             build_index = 2;
-        } else if (main.keys.actionActive(key_input, u.Key.Action.BuildFour)) {
+        } else if (main.Config.keys.actionActive(key_input, u.Key.Action.BuildFour)) {
             build_index = 3;
         }
 
@@ -290,11 +306,12 @@ pub const Unit = struct {
     target: u.Point,
     last_step: u.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
+    mode: u8, // 0 = default, 1 = drain life
 
-    pub fn draw(self: *Unit) void {
-        u.drawEntityInterpolated(self.x, self.y, self.width, self.height, self.color(), self.last_step, self.life);
+    pub fn draw(self: *Unit, alpha: f32) void {
+        u.drawEntityInterpolated(self.x, self.y, self.width, self.height, u.opacity(self.color(), alpha), self.last_step, self.life);
         if (main.selected == self.entity) { // If selected, draws target point
-            u.drawRect(self.target.x, self.target.y, 100, 100, u.opacity(self.color(), 0.5));
+            u.drawCircleLine(self.target.x, self.target.y, 100, u.opacity(self.color(), alpha / 2));
         }
     }
 
@@ -303,7 +320,7 @@ pub const Unit = struct {
             try self.die(null);
             return;
         }
-        if (main.moveDivison(self.life)) {
+        if (main.moveDivision(self.life)) {
             self.last_step = u.Point.at(self.x, self.y);
             const step = self.getStep();
             try self.move(step.x, step.y);
@@ -417,6 +434,9 @@ pub const Unit = struct {
         const old_x = self.x;
         const old_y = self.y;
         const new_x: u16, const new_y: u16 = calculatePushPosition(self, angle, distance);
+        self.mode = 1; // Sets mode to pushed for instant move
+
+        std.debug.print("Pushed towards angle {}.\n", .{angle});
 
         var moved_distance: f32 = distance;
 
@@ -436,6 +456,8 @@ pub const Unit = struct {
 
             const obstacle_unit = obstacle.?.ref.Unit;
 
+            std.debug.print("Pushee collided with a unit: {}\n", .{obstacle_unit});
+
             // Checks that obstacle_unit isn't already a pushee
             if (obstacle_unit.width != preset(obstacle_unit.class).width or obstacle_unit.height != preset(obstacle_unit.class).height) {
                 moved_distance = moved_distance / 2;
@@ -448,6 +470,8 @@ pub const Unit = struct {
 
                 self.move(push_new_x, push_new_yY) catch return 0; // Re-checks for collision and updates grid here
             }
+        } else {
+            std.debug.print("Pushee collided with a non-unit: {}\n", .{obstacle.?});
         }
 
         // Resets dimensions to flag as ready for future pushing
@@ -531,6 +555,7 @@ pub const Unit = struct {
             .target = u.Point.at(u.randomU16(main.map_width), u.randomU16(main.map_height)), // <--- just testing
             .last_step = u.Point.at(x, y),
             .cached_cellsigns = [_]u32{0} ** 9,
+            .mode = 0,
         };
 
         entity.* = Entity{
@@ -630,8 +655,8 @@ pub const Structure = struct {
         };
     }
 
-    pub fn draw(self: *const Structure) void {
-        u.drawEntity(self.x, self.y, self.width, self.height, self.color);
+    pub fn draw(self: *const Structure, alpha: f32) void {
+        u.drawEntity(self.x, self.y, self.width, self.height, u.opacity(self.color, alpha));
     }
 
     pub fn update(self: *Structure) void {
@@ -759,8 +784,8 @@ pub const Resource = struct {
     height: u16,
     life: i16,
 
-    pub fn draw(self: *Unit) void {
-        u.drawEntity(self.x, self.y, self.width, self.height, self.color());
+    pub fn draw(self: *Unit, alpha: f32) void {
+        u.drawEntity(self.x, self.y, self.width, self.height, u.opacity(self.color, alpha));
     }
 };
 
@@ -803,8 +828,8 @@ pub const Projectile = struct {
         };
     }
 
-    pub fn draw(self: *Projectile) void {
-        u.drawEntity(self.x, self.y, self.width, self.height, preset(self.class).color);
+    pub fn draw(self: *Projectile, alpha: f32) void {
+        u.drawEntity(self.x, self.y, self.width, self.height, u.opacity(preset(self.class).color, alpha));
     }
 
     pub fn impact(self: *Projectile) void {
@@ -950,7 +975,7 @@ pub const Grid = struct {
 
     fn updateSection(self: *Grid, x: usize, y: usize) !void {
         const index = y * self.columns + x;
-        const entities = try self.sectionSearch(@as(u16, @intCast(x * u.Grid.cell_size)), @as(u16, @intCast(y * u.Grid.cell_size)), main.UNIT_SEARCH_LIMIT);
+        const entities = try self.sectionSearch(@as(u16, @intCast(x * u.Grid.cell_size)), @as(u16, @intCast(y * u.Grid.cell_size)), main.Config.UNIT_SEARCH_LIMIT);
         self.sections[index].clearAndFree();
 
         for (entities) |entity| {
@@ -1135,9 +1160,9 @@ pub const Grid = struct {
         const top = @max(half_height, y) - half_height;
         const bottom = y + half_height;
         const nearby_entities = if (current_entity != null and current_entity.?.kind == Kind.Unit)
-            try self.sectionSearch(x, y, main.UNIT_SEARCH_LIMIT)
+            try self.sectionSearch(x, y, main.Config.UNIT_SEARCH_LIMIT)
         else
-            try self.sectionSearch(x, y, main.PLAYER_SEARCH_LIMIT);
+            try self.sectionSearch(x, y, main.Config.PLAYER_SEARCH_LIMIT);
         for (nearby_entities) |entity| {
             if (current_entity) |cur| {
                 if (cur == entity) {
