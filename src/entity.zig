@@ -256,6 +256,12 @@ pub const Unit = struct {
     last_step: u.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
     model: *u.Model,
+    state: State,
+
+    const State = enum {
+        Default,
+        Incapacitated,
+    };
 
     pub fn draw(self: *Unit, alpha: f32) void {
         if (self.class == 0) { // Testing model for class 0
@@ -278,13 +284,16 @@ pub const Unit = struct {
         if (main.moveDivision(self.life)) {
             self.last_step = u.Point.at(self.x, self.y);
             const step = self.getStep();
+
             try self.move(step.x, step.y);
+
+            if (self.class == 0) { // Testing model for class 0
+                self.model.updateSoftBody(0, u.Point.at(self.x, self.y));
+            }
+            if (self.state == State.Incapacitated) self.state = State.Default;
         }
 
-        if (self.class == 0) { // Testing model for class 0
-            self.model.updateRigidBody(0, u.Point.at(self.x, self.y));
-        }
-
+        if (self.state == State.Incapacitated) self.last_step = u.Point.at(self.x, self.y);
         self.life -= 1;
     }
 
@@ -292,6 +301,8 @@ pub const Unit = struct {
     fn move(self: *Unit, new_x: u16, new_y: u16) !void {
         const old_x = self.x;
         const old_y = self.y;
+
+        if (self.state == State.Incapacitated) return;
 
         // If step is out of bounds, clamps to map (ignoring collision) if needed, and retargets
         if (!u.isInMap(new_x, new_y, self.width, self.height)) {
@@ -316,13 +327,7 @@ pub const Unit = struct {
 
     /// Searches for collision at `new_x`,`new_y`. If unhindered, executes the movement, updates the grid, and returns `true`. If hindered, returns `false`.
     fn tryMove(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) bool {
-        // Causes entities to stop at "undiscovered" cells:
-        //if (entities == null or entities.?.items.len == 0) {
-        //    std.debug.print("Entities list is empty.\n", .{});
-        //    return true;
-        //}
         //std.debug.print("Entities list retrieved: length = {any}, address = {}\n", .{ entities.?.items.len, @intFromPtr(entities) });
-
         const collision = self.checkCollision(new_x, new_y);
         if (collision == null) { // No obstacle, move
             self.x = new_x;
@@ -394,7 +399,7 @@ pub const Unit = struct {
         const old_x = self.x;
         const old_y = self.y;
         const new_x: u16, const new_y: u16 = calculatePushPosition(self, angle, distance);
-
+        self.state = State.Incapacitated; // Incapacitated while pushed
         std.debug.print("Pushed towards angle {}.\n", .{angle});
 
         var moved_distance: f32 = distance;
@@ -464,6 +469,12 @@ pub const Unit = struct {
 
         // Get the current position of unit and overall distance to target
         const current = u.Point.at(self.x, self.y);
+
+        // If incapacitated, remain in place for tick
+        if (self.state == State.Incapacitated) {
+            return current;
+        }
+
         const distance = u.fastSqrt(u.asF32(u32, u.distanceSquared(current, self.target)));
 
         // Check if within cell of target
@@ -515,6 +526,7 @@ pub const Unit = struct {
             .last_step = start_point,
             .cached_cellsigns = [_]u32{0} ** 9,
             .model = try u.Model.createChain(main.World.grid.allocator, 6, start_point, 12), // do from_class
+            .state = State.Default,
         };
 
         entity.* = Entity{

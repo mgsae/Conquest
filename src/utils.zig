@@ -423,6 +423,10 @@ pub const Point = struct {
         };
     }
 
+    pub fn equals(self: Point, other: Point) bool {
+        return self.x == other.x and self.y == other.y;
+    }
+
     pub fn toVector(self: *Point) Vector {
         return Vector{ .x = asF32(u16, self.x), .y = asF32(u16, self.y) };
     }
@@ -549,6 +553,13 @@ pub fn sizeFactor(w1: u16, h1: u16, w2: u16, h2: u16) f32 {
     const area1 = @as(f32, @floatFromInt(w1)) * @as(f32, @floatFromInt(h1));
     const area2 = @as(f32, @floatFromInt(w2)) * @as(f32, @floatFromInt(h2));
     return area1 / area2;
+}
+
+/// Does a rough check of whether current position differs from previous + speed (within 0.5), in which case was otherwise moved.
+pub fn moveDeviationCheck(current: Point, previous: Point, speed: f16) bool {
+    if (current.equals(previous)) return false; // Was stationary already
+    const distance = fastSqrt(asF32(u32, distanceSquared(current, previous)));
+    return (distance < speed - 0.25 or distance > speed + 0.25);
 }
 
 pub fn interpolateStep(last_x: u16, last_y: u16, x: i32, y: i32, frame: i16, interval: comptime_int) [2]i32 {
