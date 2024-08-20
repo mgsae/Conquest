@@ -129,7 +129,7 @@ pub fn main() anyerror!void {
     defer rl.closeWindow(); // Close window and OpenGL context
 
     const flags = rl.ConfigFlags{
-        .fullscreen_mode = true,
+        .fullscreen_mode = false,
         .window_resizable = true,
         .window_undecorated = false, // Removes window border
         .window_transparent = false,
@@ -147,7 +147,7 @@ pub fn main() anyerror!void {
         .interlaced_hint = false,
     };
     rl.setWindowState(flags);
-    //rl.setTargetFPS(120);
+    rl.setTargetFPS(120);
 
     // Initialize controls
     //--------------------------------------------------------------------------------------
@@ -362,12 +362,12 @@ pub fn updateCanvasZoom(mousewheel_delta: f32) void {
     Camera.canvas_max = u.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), World.width, World.height); // For window resizing
     Camera.canvas_zoom_target = std.math.clamp(Camera.canvas_zoom_target, Camera.canvas_max, Camera.ZOOM_MAX); // Re-sizes canvas to current window size
     if (mousewheel_delta != 0) {
-        const zoom_change: f32 = 1 + u.limitToTickRate(Camera.ZOOM_RATE * mousewheel_delta); // Zoom rate
+        const zoom_change: f32 = 1 + u.clamp(u.limitToTickRate(Camera.ZOOM_RATE * mousewheel_delta), -0.25, 0.25); // Zoom rate
         Camera.canvas_zoom_target = @min(@max(Camera.canvas_max, Camera.canvas_zoom * zoom_change), Camera.ZOOM_MAX); // From <1 (full map) to 10 (zoomed in)
     }
     if (Camera.canvas_zoom != Camera.canvas_zoom_target) {
         const old_zoom: f32 = Camera.canvas_zoom;
-        const lerp_factor: f32 = Camera.ZOOM_SPEED;
+        const lerp_factor: f32 = u.frameAdjusted(Camera.ZOOM_SPEED);
         Camera.canvas_zoom = Camera.canvas_zoom + lerp_factor * (Camera.canvas_zoom_target - Camera.canvas_zoom);
         // If difference is tiny, snaps to target to avoid perpetual adjustments
         if (@abs(Camera.canvas_zoom - Camera.canvas_zoom_target) < 0.001) Camera.canvas_zoom = Camera.canvas_zoom_target;

@@ -400,15 +400,15 @@ pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
 // Geometry
 //----------------------------------------------------------------------------------
 pub const Vector = struct {
-    x: i32,
-    y: i32,
+    x: f32,
+    y: f32,
 
     pub fn toPoint(self: Vector) Point {
-        return Point{ asU16(i32, self.x), asU16(i32, self.y) };
+        return Point{ asU16(f32, self.x), asU16(f32, self.y) };
     }
 
     pub fn fromPoint(point: Point) Vector {
-        return Vector{ .x = asI32(u16, point.x), .y = asI32(u16, point.y) };
+        return Vector{ .x = asF32(u16, point.x), .y = asF32(u16, point.y) };
     }
 };
 
@@ -421,6 +421,14 @@ pub const Point = struct {
             .x = x,
             .y = y,
         };
+    }
+
+    pub fn toVector(self: *Point) Vector {
+        return Vector{ .x = asF32(u16, self.x), .y = asF32(u16, self.y) };
+    }
+
+    pub fn fromVector(vector: Vector) Point {
+        return Point{ asU16(f32, vector.x), asU16(f32, vector.y) };
     }
 
     /// Moves the point by a horizontal and/or vertical offset. Clamped to map limits.
@@ -551,6 +559,18 @@ pub fn interpolateStep(last_x: u16, last_y: u16, x: i32, y: i32, frame: i16, int
     const interp_y = @as(i32, last_y) + @as(i32, @intFromFloat(interpolation_factor * @as(f32, @floatFromInt(y - @as(i32, last_y)))));
 
     return [2]i32{ interp_x, interp_y };
+}
+
+/// Gets `frame`'s offset from base `x`,`y` values that results from interpolating between `last_x`,`last_y` and `x`,`y` over `interval`.
+pub fn interpolateStepOffsets(last_x: u16, last_y: u16, x: i32, y: i32, frame: i16, interval: comptime_int) [2]f32 {
+    const steps_since_last_move = interval - @rem(frame, interval); // Number of steps since the last move
+    const interpolation_factor = @as(f32, @floatFromInt(steps_since_last_move)) / @as(f32, @floatFromInt(interval));
+
+    // Calculate the interpolation offsets
+    const offset_x = interpolation_factor * @as(f32, @floatFromInt(x - @as(i32, last_x)));
+    const offset_y = interpolation_factor * @as(f32, @floatFromInt(y - @as(i32, last_y)));
+
+    return [2]f32{ offset_x, offset_y };
 }
 
 /// Squares the `x`,`y` distance between `a` and `b`. Allows for accurate distance comparisons, but does not represent the actual distance.
@@ -1179,31 +1199,76 @@ pub const Model = struct {
         allocator.destroy(self);
     }
 
-    pub fn update(self: *Model, anchor_index: usize, new_anchor_position: Point) void {
-        // Move the anchor joint to the new position
+    pub fn updateSoftBody(self: *Model, anchor_index: usize, new_anchor_position: Point) void {
         self.joints[anchor_index].position = Vector.fromPoint(new_anchor_position);
-        std.debug.print("updating model\n", .{});
-        // Adjust other joints based on their constraints
         for (self.joints, 0..) |*joint, i| {
             if (i == anchor_index) continue;
 
-            std.debug.print("adjusting joint {} at position {}\n", .{ i, self.joints[i].position });
-
             for (joint.connected_joints, 0..) |connected_joint_index, j| {
-                const connected_joint = &self.joints[connected_joint_index]; // Access joint by index
+                const connected_joint = &self.joints[connected_joint_index];
                 const target_distance = joint.distances[j];
 
-                // Calculate current distance
-                const dx = asF32(i32, connected_joint.position.x - joint.position.x);
-                const dy = asF32(i32, connected_joint.position.y - joint.position.y);
+                var dx = connected_joint.position.x - joint.position.x;
+                var dy = connected_joint.position.y - joint.position.y;
                 const current_distance = fastSqrt(dx * dx + dy * dy);
 
                 if (current_distance != target_distance) {
-                    const correction = (target_distance - current_distance) / current_distance;
-                    joint.position.x += asI32(f32, dx * correction);
-                    joint.position.y += asI32(f32, dy * correction);
+                    if (current_distance != 0) { // Normalize the direction vector
+                        dx /= current_distance;
+                        dy /= current_distance;
+                    }
+
+                    const correction_distance = (current_distance - target_distance);
+
+                    // If the current joint is the anchor, adjust only the connected joint
+                    if (i == anchor_index) {
+                        connected_joint.position.x -= dx * correction_distance;
+                        connected_joint.position.y -= dy * correction_distance;
+                    } else if (connected_joint_index == anchor_index) {
+                        joint.position.x += dx * correction_distance;
+                        joint.position.y += dy * correction_distance;
+                    } else {
+                        joint.position.x += dx * correction_distance * 0.5;
+                        joint.position.y += dy * correction_distance * 0.5;
+                        connected_joint.position.x -= dx * correction_distance * 0.5;
+                        connected_joint.position.y -= dy * correction_distance * 0.5;
+                    }
                 }
             }
+        }
+    }
+
+    pub fn updateRigidBody(self: *Model, anchor_index: usize, new_anchor_position: Point) void {
+        // Update the anchor position
+        self.joints[anchor_index].position = Vector.fromPoint(new_anchor_position);
+
+        // Iterate over each joint, starting from the second one (index 1)
+        for (self.joints[1..], 1..) |*joint, i| { // Start from the second joint since the first is the anchor
+            const previous_joint = &self.joints[i - 1];
+            const target_distance = joint.distances[0]; // Assuming each joint has one distance to the previous joint
+            //std.debug.print("current joint: {}. previous joint: {}\n", .{ joint, previous_joint });
+            // Calculate the direction from the previous joint to the current joint
+            var dx = joint.position.x - previous_joint.position.x;
+            var dy = joint.position.y - previous_joint.position.y;
+            //std.debug.print("dx dy: {} {}\n", .{ dx, dy });
+            const current_distance = fastSqrt(dx * dx + dy * dy);
+            //std.debug.print("distance between joint and previous joint: {}\n", .{current_distance});
+            // Normalize the direction vector if the distance is not zero
+            if (current_distance != 0) {
+                dx /= current_distance;
+                dy /= current_distance;
+            } else {
+                // If the distance is zero, we assume a default direction (e.g., along the x-axis)
+                dx = 1;
+                dy = 0;
+            }
+
+            // Set the joint to the correct position at the exact distance from the previous joint
+            joint.position.x = previous_joint.position.x + dx * target_distance;
+            joint.position.y = previous_joint.position.y + dy * target_distance;
+
+            // Debugging: Print the new position of the joint
+            //std.debug.print("Joint {} moved to: {}\n", .{ i, joint.position });
         }
     }
 
@@ -1223,12 +1288,6 @@ pub const Model = struct {
             points.append(joint.point);
         }
         return points;
-    }
-
-    fn calculateDistance(p0: Point, p1: Point) f32 {
-        const dx = p1.x - p0.x;
-        const dy = p1.y - p0.y;
-        return fastSqrt(dx * dx + dy * dy);
     }
 
     /// Creates a snake-like model with the specified number of joints
@@ -1263,8 +1322,8 @@ pub const Model = struct {
 
             joints[i] = Joint{
                 .position = Vector{
-                    .x = asI32(u16, initial_position.x + asU16(f32, asF32(usize, i) * dx)),
-                    .y = asI32(u16, initial_position.y),
+                    .x = asF32(u16, initial_position.x + asU16(f32, asF32(usize, i) * dx)), // Starts aligned to the right
+                    .y = asF32(u16, initial_position.y),
                 },
                 .connected_joints = connected_joints,
                 .distances = distances,
@@ -1337,10 +1396,37 @@ pub fn drawModel(model: *Model, jointRadius: f32, jointColor: rl.Color, boneColo
     for (model.joints) |joint| { // Draw bones between joints
         for (joint.connected_joints) |connected_joint_index| {
             const connected_joint = model.joints[connected_joint_index];
-            rl.drawLine(canvasX(joint.position.x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(joint.position.y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(connected_joint.position.x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(connected_joint.position.y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), boneColor);
+            const x1 = asI32(f32, joint.position.x);
+            const y1 = asI32(f32, joint.position.y);
+            const x2 = asI32(f32, connected_joint.position.x);
+            const y2 = asI32(f32, connected_joint.position.y);
+            rl.drawLine(canvasX(x1, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y1, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(x2, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y2, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), boneColor);
         }
     }
     for (model.joints) |joint| { // Draw each joint as a circle
-        drawCircle(joint.position.x, joint.position.y, jointRadius, jointColor);
+        const x = asI32(f32, joint.position.x);
+        const y = asI32(f32, joint.position.y);
+        drawCircle(x, y, jointRadius, jointColor);
+    }
+}
+
+pub fn drawModelInterpolated(model: *Model, jointRadius: f32, jointColor: rl.Color, boneColor: rl.Color, last_step: Point, frame: i16) void {
+    // Calculate the interpolated position for the first joint (anchor)
+    const offset = interpolateStepOffsets(last_step.x, last_step.y, asI32(f32, model.joints[0].position.x), asI32(f32, model.joints[0].position.y), frame, main.World.MOVEMENT_DIVISIONS);
+
+    for (model.joints) |joint| { // Draw bones between joints
+        for (joint.connected_joints) |connected_joint_index| {
+            const connected_joint = model.joints[connected_joint_index];
+            const x1 = asI32(f32, joint.position.x + offset[0]);
+            const y1 = asI32(f32, joint.position.y + offset[1]);
+            const x2 = asI32(f32, connected_joint.position.x + offset[0]);
+            const y2 = asI32(f32, connected_joint.position.y + offset[1]);
+            rl.drawLine(canvasX(x1, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y1, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(x2, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y2, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), boneColor);
+        }
+    }
+    for (model.joints) |joint| { // Draw joints as circles
+        const x = asI32(f32, joint.position.x + offset[0]);
+        const y = asI32(f32, joint.position.y + offset[1]);
+        drawCircle(x, y, jointRadius, jointColor);
     }
 }
