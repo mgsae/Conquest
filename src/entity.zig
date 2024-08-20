@@ -255,10 +255,12 @@ pub const Unit = struct {
     target: u.Point,
     last_step: u.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
-    mode: u8, // 0 = default, 1 = drain life
 
     pub fn draw(self: *Unit, alpha: f32) void {
-        u.drawEntityInterpolated(self.x, self.y, self.width, self.height, u.opacity(self.color(), alpha), self.last_step, self.life);
+        switch (self.class) {
+            0 => 2,
+            else => u.drawEntityInterpolated(self.x, self.y, self.width, self.height, u.opacity(self.color(), alpha), self.last_step, self.life),
+        }
         if (main.Player.selected == self.entity) { // If selected by player, draws target point
             u.drawCircleLine(self.target.x, self.target.y, 100, u.opacity(self.color(), alpha / 2));
         }
@@ -383,7 +385,6 @@ pub const Unit = struct {
         const old_x = self.x;
         const old_y = self.y;
         const new_x: u16, const new_y: u16 = calculatePushPosition(self, angle, distance);
-        self.mode = 1; // Sets mode to pushed for instant move
 
         std.debug.print("Pushed towards angle {}.\n", .{angle});
 
@@ -504,7 +505,6 @@ pub const Unit = struct {
             .target = u.Point.at(u.randomU16(main.World.width), u.randomU16(main.World.height)), // <--- just testing
             .last_step = u.Point.at(x, y),
             .cached_cellsigns = [_]u32{0} ** 9,
-            .mode = 0,
         };
 
         entity.* = Entity{

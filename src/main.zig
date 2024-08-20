@@ -73,11 +73,44 @@ pub const World = struct {
     var dead_units: std.ArrayList(*e.Unit) = undefined;
     var dead_resources: std.ArrayList(*e.Resource) = undefined;
 
-    fn initialize(x: u16, y: u16) void {
+    fn initializeMap(allocator: *std.mem.Allocator, x: u16, y: u16) !void {
         width = x;
         height = y;
         Camera.canvas_max = u.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), width, height); // Updates camera zoom out limit
-        // Set grid here maybe
+        // Initialize grid with derived dimensions
+        const gridWidth: usize = @intCast(u.ceilDiv(width, u.Grid.cell_size));
+        const gridHeight: usize = @intCast(u.ceilDiv(height, u.Grid.cell_size));
+        std.debug.print("Grid Width: {}, Grid Height: {}\n", .{ gridWidth, gridHeight });
+        std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ World.width, World.height, u.Grid.cell_size });
+        grid.init(allocator, gridWidth, gridHeight, Config.BUFFERSIZE) catch return error.GridInitializationFailed;
+    }
+
+    fn initializeEntities(allocator: std.mem.Allocator) void {
+        e.players = std.ArrayList(*e.Player).init(allocator);
+        e.structures = std.ArrayList(*e.Structure).init(allocator);
+        e.units = std.ArrayList(*e.Unit).init(allocator);
+        e.resources = std.ArrayList(*e.Resource).init(allocator);
+        World.dead_players = std.ArrayList(*e.Player).init(allocator);
+        World.dead_structures = std.ArrayList(*e.Structure).init(allocator);
+        World.dead_units = std.ArrayList(*e.Unit).init(allocator);
+        World.dead_resources = std.ArrayList(*e.Resource).init(allocator);
+        // Maybe populate with entities here
+    }
+
+    fn initializePlayers(allocator: *std.mem.Allocator, map: Map) !void {
+        const startCoords = map.start_locations; // Players from map properties
+        for (startCoords, 0..) |coord, i| {
+            std.debug.print("Player starting at: ({}, {})\n", .{ coord.x, coord.y });
+            if (i == 0) {
+                const local = try e.Player.createLocal(coord.x, coord.y);
+                try e.players.append(local);
+                Player.self = local; // Sets player to local player pointer
+            } else {
+                const remote = try e.Player.createRemote(coord.x, coord.y);
+                try e.players.append(remote);
+            }
+        }
+        allocator.free(startCoords);
     }
 };
 
@@ -96,7 +129,7 @@ pub fn main() anyerror!void {
     defer rl.closeWindow(); // Close window and OpenGL context
 
     const flags = rl.ConfigFlags{
-        .fullscreen_mode = false,
+        .fullscreen_mode = true,
         .window_resizable = true,
         .window_undecorated = false, // Removes window border
         .window_transparent = false,
@@ -119,7 +152,7 @@ pub fn main() anyerror!void {
     // Initialize controls
     //--------------------------------------------------------------------------------------
     u.rngInit(); // <-- Here, would fetch seed from server (or do something else)
-    Config.tick_number = 0; // <-- Here, would fetch value from server
+    Config.tick_number = 0; // <-- Here, would fetch current tick value from server
     var stored_mouse_input: [2]rl.Vector2 = [2]rl.Vector2{ rl.Vector2.zero(), rl.Vector2.zero() };
     var stored_mousewheel: f32 = 0.0;
     var stored_key_input: u32 = 0;
@@ -127,43 +160,11 @@ pub fn main() anyerror!void {
     // Initialize map
     //--------------------------------------------------------------------------------------
     const map = try Map.open(&allocator, 0); // Opens default map and initializes world
-    // Define grid dimensions
-    const gridWidth: usize = @intCast(u.ceilDiv(World.width, u.Grid.cell_size));
-    const gridHeight: usize = @intCast(u.ceilDiv(World.height, u.Grid.cell_size));
-
-    std.debug.print("Grid Width: {}, Grid Height: {}\n", .{ gridWidth, gridHeight });
-    std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ World.width, World.height, u.Grid.cell_size });
-
-    // Initialize the grid
-    try World.grid.init(&allocator, gridWidth, gridHeight, Config.BUFFERSIZE);
     const cellsigns_cache = try allocator.alloc(u32, World.grid.columns * World.grid.rows);
     defer allocator.free(cellsigns_cache);
     defer World.grid.deinit(&allocator);
-
-    // Initialize entities
-    //--------------------------------------------------------------------------------------
-    e.players = std.ArrayList(*e.Player).init(allocator);
-    e.structures = std.ArrayList(*e.Structure).init(allocator);
-    e.units = std.ArrayList(*e.Unit).init(allocator);
-    e.resources = std.ArrayList(*e.Resource).init(allocator);
-    World.dead_players = std.ArrayList(*e.Player).init(allocator);
-    World.dead_structures = std.ArrayList(*e.Structure).init(allocator);
-    World.dead_units = std.ArrayList(*e.Unit).init(allocator);
-    World.dead_resources = std.ArrayList(*e.Resource).init(allocator);
-
-    const startCoords = map.start_locations; // Players from map properties
-    for (startCoords, 0..) |coord, i| {
-        std.debug.print("Player starting at: ({}, {})\n", .{ coord.x, coord.y });
-        if (i == 0) {
-            const local = try e.Player.createLocal(coord.x, coord.y);
-            try e.players.append(local);
-            Player.self = local; // Sets player to local player pointer
-        } else {
-            const remote = try e.Player.createRemote(coord.x, coord.y);
-            try e.players.append(remote);
-        }
-    }
-    allocator.free(startCoords); // Freeing starting positions
+    World.initializeEntities(allocator);
+    try World.initializePlayers(&allocator, map);
 
     // Testing/debugging
     //--------------------------------------------------------------------------------------
@@ -536,6 +537,7 @@ pub fn drawMap() void {
     while (colIndex * u.Grid.cell_size < World.width) : (colIndex += 1) {
         u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 5, World.height, rl.Color.light_gray);
     }
+
     // Draw the edges of the map
     u.drawRect(0, -10, World.width, 20, rl.Color.dark_gray); // Top edge
     u.drawRect(0, World.height - 10, World.width, 20, rl.Color.dark_gray); // Bottom edge
@@ -588,7 +590,8 @@ const Map = struct { // Encapsulates map properties; see World for currently act
             else => return error.MapNotFound,
         };
         // Setting game world properties from opened map
-        World.initialize(opened_map.width, opened_map.height);
+        try World.initializeMap(allocator, opened_map.width, opened_map.height);
+        std.debug.print("Opening map ID {}, name: {s}.\n", .{ id, opened_map.name });
         return opened_map;
     }
 
