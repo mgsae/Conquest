@@ -266,7 +266,7 @@ pub const Unit = struct {
     pub fn draw(self: *Unit, alpha: f32) void {
         if (self.class == 0) { // Testing model for class 0
             // Draw the model based on its current state
-            u.drawModelInterpolated(self.model, 10, u.opacity(self.color(), alpha), u.opacity(self.color(), alpha), self.last_step, self.life);
+            u.drawModel(self.model, 10, u.opacity(self.color(), alpha), u.opacity(self.color(), alpha));
         } else {
             // Fallback to the previous method for other classes
             u.drawEntityInterpolated(self.x, self.y, self.width, self.height, u.opacity(self.color(), alpha), self.last_step, self.life);
@@ -287,12 +287,16 @@ pub const Unit = struct {
 
             try self.move(step.x, step.y);
 
-            if (self.class == 0) { // Testing model for class 0
-                self.model.updateSoftBody(0, u.Point.at(self.x, self.y));
-            }
             if (self.state == State.Incapacitated) self.state = State.Default;
         }
 
+        if (self.class == 0) { // Testing model for class 0
+            const factor = u.Interpolation.getFactor(self.life, main.World.MOVEMENT_DIVISIONS);
+            std.debug.print("Factor = {}. Life = {}. Interval = {}.\n", .{ factor, self.life, main.World.MOVEMENT_DIVISIONS });
+            self.model.updateRigidBodyInterpolated(0, u.Vector.fromPoint(self.last_step), u.Vector.fromCoords(self.x, self.y), factor);
+        }
+
+        // If incapacitated, resets last_step every frame to keep interpolation updated
         if (self.state == State.Incapacitated) self.last_step = u.Point.at(self.x, self.y);
         self.life -= 1;
     }

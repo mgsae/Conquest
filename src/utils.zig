@@ -404,11 +404,19 @@ pub const Vector = struct {
     y: f32,
 
     pub fn toPoint(self: Vector) Point {
-        return Point{ asU16(f32, self.x), asU16(f32, self.y) };
+        return Point{ mapClampX(asI16(f32, self.x), 1), mapClampY(asI16(f32, self.y), 1) };
     }
 
     pub fn fromPoint(point: Point) Vector {
         return Vector{ .x = asF32(u16, point.x), .y = asF32(u16, point.y) };
+    }
+
+    pub fn toCoords(vector: Vector) [2]u16 {
+        return [2]u16{ mapClampX(asI16(f32, vector.x), 1), mapClampY(asI16(f32, vector.y), 1) };
+    }
+
+    pub fn fromCoords(x: u16, y: u16) Vector {
+        return Vector{ .x = asF32(u16, x), .y = asF32(u16, y) };
     }
 };
 
@@ -555,7 +563,7 @@ pub fn sizeFactor(w1: u16, h1: u16, w2: u16, h2: u16) f32 {
     return area1 / area2;
 }
 
-/// Does a rough check of whether current position differs from previous + speed (within 0.5), in which case was otherwise moved.
+/// Rough check of whether current position differs from previous + speed (within 0.5), in which case was otherwise moved.
 pub fn moveDeviationCheck(current: Point, previous: Point, speed: f16) bool {
     if (current.equals(previous)) return false; // Was stationary already
     const distance = fastSqrt(asF32(u32, distanceSquared(current, previous)));
@@ -1134,9 +1142,14 @@ pub fn screenToPlayerVector(screen_position: rl.Vector2) rl.Vector2 {
 
 // Animation
 //----------------------------------------------------------------------------------
-const Interpolation = struct {
-    pub fn getProgress(start_frame: u64, current_frame: u64, duration: u64) f32 {
-        return asF32(u64, (current_frame - start_frame)) / asF32(u64, duration);
+pub const Interpolation = struct {
+    pub fn framesToFactor(start_frame: u64, current_frame: u64, frame_duration: u64) f32 {
+        return asF32(u64, (current_frame - start_frame)) / asF32(u64, frame_duration);
+    }
+
+    pub fn getFactor(current: i16, interval: i16) f32 {
+        const remainder = @rem(current, interval);
+        return asF32(i16, remainder) / asF32(i16, interval);
     }
 
     pub fn linear(t: f32, p0: Point, p1: Point) Point {
@@ -1250,9 +1263,7 @@ pub const Model = struct {
     }
 
     pub fn updateRigidBody(self: *Model, anchor_index: usize, new_anchor_position: Point) void {
-        // Update the anchor position
         self.joints[anchor_index].position = Vector.fromPoint(new_anchor_position);
-
         // Iterate over each joint, starting from the second one (index 1)
         for (self.joints[1..], 1..) |*joint, i| { // Start from the second joint since the first is the anchor
             const previous_joint = &self.joints[i - 1];
@@ -1273,41 +1284,50 @@ pub const Model = struct {
                 dx = 1;
                 dy = 0;
             }
-
-            // Set the joint to the correct position at the exact distance from the previous joint
             joint.position.x = previous_joint.position.x + dx * target_distance;
             joint.position.y = previous_joint.position.y + dy * target_distance;
-
-            // Debugging: Print the new position of the joint
             //std.debug.print("Joint {} moved to: {}\n", .{ i, joint.position });
         }
     }
 
-    pub fn addJoint(self: *Model, point: Point, connections: []usize, distances: []f32) void {
-        assert(connections.len == distances.len);
-        const new_joint = Joint{
-            .point = point,
-            .connected_joints = connections,
-            .distances = distances,
-        };
-        self.joints.append(new_joint);
-    }
+    pub fn updateRigidBodyInterpolated(self: *Model, anchor_index: usize, previous_anchor_position: Vector, new_anchor_position: Vector, interpolation_factor: f32) void {
+        const anchor_joint = &self.joints[anchor_index];
+        const previous_position = previous_anchor_position;
 
-    pub fn getJoints(self: *Model) []const Point {
-        var points = []Point{};
-        for (self.joints) |joint| {
-            points.append(joint.point);
+        // Interpolate anchor position based on the provided interpolation factor
+        anchor_joint.position.x = previous_position.x + ((1 - interpolation_factor) * (new_anchor_position.x - previous_position.x));
+        anchor_joint.position.y = previous_position.y + ((1 - interpolation_factor) * (new_anchor_position.y - previous_position.y));
+
+        // Iterate over each joint, starting from the second one (index 1)
+        for (self.joints[1..], 1..) |*joint, i| { // Start from the second joint since the first is the anchor
+            const previous_joint = &self.joints[i - 1];
+            const target_distance = joint.distances[0]; // Assuming each joint has one distance to the previous joint
+
+            // Calculate the direction from the previous joint to the current joint
+            var dx = joint.position.x - previous_joint.position.x;
+            var dy = joint.position.y - previous_joint.position.y;
+            const current_distance = fastSqrt(dx * dx + dy * dy);
+
+            // Normalize the direction vector if the distance is not zero
+            if (current_distance != 0) {
+                dx /= current_distance;
+                dy /= current_distance;
+            } else {
+                dx = 1;
+                dy = 0;
+            }
+
+            // Adjust the current joint to maintain the target distance from the previous joint
+            joint.position.x = previous_joint.position.x + dx * target_distance;
+            joint.position.y = previous_joint.position.y + dy * target_distance;
         }
-        return points;
     }
 
-    /// Creates a snake-like model with the specified number of joints
-    /// starting from an initial position and with a specified distance between joints.
+    /// Creates a snake-like model with the specified number of joints starting from an initial position and with a specified distance between joints.
     pub fn createChain(allocator: *std.mem.Allocator, joint_count: usize, initial_position: Point, distance: f32) !*Model {
         var joints = try allocator.alloc(Joint, joint_count);
         const dx = distance;
 
-        // Initialize each joint
         for (0..joint_count) |i| {
             var connected_joints: []usize = &[_]usize{};
             var distances: []f32 = &[_]f32{};
@@ -1333,7 +1353,7 @@ pub const Model = struct {
 
             joints[i] = Joint{
                 .position = Vector{
-                    .x = asF32(u16, initial_position.x + asU16(f32, asF32(usize, i) * dx)), // Starts aligned to the right
+                    .x = asF32(u16, initial_position.x + asU16(f32, asF32(usize, i) * dx)), // Extends to the right
                     .y = asF32(u16, initial_position.y),
                 },
                 .connected_joints = connected_joints,
@@ -1421,6 +1441,7 @@ pub fn drawModel(model: *Model, jointRadius: f32, jointColor: rl.Color, boneColo
     }
 }
 
+/// Not accurate for joints on erratic movement.
 pub fn drawModelInterpolated(model: *Model, jointRadius: f32, jointColor: rl.Color, boneColor: rl.Color, last_step: Point, frame: i16) void {
     // Calculate the interpolated position for the first joint (anchor)
     const offset = interpolateStepOffsets(last_step.x, last_step.y, asI32(f32, model.joints[0].position.x), asI32(f32, model.joints[0].position.y), frame, main.World.MOVEMENT_DIVISIONS);
