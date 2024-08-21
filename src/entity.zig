@@ -102,8 +102,8 @@ pub const Player = struct {
                 main.Player.build_order = null;
             }
         } else { // If AI or remote player
-            // updateMoveEvent, determine movement based on network or AI logic
-            // updateActionEvent, determine ability use based on network or AI logic
+            // Check if remote or AI here, for now only AI
+            main.EnemyPlayerAI.fetchAction(self, main.World.tick_number);
         }
     }
 

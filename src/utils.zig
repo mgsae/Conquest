@@ -522,11 +522,27 @@ pub fn dirOffset(oX: u16, oY: u16, direction: u8, distance: u16) [2]u16 {
     var newX = oX;
     var newY = oY;
     switch (direction) {
+        1 => {
+            newX = if (newX > distance) newX - distance else 0;
+            newY += distance;
+        },
         2 => newY += distance,
+        3 => {
+            newX += distance;
+            newY += distance;
+        },
         4 => newX = if (newX > distance) newX - distance else 0,
         6 => newX += distance,
+        7 => {
+            newX = if (newX > distance) newX - distance else 0;
+            newY = if (newY > distance) newY - distance else 0;
+        },
         8 => newY = if (newY > distance) newY - distance else 0,
-        else => {}, // Handle other directions if needed
+        9 => {
+            newX += distance;
+            newY = if (newY > distance) newY - distance else 0;
+        },
+        else => {},
     }
     return [2]u16{ newX, newY };
 }
@@ -1025,6 +1041,17 @@ pub fn isInMap(x: u16, y: u16, width: u16, height: u16) bool {
     return x_signed - half_width >= 0 and x_signed + half_width < @as(i32, @intCast(main.World.width)) and y_signed - half_height >= 0 and y_signed + half_height <= @as(i32, @intCast(main.World.height));
 }
 
+/// Clamps `coordinate` of type `T` to the map's dimensions and returns as same type. Set axis 0 for map width and 1 for map height.
+pub fn mapClamp(T: type, coordinate: T, diameter: T, axis: u8) T {
+    const radius = @divTrunc(diameter, 2);
+    const pos = as(T, coordinate, i32);
+    const clamped = if (axis == 0)
+        @max(radius, @min(pos, @as(i32, @intCast(main.World.width)) - radius))
+    else
+        @max(radius, @min(pos, @as(i32, @intCast(main.World.height)) - radius));
+    return as(i32, clamped, T);
+}
+
 pub fn mapClampX(x: i16, width: u16) u16 {
     const half_width = @as(i16, @intCast(@divTrunc(width, 2)));
     const clamped_x = @max(half_width, @min(x, @as(i32, @intCast(main.World.width)) - half_width));
@@ -1384,16 +1411,21 @@ pub fn opacity(color: rl.Color, alpha: f32) rl.Color {
 }
 
 pub fn drawGuide(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
-    drawEntity(x, y, width, height, opacity(col, 0.4));
+    drawEntity(x, y, width, height, opacity(col, 0.4)); // Change to outline
 }
 
 pub fn drawGuideFail(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
-    drawEntity(x, y, width, height, opacity(col, 0.125));
+    drawEntity(x, y, width, height, opacity(col, 0.125)); // Change to outline
 }
 
 /// Uses raylib to draw rectangle scaled and positioned to canvas.
 pub fn drawRect(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(width, main.Camera.canvas_zoom), canvasScale(height, main.Camera.canvas_zoom), col);
+}
+
+/// Uses raylib to draw line with thickness, scaled and positioned to canvas.
+pub fn drawLineEx(start: Vector, end: Vector, thickness: i32, col: rl.Color) void {
+    rl.drawLineEx(Vector.toRaylib(Vector.toScreen(start)), Vector.toRaylib(Vector.toScreen(end)), asF32(i32, canvasScale(thickness, main.Camera.canvas_zoom)), col);
 }
 
 /// Uses raylib to draw circle scaled and positioned to canvas.
@@ -1426,7 +1458,7 @@ pub fn drawPlayer(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
 }
 
 pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, boneColor: rl.Color) void {
-    const thickness = asF32(u16, @divTrunc(width + height, 4));
+    const thickness = @divTrunc(width + height, 4);
     for (model.joints) |joint| { // Draw bones between joints
         for (joint.connected_joints) |connected_joint_index| {
             const connected_joint = model.joints[connected_joint_index];
@@ -1436,13 +1468,13 @@ pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, b
             //const y2 = asI32(f32, connected_joint.position.y);
             //rl.drawLine(canvasX(x1, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y1, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(x2, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y2, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), boneColor);
 
-            rl.drawLineEx(Vector.toRaylib(Vector.toScreen(joint.position)), Vector.toRaylib(Vector.toScreen(connected_joint.position)), thickness, boneColor);
+            drawLineEx(joint.position, connected_joint.position, thickness, boneColor);
         }
     }
     for (model.joints) |joint| { // Draw each joint as a circle
         const x = asI32(f32, joint.position.x);
         const y = asI32(f32, joint.position.y);
-        drawCircle(x, y, thickness * 1.5, jointColor);
+        drawCircle(x, y, asF32(u16, thickness) * 1.5, jointColor);
     }
 }
 

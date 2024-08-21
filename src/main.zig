@@ -11,7 +11,6 @@ pub const Config = struct {
     pub const PLAYER_SEARCH_LIMIT = 2056; // Player collision search limit, must exceed #entities in 3x3 cells
     pub const UNIT_SEARCH_LIMIT = 1028; // Unit collision search limit
     pub const BUFFERSIZE = 65536; // Limit to number of entities updated via sectionSearch per tick
-    pub var tick_number: u64 = undefined; // Ersatz server tick #
     pub var last_tick_time: f64 = 0.0;
     pub var profile_mode = false;
     pub var profile_timer = [4]f64{ 0, 0, 0, 0 };
@@ -65,6 +64,7 @@ pub const World = struct {
     const DEFAULT_HEIGHT = 16000; // 1080 * 8; // Limit for u16 coordinates: 65535
     pub const GRID_CELL_SIZE = 1000;
     pub const MOVEMENT_DIVISIONS = 10; // Modulus base for unit movement updates
+    pub var tick_number: u64 = undefined; // Ersatz server tick #
     pub var width: u16 = 0;
     pub var height: u16 = 0;
     pub var grid: e.Grid = undefined;
@@ -152,7 +152,7 @@ pub fn main() anyerror!void {
     // Initialize controls
     //--------------------------------------------------------------------------------------
     u.rngInit(); // <-- Here, would fetch seed from server (or do something else)
-    Config.tick_number = 0; // <-- Here, would fetch current tick value from server
+    World.tick_number = 0; // <-- Here, would fetch current tick value from server?
     var stored_mouse_input: [2]rl.Vector2 = [2]rl.Vector2{ rl.Vector2.zero(), rl.Vector2.zero() };
     var stored_mousewheel: f32 = 0.0;
     var stored_key_input: u32 = 0;
@@ -206,7 +206,7 @@ pub fn main() anyerror!void {
         const profile_frame = (Config.profile_mode and u.perFrame(45));
         if (profile_frame) {
             u.startTimer(3, "\nSTART OF FRAME :::");
-            std.debug.print("{} (TICK {}).\n\n", .{ Camera.frame_number, Config.tick_number });
+            std.debug.print("{} (TICK {}).\n\n", .{ Camera.frame_number, World.tick_number });
         }
 
         // Input
@@ -272,7 +272,7 @@ pub fn main() anyerror!void {
         // End of frame
         //----------------------------------------------------------------------------------
 
-        Config.tick_number += updates_performed; // <-- tick_number is meant to be server side
+        World.tick_number += updates_performed; // <-- Should be checked against server-side tick_number
         Config.last_tick_time += @as(f64, @floatFromInt(updates_performed)) * Config.TICK_DURATION;
         Camera.frame_number += 1;
 
@@ -624,6 +624,60 @@ pub fn moveDivision(life: i16) bool {
     return @rem(life, World.MOVEMENT_DIVISIONS) == 0;
 }
 
+// AI Player
+//----------------------------------------------------------------------------------
+pub const EnemyPlayerAI = struct {
+    player: *e.Player,
+
+    const directions = [8]u8{ 1, 2, 3, 4, 6, 7, 8, 9 };
+
+    pub fn initialize(ai: *e.Player) EnemyPlayerAI {
+        return EnemyPlayerAI{ .player = ai };
+    }
+
+    pub fn fetchAction(ai: *e.Player, tick: u64) void {
+        const move_duration = 60;
+        const move_all = move_duration * directions.len;
+
+        // ... Special patterns, e.g. defense, attack
+        // ... Special patterns, e.g. defense, attack
+        // ... Special patterns, e.g. defense, attack
+        // Default pattern
+        if (tick % move_all < move_all)
+            continuousMove(ai, tick, move_duration) catch return null;
+        if (tick % 300 == 0) {
+            // Generate a "random" class value between 0 and 3
+            const class_value = u.asU8(u64, tick / 300 % 4);
+            constructBuilding(ai, class_value, tick);
+        }
+    }
+
+    pub fn constructBuilding(ai: *e.Player, class: u8, tick: u64) void {
+        // Convert to i32 and calculate x and y, clamping to prevent underflow
+        const x_raw = @max(@rem(@as(i32, @intCast(tick)), 300) - 150, 0);
+        const y_raw = @max(@rem(@divTrunc(@as(i32, @intCast(tick)), 2), 500) - 250, 0);
+
+        // Convert to u16 after clamping
+        const x = @as(u16, @intCast(x_raw));
+        const y = @as(u16, @intCast(y_raw));
+
+        // Construct the building at the calculated position
+        _ = e.Structure.construct(ai.x + x, ai.y + y, class);
+    }
+
+    /// Moves continuously in a tick-determined direction for up to `duration` ticks.
+    fn continuousMove(player: *e.Player, tick: u64, duration: u16) !void {
+        const direction_index = u.asU8(u64, (tick / duration) % 8); // Change direction every `duration` ticks
+        const direction = directions[direction_index];
+
+        const changed = u.dirOffset(player.x, player.y, direction, u.asU16(f32, player.speed));
+        const clamped_x = u.mapClamp(u16, changed[0], player.width, 0);
+        const clamped_y = u.mapClamp(u16, changed[1], player.height, 1);
+
+        try player.executeMovement(clamped_x, clamped_y, player.speed);
+    }
+};
+
 // Game controls interaction
 //----------------------------------------------------------------------------------
 fn processMoveInput(key_input: u32, changed_x: *?u16, changed_y: *?u16) !void { // Called in processInput
@@ -671,7 +725,7 @@ pub fn executeBuild(class: u8) void {
     const built = e.Structure.construct(xy[0], xy[1], class);
     if (built) |building| {
         std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
-        Player.selected = building.entity; // A hack: sets selected to building to instantly deselect it (in updateControls) by the same click
+        Player.selected = building.entity; // Hack, sets selected to building to instantly deselect it (in updateControls) by the same click
     } else {
         std.debug.print("Failed to build structure\n", .{});
         // Handle the failure case, e.g., notify the player
