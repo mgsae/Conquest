@@ -129,7 +129,7 @@ pub fn main() anyerror!void {
     defer rl.closeWindow(); // Close window and OpenGL context
 
     const flags = rl.ConfigFlags{
-        .fullscreen_mode = false,
+        .fullscreen_mode = true,
         .window_resizable = true,
         .window_undecorated = false, // Removes window border
         .window_transparent = false,

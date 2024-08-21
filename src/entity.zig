@@ -264,9 +264,9 @@ pub const Unit = struct {
     };
 
     pub fn draw(self: *Unit, alpha: f32) void {
-        if (self.class == 0) { // Testing model for class 0
+        if (self.class == 0) { // Testing model for class 0, but expand to all
             // Draw the model based on its current state
-            u.drawModel(self.model, 10, u.opacity(self.color(), alpha), u.opacity(self.color(), alpha));
+            u.drawModel(self.model, self.width, self.height, u.opacity(self.color(), alpha), u.opacity(self.color(), alpha));
         } else {
             // Fallback to the previous method for other classes
             u.drawEntityInterpolated(self.x, self.y, self.width, self.height, u.opacity(self.color(), alpha), self.last_step, self.life);
@@ -277,26 +277,27 @@ pub const Unit = struct {
     }
 
     pub fn update(self: *Unit) !void {
-        if (self.life <= 0) {
+        if (self.life <= 0) { // If dead, sets HP to min to flag for removal, and skips update
             try self.die(null);
             return;
         }
-        if (main.moveDivision(self.life)) {
-            self.last_step = u.Point.at(self.x, self.y);
-            const step = self.getStep();
 
-            try self.move(step.x, step.y);
-
-            if (self.state == State.Incapacitated) self.state = State.Default;
-        }
-
+        // Updating models
         if (self.class == 0) { // Testing model for class 0
             const factor = u.Interpolation.getFactor(self.life, main.World.MOVEMENT_DIVISIONS);
-            std.debug.print("Factor = {}. Life = {}. Interval = {}.\n", .{ factor, self.life, main.World.MOVEMENT_DIVISIONS });
             self.model.updateRigidBodyInterpolated(0, u.Vector.fromPoint(self.last_step), u.Vector.fromCoords(self.x, self.y), factor);
         }
 
-        // If incapacitated, resets last_step every frame to keep interpolation updated
+        // Updating movement
+        if (main.moveDivision(self.life)) { // Every 10 frames
+            self.last_step = u.Point.at(self.x, self.y); // Sets last_step to current position
+            const step = self.getStep(); // Generates the next movement step
+            try self.move(step.x, step.y); // Tries to execute the step, may fail/adjust due to collision
+
+            if (self.state == State.Incapacitated) self.state = State.Default; // Resets state
+        }
+
+        // Updating state. If incapacitated, resets last_step every frame to keep interpolation updated
         if (self.state == State.Incapacitated) self.last_step = u.Point.at(self.x, self.y);
         self.life -= 1;
     }
@@ -529,7 +530,7 @@ pub const Unit = struct {
             .target = u.Point.at(u.randomU16(main.World.width), u.randomU16(main.World.height)), // <--- just testing
             .last_step = start_point,
             .cached_cellsigns = [_]u32{0} ** 9,
-            .model = try u.Model.createChain(main.World.grid.allocator, 6, start_point, 12), // do from_class
+            .model = try u.Model.createChain(main.World.grid.allocator, 4, start_point, 12), // do from_class
             .state = State.Default,
         };
 
@@ -576,7 +577,7 @@ pub const Unit = struct {
     };
 
     /// Returns a `Properties` template determined by `class`.
-    pub fn preset(class: u8) Properties {
+    pub fn preset(class: u8) Properties { // Would set model here as well
         return switch (class) {
             0 => Properties{ .speed = 1.5, .color = rl.Color.sky_blue, .width = 30, .height = 30, .life = 6000 },
             1 => Properties{ .speed = 1.75, .color = rl.Color.blue, .width = 25, .height = 25, .life = 8000 },
@@ -623,10 +624,10 @@ pub const Structure = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 4000, .tempo = 6.4, .capacity = 1 },
-            1 => Properties{ .color = rl.Color.blue, .width = 100, .height = 100, .life = 12000, .tempo = 11.0, .capacity = 8 },
-            2 => Properties{ .color = rl.Color.dark_blue, .width = 200, .height = 200, .life = 14000, .tempo = 8.0, .capacity = 5 },
-            3 => Properties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 9000, .tempo = 4.0, .capacity = 6 },
+            0 => Properties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 4000, .tempo = 6.4, .capacity = 4 },
+            1 => Properties{ .color = rl.Color.blue, .width = 100, .height = 100, .life = 12000, .tempo = 11.0, .capacity = 1 },
+            2 => Properties{ .color = rl.Color.dark_blue, .width = 200, .height = 200, .life = 14000, .tempo = 8.0, .capacity = 8 },
+            3 => Properties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 9000, .tempo = 4.0, .capacity = 5 },
             else => @panic("Invalid structure class"),
         };
     }

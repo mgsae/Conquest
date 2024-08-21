@@ -418,6 +418,31 @@ pub const Vector = struct {
     pub fn fromCoords(x: u16, y: u16) Vector {
         return Vector{ .x = asF32(u16, x), .y = asF32(u16, y) };
     }
+
+    pub fn toIntegers(vector: Vector) [2]i32 {
+        return [2]u16{ asI32(f32, vector.x), asI32(f32, vector.y) };
+    }
+
+    pub fn fromIntegers(x: i32, y: i32) Vector {
+        return Vector{ .x = asF32(i32, x), .y = asF32(i32, y) };
+    }
+
+    pub fn toScreen(self: Vector) Vector {
+        return fromIntegers(canvasX(asI32(f32, self.x), main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(asI32(f32, self.y), main.Camera.canvas_offset_y, main.Camera.canvas_zoom));
+    }
+
+    pub fn fromScreen(screen_vector: Vector) Vector {
+        const map_xy = screenToMap(toRaylib(screen_vector));
+        return fromCoords(map_xy[0], map_xy[1]);
+    }
+
+    pub fn toRaylib(vector: Vector) rl.Vector2 {
+        return rl.Vector2.init(vector.x, vector.y);
+    }
+
+    pub fn fromRaylib(rl_vector: rl.Vector2) Vector {
+        return fromCoords(rl_vector.x, rl_vector.y);
+    }
 };
 
 pub const Point = struct {
@@ -1118,7 +1143,7 @@ pub fn maxCanvasSize(screen_width: i32, screen_height: i32, map_width: u16, map_
     }
 }
 
-/// Returns the `x`,`y` map coordinates currently corresponding to what's drawn to the canvas at `screen_position` (e.g. mouse) in the viewport.
+/// Returns the `x`,`y` map coordinates currently corresponding to what's drawn to the canvas at `screen_position` (e.g. mouse) in the viewport. Clamps to 0.
 pub fn screenToMap(screen_position: rl.Vector2) [2]u16 {
     const x = u16Clamp(f32, screen_position.x - main.Camera.canvas_offset_x);
     const y = u16Clamp(f32, screen_position.y - main.Camera.canvas_offset_y);
@@ -1262,8 +1287,8 @@ pub const Model = struct {
         }
     }
 
-    pub fn updateRigidBody(self: *Model, anchor_index: usize, new_anchor_position: Point) void {
-        self.joints[anchor_index].position = Vector.fromPoint(new_anchor_position);
+    pub fn updateRigidBody(self: *Model, anchor_index: usize, new_anchor_position: Vector) void {
+        self.joints[anchor_index].position = new_anchor_position;
         // Iterate over each joint, starting from the second one (index 1)
         for (self.joints[1..], 1..) |*joint, i| { // Start from the second joint since the first is the anchor
             const previous_joint = &self.joints[i - 1];
@@ -1293,34 +1318,11 @@ pub const Model = struct {
     pub fn updateRigidBodyInterpolated(self: *Model, anchor_index: usize, previous_anchor_position: Vector, new_anchor_position: Vector, interpolation_factor: f32) void {
         const anchor_joint = &self.joints[anchor_index];
         const previous_position = previous_anchor_position;
-
-        // Interpolate anchor position based on the provided interpolation factor
+        // Interpolates anchor position based on the provided interpolation factor
         anchor_joint.position.x = previous_position.x + ((1 - interpolation_factor) * (new_anchor_position.x - previous_position.x));
         anchor_joint.position.y = previous_position.y + ((1 - interpolation_factor) * (new_anchor_position.y - previous_position.y));
-
-        // Iterate over each joint, starting from the second one (index 1)
-        for (self.joints[1..], 1..) |*joint, i| { // Start from the second joint since the first is the anchor
-            const previous_joint = &self.joints[i - 1];
-            const target_distance = joint.distances[0]; // Assuming each joint has one distance to the previous joint
-
-            // Calculate the direction from the previous joint to the current joint
-            var dx = joint.position.x - previous_joint.position.x;
-            var dy = joint.position.y - previous_joint.position.y;
-            const current_distance = fastSqrt(dx * dx + dy * dy);
-
-            // Normalize the direction vector if the distance is not zero
-            if (current_distance != 0) {
-                dx /= current_distance;
-                dy /= current_distance;
-            } else {
-                dx = 1;
-                dy = 0;
-            }
-
-            // Adjust the current joint to maintain the target distance from the previous joint
-            joint.position.x = previous_joint.position.x + dx * target_distance;
-            joint.position.y = previous_joint.position.y + dy * target_distance;
-        }
+        // Calls the regular update
+        updateRigidBody(self, anchor_index, anchor_joint.position);
     }
 
     /// Creates a snake-like model with the specified number of joints starting from an initial position and with a specified distance between joints.
@@ -1423,25 +1425,28 @@ pub fn drawPlayer(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     drawCircleLine(x, y, Grid.cell_half, opacity(col, 0.25));
 }
 
-pub fn drawModel(model: *Model, jointRadius: f32, jointColor: rl.Color, boneColor: rl.Color) void {
+pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, boneColor: rl.Color) void {
+    const thickness = asF32(u16, @divTrunc(width + height, 4));
     for (model.joints) |joint| { // Draw bones between joints
         for (joint.connected_joints) |connected_joint_index| {
             const connected_joint = model.joints[connected_joint_index];
-            const x1 = asI32(f32, joint.position.x);
-            const y1 = asI32(f32, joint.position.y);
-            const x2 = asI32(f32, connected_joint.position.x);
-            const y2 = asI32(f32, connected_joint.position.y);
-            rl.drawLine(canvasX(x1, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y1, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(x2, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y2, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), boneColor);
+            //const x1 = asI32(f32, joint.position.x);
+            //const y1 = asI32(f32, joint.position.y);
+            //const x2 = asI32(f32, connected_joint.position.x);
+            //const y2 = asI32(f32, connected_joint.position.y);
+            //rl.drawLine(canvasX(x1, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y1, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(x2, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y2, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), boneColor);
+
+            rl.drawLineEx(Vector.toRaylib(Vector.toScreen(joint.position)), Vector.toRaylib(Vector.toScreen(connected_joint.position)), thickness, boneColor);
         }
     }
     for (model.joints) |joint| { // Draw each joint as a circle
         const x = asI32(f32, joint.position.x);
         const y = asI32(f32, joint.position.y);
-        drawCircle(x, y, jointRadius, jointColor);
+        drawCircle(x, y, thickness * 1.5, jointColor);
     }
 }
 
-/// Not accurate for joints on erratic movement.
+/// Not accurate for joints on erratic movement. Consider interpolating model, instead.
 pub fn drawModelInterpolated(model: *Model, jointRadius: f32, jointColor: rl.Color, boneColor: rl.Color, last_step: Point, frame: i16) void {
     // Calculate the interpolated position for the first joint (anchor)
     const offset = interpolateStepOffsets(last_step.x, last_step.y, asI32(f32, model.joints[0].position.x), asI32(f32, model.joints[0].position.y), frame, main.World.MOVEMENT_DIVISIONS);
@@ -1453,7 +1458,7 @@ pub fn drawModelInterpolated(model: *Model, jointRadius: f32, jointColor: rl.Col
             const y1 = asI32(f32, joint.position.y + offset[1]);
             const x2 = asI32(f32, connected_joint.position.x + offset[0]);
             const y2 = asI32(f32, connected_joint.position.y + offset[1]);
-            rl.drawLine(canvasX(x1, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y1, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(x2, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y2, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), boneColor);
+            rl.drawLineEx(canvasX(x1, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y1, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(x2, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y2, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), 10, boneColor);
         }
     }
     for (model.joints) |joint| { // Draw joints as circles
