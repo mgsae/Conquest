@@ -75,6 +75,7 @@ pub const Entity = struct {
 //----------------------------------------------------------------------------------
 pub const Player = struct {
     entity: *Entity,
+    id: u8,
     x: u16,
     y: u16,
     width: u16,
@@ -193,12 +194,13 @@ pub const Player = struct {
         if (second_obstacle == null) self.y = pushed_y; // If no collision now, repositions x
     }
 
-    pub fn createLocal(x: u16, y: u16) !*Player {
+    pub fn createLocal(x: u16, y: u16, id: u8) !*Player {
         const entity = try main.World.grid.allocator.create(Entity); // Allocate memory for the parent entity
         const player = try main.World.grid.allocator.create(Player); // Allocate memory for Player and get a pointer
 
         player.* = Player{
             .entity = entity,
+            .id = id,
             .x = x,
             .y = y,
             .width = 100,
@@ -217,12 +219,13 @@ pub const Player = struct {
         return player;
     }
 
-    pub fn createRemote(x: u16, y: u16) !*Player {
+    pub fn createRemote(x: u16, y: u16, id: u8) !*Player {
         const entity = try main.World.grid.allocator.create(Entity); // Allocate memory for the parent entity
         const player = try main.World.grid.allocator.create(Player); // Allocate memory for Player and get a pointer
 
         player.* = Player{
             .entity = entity,
+            .id = id,
             .x = x,
             .y = y,
             .width = 100,
@@ -469,6 +472,23 @@ pub const Unit = struct {
         return prev_target.x != self.target.x or prev_target.y != self.target.y;
     }
 
+    /// Returns the position of the closest enemy player. Returns random nearby point if none. TODO: distinguish between goodies and baddies
+    pub fn findTarget(position: u.Point) u.Point {
+        var closest_player: *Player = undefined;
+        var closest_distance: f32 = std.math.inf(f32);
+        for (players.items) |player| {
+            const distance = u.fastSqrt(u.asF32(u32, u.distanceSquared(position, u.Point.at(player.x, player.y))));
+            if (closest_player == undefined or distance < closest_distance) {
+                closest_player = player;
+                closest_distance = distance;
+            }
+        }
+        if (closest_player != undefined) return u.Point.at(closest_player.x, closest_player.y);
+        const x: i16 = @as(i16, @intCast(position.x)) + (u.randomI16(u.Grid.cell_size) - u.Grid.cell_half);
+        const y: i16 = @as(i16, @intCast(position.x)) + (u.randomI16(u.Grid.cell_size) - u.Grid.cell_half);
+        return u.Point.at(u.mapClampX(x, u.Grid.cell_half), u.mapClampX(y, u.Grid.cell_half));
+    }
+
     /// Calculates and returns the unit's immediate move based on its current `target` and `class` (not implemented yet).
     fn getStep(self: *Unit) u.Point {
 
@@ -527,7 +547,7 @@ pub const Unit = struct {
             .life = from_class.life,
             .x = x,
             .y = y,
-            .target = u.Point.at(u.randomU16(main.World.width), u.randomU16(main.World.height)), // <--- just testing
+            .target = findTarget(start_point),
             .last_step = start_point,
             .cached_cellsigns = [_]u32{0} ** 9,
             .model = try u.Model.createChain(main.World.grid.allocator, 4, start_point, 12), // do from_class

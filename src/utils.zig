@@ -3,7 +3,6 @@ const std: type = @import("std");
 const main = @import("main.zig");
 const e = @import("entity.zig");
 const math = @import("std").math;
-var rng: std.Random.DefaultPrng = undefined;
 
 // Debug/analysis
 //----------------------------------------------------------------------------------
@@ -328,20 +327,25 @@ pub fn mouseMoved(vector: rl.Vector2) bool {
     return vector.x < -0.5 or vector.x > 0.5 or vector.y < -0.5 or vector.y > 0.5;
 }
 
-// RNG
+// World RNG
 //----------------------------------------------------------------------------------
-pub fn rngInit() void { // Must be deterministic/objective, so to some extent a placeholder
-    rng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp()))); // Initialize rng
+pub fn rngInit(seed: u64) void { // Initialized as map id + map width + map height
+    main.World.rng = std.Random.DefaultPrng.init(seed);
 }
 
 pub fn randomU16(max: u16) u16 {
-    const random_value = rng.next() % @as(u64, @intCast(max + 1));
+    const random_value = main.World.rng.next() % @as(u64, @intCast(max + 1));
     return @as(u16, @truncate(random_value));
 }
 
 pub fn randomI16(max: u16) i16 {
-    const random_value = rng.next() % @as(u64, @intCast(max + 1));
+    const random_value = main.World.rng.next() % @as(u64, @intCast(max + 1));
     return @as(i16, @intCast(random_value));
+}
+
+pub fn randomI32(max: u16) i32 {
+    const random_value = main.World.rng.next() % @as(u64, @intCast(max + 1));
+    return @as(i32, @intCast(random_value));
 }
 
 /// Fisher-Yates shuffle: iterates over the array and swaps each element with a randomly chosen element that comes after it (or itself).

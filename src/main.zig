@@ -50,6 +50,7 @@ pub const Camera = struct {
 // Player
 pub const Player = struct {
     pub var self: *e.Player = undefined;
+    pub var id: u8 = undefined;
     pub var selected: ?*e.Entity = null;
     pub var changed_x: ?u16 = null;
     pub var changed_y: ?u16 = null;
@@ -64,25 +65,31 @@ pub const World = struct {
     const DEFAULT_HEIGHT = 16000; // 1080 * 8; // Limit for u16 coordinates: 65535
     pub const GRID_CELL_SIZE = 1000;
     pub const MOVEMENT_DIVISIONS = 10; // Modulus base for unit movement updates
-    pub var tick_number: u64 = undefined; // Ersatz server tick #
+    pub var tick_number: u64 = undefined; // Set upon map initialization
     pub var width: u16 = 0;
     pub var height: u16 = 0;
     pub var grid: e.Grid = undefined;
+    pub var rng: std.Random.DefaultPrng = undefined;
     var dead_players: std.ArrayList(*e.Player) = undefined;
     var dead_structures: std.ArrayList(*e.Structure) = undefined;
     var dead_units: std.ArrayList(*e.Unit) = undefined;
     var dead_resources: std.ArrayList(*e.Resource) = undefined;
 
-    fn initializeMap(allocator: *std.mem.Allocator, x: u16, y: u16) !void {
-        width = x;
-        height = y;
+    fn initializeMap(allocator: *std.mem.Allocator, map: Map) !void {
+        width = map.width;
+        height = map.height;
         Camera.canvas_max = u.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), width, height); // Updates camera zoom out limit
+
         // Initialize grid with derived dimensions
         const gridWidth: usize = @intCast(u.ceilDiv(width, u.Grid.cell_size));
         const gridHeight: usize = @intCast(u.ceilDiv(height, u.Grid.cell_size));
         std.debug.print("Grid Width: {}, Grid Height: {}\n", .{ gridWidth, gridHeight });
         std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ World.width, World.height, u.Grid.cell_size });
         grid.init(allocator, gridWidth, gridHeight, Config.BUFFERSIZE) catch return error.GridInitializationFailed;
+
+        u.rngInit(map.id + width + height); // Initializes the RNG with the map id + width + height as the seed
+        tick_number = 0; // Starts the tick counter
+
     }
 
     fn initializeEntities(allocator: std.mem.Allocator) void {
@@ -94,21 +101,22 @@ pub const World = struct {
         World.dead_structures = std.ArrayList(*e.Structure).init(allocator);
         World.dead_units = std.ArrayList(*e.Unit).init(allocator);
         World.dead_resources = std.ArrayList(*e.Resource).init(allocator);
-        // Maybe populate with entities here
     }
 
-    fn initializePlayers(allocator: *std.mem.Allocator, map: Map) !void {
-        const startCoords = map.start_locations; // Players from map properties
+    fn initializePlayers(allocator: *std.mem.Allocator, map: Map, self_id: u8) !void {
+        const startCoords = map.start_locations;
+
+        var player: *e.Player = undefined;
         for (startCoords, 0..) |coord, i| {
-            std.debug.print("Player starting at: ({}, {})\n", .{ coord.x, coord.y });
-            if (i == 0) {
-                const local = try e.Player.createLocal(coord.x, coord.y);
-                try e.players.append(local);
-                Player.self = local; // Sets player to local player pointer
+            if (i == self_id) {
+                player = try e.Player.createLocal(coord.x, coord.y, u.asU8(usize, i));
+                Player.self = player; // Sets player to local pointer
             } else {
-                const remote = try e.Player.createRemote(coord.x, coord.y);
-                try e.players.append(remote);
+                player = try e.Player.createRemote(coord.x, coord.y, u.asU8(usize, i));
             }
+
+            try e.players.append(player);
+            std.debug.print("Player {} starting at: ({}, {})\n", .{ i, coord.x, coord.y });
         }
         allocator.free(startCoords);
     }
@@ -149,10 +157,15 @@ pub fn main() anyerror!void {
     rl.setWindowState(flags);
     rl.setTargetFPS(120);
 
+    //--------------------------------------------------------------------------------------
+    // Game initialization (move to its own function/context)
+    //--------------------------------------------------------------------------------------
+    // Initialize player
+    //--------------------------------------------------------------------------------------
+    Player.id = 0; // obtain from server! u8 value corresponding to map's starting location
+
     // Initialize controls
     //--------------------------------------------------------------------------------------
-    u.rngInit(); // <-- Here, would fetch seed from server (or do something else)
-    World.tick_number = 0; // <-- Here, would fetch current tick value from server?
     var stored_mouse_input: [2]rl.Vector2 = [2]rl.Vector2{ rl.Vector2.zero(), rl.Vector2.zero() };
     var stored_mousewheel: f32 = 0.0;
     var stored_key_input: u32 = 0;
@@ -164,7 +177,7 @@ pub fn main() anyerror!void {
     defer allocator.free(cellsigns_cache);
     defer World.grid.deinit(&allocator);
     World.initializeEntities(allocator);
-    try World.initializePlayers(&allocator, map);
+    try World.initializePlayers(&allocator, map, Player.id);
 
     // Testing/debugging
     //--------------------------------------------------------------------------------------
@@ -572,27 +585,34 @@ pub fn drawInterface() void {
 //----------------------------------------------------------------------------------
 // May want to move into a separate module, `world` or `map`
 const Map = struct { // Encapsulates map properties; see World for currently active map
+    id: u32,
     name: []const u8,
     width: u16,
     height: u16,
     start_locations: []u.Point,
 
-    /// Finds map from `id` and initializes the `World` with the new properties. Returns the opened `Map` value or error if invalid `id`.
+    /// Finds map from `id` and initializes the `World` with the new properties. Returns the opened `Map` or error if invalid `id`.
     pub fn open(allocator: *std.mem.Allocator, id: u32) !Map {
         var opened_map: Map = undefined;
-        opened_map = switch (id) {
+        opened_map = try get(allocator, id);
+        // Setting game world properties from opened map
+        try World.initializeMap(allocator, opened_map);
+        std.debug.print("Opening map ID {}, name: {s}.\n", .{ id, opened_map.name });
+        return opened_map;
+    }
+
+    /// Finds map in the database from `id`. Returns error if not found.
+    fn get(allocator: *std.mem.Allocator, id: u32) !Map {
+        return switch (id) {
             0 => Map{
+                .id = id,
                 .name = "Default Map",
                 .width = World.DEFAULT_WIDTH,
                 .height = World.DEFAULT_HEIGHT,
                 .start_locations = try defaultStartLocations(allocator, World.DEFAULT_WIDTH, World.DEFAULT_HEIGHT, 2),
             },
-            else => return error.MapNotFound,
+            else => error.MapNotFound,
         };
-        // Setting game world properties from opened map
-        try World.initializeMap(allocator, opened_map.width, opened_map.height);
-        std.debug.print("Opening map ID {}, name: {s}.\n", .{ id, opened_map.name });
-        return opened_map;
     }
 
     fn defaultStartLocations(allocator: *std.mem.Allocator, width: u16, height: u16, player_count: u8) ![]u.Point {
@@ -646,7 +666,7 @@ pub const EnemyPlayerAI = struct {
         if (tick % move_all < move_all)
             continuousMove(ai, tick, move_duration) catch return null;
         if (tick % 300 == 0) {
-            // Generate a "random" class value between 0 and 3
+            // Generate a "random" structure class value between 0 and 3
             const class_value = u.asU8(u64, tick / 300 % 4);
             constructBuilding(ai, class_value, tick);
         }
@@ -654,7 +674,7 @@ pub const EnemyPlayerAI = struct {
 
     pub fn constructBuilding(ai: *e.Player, class: u8, tick: u64) void {
         // Convert to i32 and calculate x and y, clamping to prevent underflow
-        const x_raw = @max(@rem(@as(i32, @intCast(tick)), 300) - 150, 0);
+        const x_raw = @max(@rem(@as(i32, @intCast(tick)), 500) - 250, 0);
         const y_raw = @max(@rem(@divTrunc(@as(i32, @intCast(tick)), 2), 500) - 250, 0);
 
         // Convert to u16 after clamping
