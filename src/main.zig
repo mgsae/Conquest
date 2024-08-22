@@ -190,9 +190,9 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try e.units.append(try e.Unit.create(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), @as(u8, @intCast(u.randomU16(3)))));
     //}
-    for (0..0) |_| {
+    for (0..500) |_| {
         const class = @as(u8, @intCast(u.randomU16(3)));
-        const xy = u.subcell.snapPosition(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), e.Structure.preset(class).width, e.Structure.preset(class).height);
+        const xy = u.Subcell.snapToNode(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), e.Structure.preset(class).width, e.Structure.preset(class).height);
         _ = e.Structure.construct(xy[0], xy[1], class);
     }
 

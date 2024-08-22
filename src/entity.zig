@@ -61,6 +61,10 @@ pub const Entity = struct {
         };
     }
 
+    pub fn inRangeOf(self: *Entity, target: *Entity, range: f32) bool {
+        return u.isInRange(self, target, range);
+    }
+
     /// Returns the bigger of two entities, or null if same size.
     pub fn bigger(e1: *Entity, e2: *Entity) ?*Entity {
         switch (u.bigger(e1.width(), e1.height(), e2.width(), e2.height())) {
@@ -534,6 +538,16 @@ pub const Unit = struct {
         }
     }
 
+    fn getAttackTarget(self: *Unit) ?*Entity {
+        const found_entity = u.concentricSearch(main.World.grid, u.Point.atEntity(self.entity), u.isUnit);
+        if (found_entity != null and self.entity.inRangeOf(found_entity.?, getRange(self))) return found_entity;
+        return null;
+    }
+
+    fn getRange(self: *Unit) f32 {
+        return preset(self.class).range;
+    }
+
     pub fn create(x: u16, y: u16, class: u8) !*Unit {
         const entity = try main.World.grid.allocator.create(Entity); // Memory for the parent entity
         const unit = try main.World.grid.allocator.create(Unit); // Memory for Unit
@@ -594,15 +608,16 @@ pub const Unit = struct {
         width: u16,
         height: u16,
         life: i16,
+        range: f32,
     };
 
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties { // Would set model here as well
         return switch (class) {
-            0 => Properties{ .speed = 1.5, .color = rl.Color.sky_blue, .width = 30, .height = 30, .life = 6000 },
-            1 => Properties{ .speed = 1.75, .color = rl.Color.blue, .width = 25, .height = 25, .life = 8000 },
-            2 => Properties{ .speed = 1, .color = rl.Color.dark_blue, .width = 45, .height = 45, .life = 10000 },
-            3 => Properties{ .speed = 2, .color = rl.Color.violet, .width = 35, .height = 35, .life = 7000 },
+            0 => Properties{ .speed = 1.5, .color = rl.Color.sky_blue, .width = 30, .height = 30, .life = 6000, .range = 30 },
+            1 => Properties{ .speed = 1.75, .color = rl.Color.blue, .width = 25, .height = 25, .life = 8000, .range = 80 },
+            2 => Properties{ .speed = 1, .color = rl.Color.dark_blue, .width = 45, .height = 45, .life = 10000, .range = 100 },
+            3 => Properties{ .speed = 2, .color = rl.Color.violet, .width = 35, .height = 35, .life = 7000, .range = 50 },
             else => @panic("Invalid unit class"),
         };
     }

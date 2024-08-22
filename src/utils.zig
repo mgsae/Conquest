@@ -71,7 +71,27 @@ pub fn frameAdjusted(float: f32) f32 {
 
 // Metaprogramming
 //----------------------------------------------------------------------------------
-const Predicate = fn (entity: *e.Entity) bool; // Function pointer to an entity
+pub const Predicate = fn (entity: *e.Entity) bool; // Function pointer to an entity
+
+pub fn isUnit(entity: *e.Entity) bool {
+    return entity.kind == e.Kind.Unit;
+}
+
+pub fn isStructure(entity: *e.Entity) bool {
+    return entity.kind == e.Kind.Structure;
+}
+
+pub fn isPlayer(entity: *e.Entity) bool {
+    return entity.kind == e.Kind.Player;
+}
+
+pub fn isInRange(e1: *e.Entity, e2: *e.Entity, max_range: f32) bool {
+    return entityDistance(e1, e2) <= max_range;
+}
+
+pub fn isEntityUnitInRange(self_entity: *e.Entity, target_entity: *e.Entity, maxRange: f32) bool {
+    return isUnit(target_entity) and isInRange(self_entity, target_entity, maxRange);
+}
 
 // Value types and conversions
 //----------------------------------------------------------------------------------
@@ -460,6 +480,13 @@ pub const Point = struct {
         };
     }
 
+    pub fn atEntity(entity: *e.Entity) Point {
+        return Point{
+            .x = entity.x(),
+            .y = entity.y(),
+        };
+    }
+
     pub fn equals(self: Point, other: Point) bool {
         return self.x == other.x and self.y == other.y;
     }
@@ -671,11 +698,11 @@ pub fn euclideanDistance(a: Point, b: Point) f32 {
     return @sqrt(@as(f32, dist_squared));
 }
 
-/// Squares the `x`,`y` distance between `e1` and `e2`. Allows for accurate distance comparisons, but does not represent the actual distance.
-pub fn entityDistance(e1: *e.Entity, e2: *e.Entity) u32 {
+/// Takes the square root of the distance squared from `e1` to `e2`.
+pub fn entityDistance(e1: *e.Entity, e2: *e.Entity) f32 {
     const a = Point.at(e1.x(), e1.y());
     const b = Point.at(e2.x(), e2.y());
-    return distanceSquared(a, b);
+    return fastSqrt(asF32(u32, distanceSquared(a, b)));
 }
 
 /// Fast inverse square root (Quake III algorithm)
