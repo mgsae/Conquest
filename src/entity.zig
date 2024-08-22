@@ -28,18 +28,18 @@ pub const Entity = struct {
     pub fn width(self: *Entity) u16 {
         return switch (self.kind) {
             Kind.Player => self.ref.Player.width,
-            Kind.Unit => self.ref.Unit.width,
-            Kind.Structure => self.ref.Structure.width,
-            Kind.Resource => self.ref.Resource.width,
+            Kind.Unit => self.ref.Unit.width(),
+            Kind.Structure => self.ref.Structure.width(),
+            Kind.Resource => self.ref.Resource.width(),
         };
     }
 
     pub fn height(self: *Entity) u16 {
         return switch (self.kind) {
             Kind.Player => self.ref.Player.height,
-            Kind.Unit => self.ref.Unit.height,
-            Kind.Structure => self.ref.Structure.height,
-            Kind.Resource => self.ref.Resource.height,
+            Kind.Unit => self.ref.Unit.height(),
+            Kind.Structure => self.ref.Structure.height(),
+            Kind.Resource => self.ref.Resource.height(),
         };
     }
 
@@ -80,10 +80,10 @@ pub const Entity = struct {
 pub const Player = struct {
     entity: *Entity,
     id: u8,
-    x: u16,
-    y: u16,
     width: u16,
     height: u16,
+    x: u16,
+    y: u16,
     color: rl.Color,
     speed: f16 = 5,
     local: bool = false,
@@ -254,16 +254,16 @@ pub const Player = struct {
 pub const Unit = struct {
     entity: *Entity,
     class: u8,
+    owner: u8,
     x: u16,
     y: u16,
-    width: u16,
-    height: u16,
     life: i16,
     target: u.Point,
     last_step: u.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
     model: *u.Model,
     state: State,
+    projectiles: *std.ArrayList(*Projectile),
 
     const State = enum {
         Default,
@@ -271,15 +271,19 @@ pub const Unit = struct {
     };
 
     pub fn draw(self: *Unit, alpha: f32) void {
+        // Draws model
         if (self.class == 0) { // Testing model for class 0, but expand to all
-            // Draw the model based on its current state
-            u.drawModel(self.model, self.width, self.height, u.opacity(self.color(), alpha), u.opacity(self.color(), alpha));
-        } else {
-            // Fallback to the previous method for other classes
-            u.drawEntityInterpolated(self.x, self.y, self.width, self.height, u.opacity(self.color(), alpha), self.last_step, self.life);
+            u.drawModel(self.model, self.width(), self.height(), u.opacity(self.color(), alpha), u.opacity(self.color(), alpha));
+        } else { // Fallback to the previous method for other classes
+            u.drawEntityInterpolated(self.x, self.y, self.width(), self.height(), u.opacity(self.color(), alpha), self.last_step, self.life);
         }
-        if (main.Player.selected == self.entity) { // If selected by player, draws target point
-            u.drawCircleLine(self.target.x, self.target.y, 100, u.opacity(self.color(), alpha / 2));
+        // If selected by player, draws target circumference with half alpha
+        if (main.Player.selected == self.entity) {
+            u.drawCircumference(self.target.x, self.target.y, 100, u.opacity(self.color(), alpha / 2));
+        }
+        // Draws projectiles with same alpha
+        for (self.projectiles.items) |projectile| {
+            projectile.draw(alpha);
         }
     }
 
@@ -304,6 +308,17 @@ pub const Unit = struct {
             if (self.state == State.Incapacitated) self.state = State.Default; // Resets state
         }
 
+        // Clears up dead projectiles
+        var i: usize = self.projectiles.items.len;
+        while (i > 0) {
+            i -= 1;
+            const projectile = self.projectiles.items[i];
+            if (projectile.life <= 0) {
+                _ = self.projectiles.swapRemove(i);
+                main.World.grid.allocator.destroy(projectile);
+            }
+        }
+
         // Updating state. If incapacitated, resets last_step every frame to keep interpolation updated
         if (self.state == State.Incapacitated) self.last_step = u.Point.at(self.x, self.y);
         self.life -= 1;
@@ -317,10 +332,10 @@ pub const Unit = struct {
         if (self.state == State.Incapacitated) return;
 
         // If step is out of bounds, clamps to map (ignoring collision) if needed, and retargets
-        if (!u.isInMap(new_x, new_y, self.width, self.height)) {
-            if (!u.isInMap(old_x, old_y, self.width, self.height)) {
-                const clamped_x = u.mapClampX(@as(i16, @intCast(new_x)), self.width);
-                const clamped_y = u.mapClampY(@as(i16, @intCast(new_y)), self.height);
+        if (!u.isInMap(new_x, new_y, self.width(), self.height())) {
+            if (!u.isInMap(old_x, old_y, self.width(), self.height())) {
+                const clamped_x = u.mapClampX(@as(i16, @intCast(new_x)), self.width());
+                const clamped_y = u.mapClampY(@as(i16, @intCast(new_y)), self.height());
                 _ = self.tryMove(clamped_x, clamped_y, old_x, old_y);
             }
             _ = self.retarget(u.randomU16(main.World.width), u.randomU16(main.World.height)); // <--- just testing
@@ -372,8 +387,8 @@ pub const Unit = struct {
     fn checkCollision(self: *Unit, x: u16, y: u16) ?*Entity {
         const entities = main.World.grid.sectionEntities(u.Grid.x(x), u.Grid.y(y));
         if (entities != null) {
-            const half_width = @divTrunc(self.width, 2);
-            const half_height = @divTrunc(self.height, 2);
+            const half_width = @divTrunc(self.width(), 2);
+            const half_height = @divTrunc(self.height(), 2);
             const left = @max(half_width, x) - half_width;
             const right = x + half_width;
             const top = @max(half_height, y) - half_height;
@@ -413,33 +428,24 @@ pub const Unit = struct {
         const new_x: u16, const new_y: u16 = calculatePushPosition(self, angle, distance);
         self.state = State.Incapacitated; // Incapacitated while pushed
         std.debug.print("Pushed towards angle {}.\n", .{angle});
-
+        if (!u.isInMap(new_x, new_y, self.width(), self.height())) return distance;
         var moved_distance: f32 = distance;
 
-        // Squeeze to flag unit as a pushee, preventing circularity from recursive call -- need a different way to do this
-        self.width = preset(self.class).width - 1;
-        self.height = preset(self.class).height - 1;
-
-        if (!u.isInMap(new_x, new_y, self.width, self.height)) return moved_distance;
-
-        const obstacle = main.World.grid.collidesWith(new_x, new_y, self.width, self.height, self.entity) catch null;
-
-        if (obstacle == null) { // Pushing doesn't collide with another obstacle
+        // Checking whether pushed unit in turn collides with another obstacle
+        const obstacle = main.World.grid.collidesWith(new_x, new_y, self.width(), self.height(), self.entity) catch null;
+        if (obstacle == null) {
             self.x = new_x;
             self.y = new_y;
             main.World.grid.updateCellMembership(self.entity, old_x, old_y);
         } else if (obstacle.?.kind == Kind.Unit) { // Pushed unit collides with another unit
-
             const obstacle_unit = obstacle.?.ref.Unit;
-
             std.debug.print("Pushee collided with a unit: {}\n", .{obstacle_unit});
 
-            // Checks that obstacle_unit isn't already a pushee
-            if (obstacle_unit.width != preset(obstacle_unit.class).width or obstacle_unit.height != preset(obstacle_unit.class).height) {
-                moved_distance = moved_distance / 2;
+            // Checks that obstacle_unit isn't already being pushed
+            if (obstacle_unit.state != State.Incapacitated) {
+                moved_distance = moved_distance / 2; // Halves pushing distance for each additional obstacle
             } else {
-                moved_distance = pushed(obstacle_unit, angle, @min(distance, distance * u.sizeFactor(self.width, self.height, obstacle_unit.width, obstacle_unit.height)));
-
+                moved_distance = pushed(obstacle_unit, angle, @min(distance, distance * u.sizeFactor(self.width(), self.height(), obstacle_unit.width(), obstacle_unit.height())));
                 const push_delta_xy = u.vectorToDelta(angle, moved_distance);
                 const push_new_x = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + push_delta_xy[0]));
                 const push_new_yY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + push_delta_xy[1]));
@@ -450,9 +456,7 @@ pub const Unit = struct {
             std.debug.print("Pushee collided with a non-unit: {}\n", .{obstacle.?});
         }
 
-        // Resets dimensions to flag as ready for future pushing
-        self.width = preset(self.class).width;
-        self.height = preset(self.class).height;
+        // Reset dimensions to flag pushability here, may want to reset State.Incapacitated here now?
         return moved_distance; // Returns effective moved distance
     }
 
@@ -467,7 +471,7 @@ pub const Unit = struct {
         return [2]u16{ new_x, new_y };
     }
 
-    /// Sets unit's target destination while taking into account its current `cellsign`. Returns `true` if target has changed, returns `false` if target remains the same.
+    /// Sets unit's target destination while taking into account its current `cellsign` (TODO). Returns `true` if target has changed, returns `false` if target remains the same.
     pub fn retarget(self: *Unit, x: u16, y: u16) bool {
         const prev_target = self.target;
         // do more stuff here for pathing
@@ -477,10 +481,11 @@ pub const Unit = struct {
     }
 
     /// Returns the position of the closest enemy player. Returns random nearby point if none. TODO: distinguish between goodies and baddies
-    pub fn findTarget(position: u.Point) u.Point {
+    pub fn findTarget(owner: u8, position: u.Point) u.Point {
         var closest_player: *Player = undefined;
         var closest_distance: f32 = std.math.inf(f32);
         for (players.items) |player| {
+            if (player.id == owner) continue;
             const distance = u.fastSqrt(u.asF32(u32, u.distanceSquared(position, u.Point.at(player.x, player.y))));
             if (closest_player == undefined or distance < closest_distance) {
                 closest_player = player;
@@ -539,32 +544,30 @@ pub const Unit = struct {
     }
 
     fn getAttackTarget(self: *Unit) ?*Entity {
-        const found_entity = u.concentricSearch(main.World.grid, u.Point.atEntity(self.entity), u.isUnit);
-        if (found_entity != null and self.entity.inRangeOf(found_entity.?, getRange(self))) return found_entity;
+        const found_entity = u.concentricSearch(main.World.grid, u.Point.atEntity(self.entity), u.isEnemy);
+        if (found_entity != null and self.entity.inRangeOf(found_entity.?, range(self))) return found_entity;
         return null;
     }
 
-    fn getRange(self: *Unit) f32 {
-        return preset(self.class).range;
-    }
-
-    pub fn create(x: u16, y: u16, class: u8) !*Unit {
+    pub fn create(owner: u8, x: u16, y: u16, class: u8) !*Unit {
         const entity = try main.World.grid.allocator.create(Entity); // Memory for the parent entity
-        const unit = try main.World.grid.allocator.create(Unit); // Memory for Unit
+        const unit = try main.World.grid.allocator.create(Unit); // Memory for unit
+        const projectiles = try main.World.grid.allocator.create(std.ArrayList(*Projectile)); // Memory for projectiles
+        projectiles.* = std.ArrayList(*Projectile).init(main.World.grid.allocator.*);
         const from_class = Unit.preset(class);
         const start_point = u.Point.at(x, y);
         unit.* = Unit{
             .entity = entity,
+            .owner = owner,
             .class = class,
-            .width = from_class.width,
-            .height = from_class.height,
             .life = from_class.life,
+            .model = try u.Model.createChain(main.World.grid.allocator, 4, start_point, 12), // do from_class
             .x = x,
             .y = y,
-            .target = findTarget(start_point),
+            .target = findTarget(owner, start_point),
             .last_step = start_point,
             .cached_cellsigns = [_]u32{0} ** 9,
-            .model = try u.Model.createChain(main.World.grid.allocator, 4, start_point, 12), // do from_class
+            .projectiles = projectiles,
             .state = State.Default,
         };
 
@@ -596,6 +599,8 @@ pub const Unit = struct {
         for (units.items) |unit| {
             std.debug.assert(unit != self); // For debugging, unit must be removed at this point
         }
+        self.projectiles.deinit(); // Deinitializes the list of projectiles
+        main.World.grid.allocator.destroy(self.projectiles); // Deallocate the memory for the ArrayList itself
         self.model.destroy(main.World.grid.allocator); // Deallocates memory for the model
         main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
         main.World.grid.allocator.destroy(self); // Deallocates memory for the Unit
@@ -614,7 +619,7 @@ pub const Unit = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties { // Would set model here as well
         return switch (class) {
-            0 => Properties{ .speed = 1.5, .color = rl.Color.sky_blue, .width = 30, .height = 30, .life = 6000, .range = 30 },
+            0 => Properties{ .speed = 1.5, .color = rl.Color.sky_blue, .width = 20, .height = 20, .life = 6000, .range = 30 },
             1 => Properties{ .speed = 1.75, .color = rl.Color.blue, .width = 25, .height = 25, .life = 8000, .range = 80 },
             2 => Properties{ .speed = 1, .color = rl.Color.dark_blue, .width = 45, .height = 45, .life = 10000, .range = 100 },
             3 => Properties{ .speed = 2, .color = rl.Color.violet, .width = 35, .height = 35, .life = 7000, .range = 50 },
@@ -629,29 +634,44 @@ pub const Unit = struct {
     pub fn color(self: *Unit) rl.Color {
         return Unit.preset(self.class).color;
     }
+
+    fn range(self: *Unit) f32 {
+        return preset(self.class).range;
+    }
+
+    fn width(self: *Unit) u16 {
+        return preset(self.class).height;
+    }
+
+    fn height(self: *Unit) u16 {
+        return preset(self.class).height;
+    }
 };
 
 // Structure
 //----------------------------------------------------------------------------------
 pub const Structure = struct {
     entity: *Entity,
+    owner: u8,
     x: u16,
     y: u16,
-    width: u16,
-    height: u16,
     class: u8,
     color: rl.Color,
-    life: u16,
+    life: i16,
     tempo: f16,
     capacity: i16,
     elapsed: u16 = 0,
+
+    pub fn draw(self: *Structure, alpha: f32) void {
+        u.drawEntity(self.x, self.y, self.width(), self.height(), u.opacity(self.color, alpha));
+    }
 
     /// `Structure` property fields determined by `class`.
     pub const Properties = struct {
         color: rl.Color,
         width: u16,
         height: u16,
-        life: u16,
+        life: i16,
         tempo: f16,
         capacity: i16,
     };
@@ -665,10 +685,6 @@ pub const Structure = struct {
             3 => Properties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 9000, .tempo = 4.0, .capacity = 5 },
             else => @panic("Invalid structure class"),
         };
-    }
-
-    pub fn draw(self: *const Structure, alpha: f32) void {
-        u.drawEntity(self.x, self.y, self.width, self.height, u.opacity(self.color, alpha));
     }
 
     pub fn update(self: *Structure) void {
@@ -692,23 +708,22 @@ pub const Structure = struct {
         const spawn_class = self.spawnClass();
         const spawn_point = self.spawnPoint(Unit.preset(spawn_class).width, Unit.preset(spawn_class).height) catch null;
         if (spawn_point) |sp| { // If spawn_point is not null, unwrap it
-            const unit = try Unit.create(sp[0], sp[1], spawn_class);
+            const unit = try Unit.create(self.owner, sp[0], sp[1], spawn_class);
             try units.append(unit);
             return unit;
         }
         return error.NoAvailableSpawnPoint;
     }
 
-    pub fn create(x: u16, y: u16, class: u8) !*Structure {
+    pub fn create(owner: u8, x: u16, y: u16, class: u8) !*Structure {
         const entity: *Entity = try main.World.grid.allocator.create(Entity);
         const structure: *Structure = try main.World.grid.allocator.create(Structure);
         const from_class = Structure.preset(class);
 
         structure.* = Structure{
             .entity = entity,
+            .owner = owner,
             .class = class,
-            .width = from_class.width,
-            .height = from_class.height,
             .color = from_class.color,
             .life = from_class.life,
             .tempo = from_class.tempo,
@@ -725,12 +740,12 @@ pub const Structure = struct {
         return structure;
     }
 
-    pub fn construct(x: u16, y: u16, class: u8) ?*Structure {
+    pub fn construct(owner: u8, x: u16, y: u16, class: u8) ?*Structure {
         const collides = main.World.grid.collidesWith(x, y, preset(class).width, preset(class).height, null) catch return null;
         if (collides != null or !u.isInMap(x, y, preset(class).width, preset(class).height)) {
             return null;
         }
-        const structure = Structure.create(x, y, class) catch return null;
+        const structure = Structure.create(owner, x, y, class) catch return null;
         structures.append(structure) catch return null;
         return structure;
     }
@@ -749,8 +764,8 @@ pub const Structure = struct {
         var side_indices = [_]usize{ 0, 1, 2, 3 }; // Indices representing the 4 sides
         u.shuffleArray(usize, &side_indices); // Shuffles indices to randomize check order
 
-        const offset_x = @divTrunc(self.width, 2) + @divTrunc(unit_width, 2);
-        const offset_y = @divTrunc(self.height, 2) + @divTrunc(unit_height, 2);
+        const offset_x = @divTrunc(self.width(), 2) + @divTrunc(unit_width, 2);
+        const offset_y = @divTrunc(self.height(), 2) + @divTrunc(unit_height, 2);
 
         // Checking side availability
         for (side_indices) |side_index| {
@@ -783,6 +798,14 @@ pub const Structure = struct {
         }
         return error.NoValidSpawnPoint;
     }
+
+    fn width(self: *Structure) u16 {
+        return preset(self.class).height;
+    }
+
+    fn height(self: *Structure) u16 {
+        return preset(self.class).height;
+    }
 };
 
 // Resource
@@ -792,12 +815,38 @@ pub const Resource = struct {
     class: u8,
     x: u16,
     y: u16,
-    width: u16,
-    height: u16,
-    life: i16,
+    capacity: i16,
 
     pub fn draw(self: *Unit, alpha: f32) void {
-        u.drawEntity(self.x, self.y, self.width, self.height, u.opacity(self.color, alpha));
+        u.drawEntity(self.x, self.y, self.width(), self.height(), u.opacity(self.color(), alpha));
+    }
+
+    /// `Structure` property fields determined by `class`.
+    pub const Properties = struct {
+        color: rl.Color,
+        width: u16,
+        height: u16,
+        capacity: i16,
+    };
+
+    /// Returns a `Properties` template determined by `class`.
+    pub fn preset(class: u8) Properties {
+        return switch (class) {
+            0 => Properties{ .color = rl.Color.white, .width = 150, .height = 50, .capacity = 4 },
+            else => @panic("Invalid structure class"),
+        };
+    }
+
+    fn color(self: *Resource) f32 {
+        return preset(self.class).color;
+    }
+
+    fn width(self: *Resource) u16 {
+        return preset(self.class).height;
+    }
+
+    fn height(self: *Resource) u16 {
+        return preset(self.class).height;
     }
 };
 
@@ -808,26 +857,35 @@ pub const Projectile = struct {
     x: u16,
     y: u16,
     angle: f16,
-    life: u16,
-    width: u16 = 1,
-    height: u16 = 1,
+    life: i16,
     class: u8,
+    targets: *std.ArrayList(*Entity), // populated when launched by unit
 
-    pub fn update(self: Projectile) void {
+    pub fn draw(self: *Projectile, alpha: f32) void {
+        u.drawEntity(self.x, self.y, self.width(), self.height(), u.opacity(preset(self.class).color, alpha));
+    }
+
+    pub fn update(self: *Projectile) void {
+        if (self.life <= 0) {
+            self.destroy();
+            return;
+        }
+        // Checks radius for targets, returns true if found
+        if (self.checkImpact()) |target| {
+            self.impact(target); // Deals damage and does effect
+            return;
+        }
         const delta = u.vectorToDelta(self.angle, self.speed);
         self.x = u.u16AddFloat(f32, self.x, delta[0]);
         self.y = u.u16AddFloat(f32, self.y, delta[1]);
         self.life -= 1;
-        if (self.life <= 0) {
-            self.destroy();
-        }
     }
 
     /// `Projectile` property fields determined by `class`.
     pub const Properties = struct {
         width: u16 = 1,
         height: u16 = 1,
-        life: u16,
+        life: i16,
         speed: f16,
         color: rl.Color,
     };
@@ -840,18 +898,34 @@ pub const Projectile = struct {
         };
     }
 
-    pub fn draw(self: *Projectile, alpha: f32) void {
-        u.drawEntity(self.x, self.y, self.width, self.height, u.opacity(preset(self.class).color, alpha));
+    fn checkImpact(self: *Projectile) ?*Entity {
+        const left = if (self.x > @divTrunc(self.width(), 2)) self.x - @divTrunc(self.width(), 2) else 0;
+        const right = self.x + @divTrunc(self.width(), 2);
+        const top = if (self.y > @divTrunc(self.height(), 2)) self.y - @divTrunc(self.height(), 2) else 0;
+        const bottom = self.y + @divTrunc(self.height(), 2);
+        for (self.targets.items) |target| {
+            if (target.x() >= left and target.x() <= right and target.y() >= top and target.y() <= bottom) {
+                return target;
+            }
+        }
+        return null;
     }
 
-    pub fn impact(self: *Projectile) void {
-        // Effect when projectile hits entity; subtract life
-        self.destroy();
+    pub fn impact(self: *Projectile, target: *Entity) void {
+        if (target.kind == Kind.Unit) {
+            target.ref.Unit.life -= 500; // obviously vary with projectile class
+        }
+        self.life -= 100; // obviously vary with projectile class, should be enough to kill projectile unless multi targets are wanted
+        // Removes target from projectile's target list to prevent repeated impacts
+        u.findAndSwapRemove(*Entity, self.targets, target);
     }
 
-    pub fn destroy(self: *Projectile) !void {
-        try main.World.grid.removeFromCell(self.entity, null, null);
-        // no array list of Projectiles, otherwise: try u.findAndSwapRemove(Projectile, &projectiles, @constCast(&self));
+    fn width(self: *Projectile) u16 {
+        return preset(self.class).height;
+    }
+
+    fn height(self: *Projectile) u16 {
+        return preset(self.class).height;
     }
 };
 

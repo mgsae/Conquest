@@ -3,7 +3,7 @@ const std: type = @import("std");
 const u = @import("utils.zig");
 const e = @import("entity.zig");
 
-// Config
+/// The local player's game config properties. Const values are universal, var values vary with play session.
 pub const Config = struct {
     pub const TICKRATE = 60; // Target logical fps
     pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
@@ -17,7 +17,7 @@ pub const Config = struct {
     pub var keys: u.Key = undefined; // Keybindings
 };
 
-// Camera
+/// The local player's camera properties. Const values are universal, var values vary with play session.
 pub const Camera = struct {
     pub const SCROLL_RATE: f16 = 25.0; // Camera move effect size
     pub const SCROLL_SPEED: f16 = 0.25; // Camera move interpolation speed
@@ -47,7 +47,7 @@ pub const Camera = struct {
     }
 };
 
-// Player
+/// The local player. Delivers varying properties from the client to the shared world state.
 pub const Player = struct {
     pub var self: *e.Player = undefined;
     pub var id: u8 = undefined;
@@ -59,7 +59,7 @@ pub const Player = struct {
     pub var build_order: ?u8 = null;
 };
 
-// World
+/// World properties, shared state initialized by initializeMap.
 pub const World = struct {
     const DEFAULT_WIDTH = 16000; // 1920 * 8; // Limit for u16 coordinates: 65535
     const DEFAULT_HEIGHT = 16000; // 1080 * 8; // Limit for u16 coordinates: 65535
@@ -190,7 +190,7 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try e.units.append(try e.Unit.create(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), @as(u8, @intCast(u.randomU16(3)))));
     //}
-    for (0..500) |_| {
+    for (0..0) |_| {
         const class = @as(u8, @intCast(u.randomU16(3)));
         const xy = u.Subcell.snapToNode(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), e.Structure.preset(class).width, e.Structure.preset(class).height);
         _ = e.Structure.construct(xy[0], xy[1], class);
@@ -682,7 +682,7 @@ pub const EnemyPlayerAI = struct {
         const y = @as(u16, @intCast(y_raw));
 
         // Construct the building at the calculated position
-        _ = e.Structure.construct(ai.x + x, ai.y + y, class);
+        _ = e.Structure.construct(ai.id, ai.x + x, ai.y + y, class);
     }
 
     /// Moves continuously in a tick-determined direction for up to `duration` ticks.
@@ -742,7 +742,7 @@ fn processActionInput(key_input: u32) void { // Called in processInput
 pub fn executeBuild(class: u8) void {
     if (!isInBuildDistance()) return;
     const xy = findBuildPosition(class);
-    const built = e.Structure.construct(xy[0], xy[1], class);
+    const built = e.Structure.construct(Player.id, xy[0], xy[1], class);
     if (built) |building| {
         std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
         Player.selected = building.entity; // Hack, sets selected to building to instantly deselect it (in updateControls) by the same click

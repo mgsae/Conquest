@@ -93,6 +93,10 @@ pub fn isEntityUnitInRange(self_entity: *e.Entity, target_entity: *e.Entity, max
     return isUnit(target_entity) and isInRange(self_entity, target_entity, maxRange);
 }
 
+pub fn isEnemy(entity: *e.Entity) bool {
+    return entity.kind == e.Kind.Unit;
+}
+
 // Value types and conversions
 //----------------------------------------------------------------------------------
 pub const u8max: u8 = std.math.maxInt(u8); // 255
@@ -1466,7 +1470,7 @@ pub fn drawCircle(x: i32, y: i32, radius: f32, col: rl.Color) void {
 }
 
 /// Uses raylib to draw a circumference scaled and positioned to canvas.
-pub fn drawCircleLine(x: i32, y: i32, radius: f32, col: rl.Color) void {
+pub fn drawCircumference(x: i32, y: i32, radius: f32, col: rl.Color) void {
     const scale = asF32(i32, canvasScale(asI32(f32, radius), main.Camera.canvas_zoom));
     rl.drawCircleLines(canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), scale, col);
 }
@@ -1485,7 +1489,7 @@ pub fn drawEntityInterpolated(x: i32, y: i32, width: i32, height: i32, col: rl.C
 /// Draws rectangle and build radius centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawPlayer(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     drawEntity(x, y, width, height, col);
-    drawCircleLine(x, y, Grid.cell_half, opacity(col, 0.25));
+    drawCircumference(x, y, Grid.cell_half, opacity(col, 0.25));
 }
 
 pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, boneColor: rl.Color) void {
