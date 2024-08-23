@@ -352,7 +352,7 @@ pub const Unit = struct {
             u.drawCircumference(self.target.x, self.target.y, 100, self.entity.color(alpha / 2));
         }
 
-        u.drawEntityLife(self.x, self.y, preset(self.class).width, self.life, preset(self.class).life);
+        u.drawLifeInterpolated(self.x, self.y, preset(self.class).width, self.life, preset(self.class).life, self.last_step, self.life);
 
         // Draws projectiles with same alpha
         for (self.projectiles.items) |projectile| {
@@ -1095,6 +1095,7 @@ pub const Projectile = struct {
 
         if (self.targets) |target_list| {
             for (target_list.items) |target| {
+                if (target.kind == Kind.Resource) continue; // Don't impact resources
                 const target_half_width = @divTrunc(target.width(), 2);
                 const target_half_height = @divTrunc(target.height(), 2);
                 const target_left = if (target.x() > target_half_width) target.x() - target_half_width else 0;
@@ -1117,8 +1118,6 @@ pub const Projectile = struct {
         target.setLife(if (target.life() >= damage) target.life() - damage else 0);
         self.life -= 100; // Should be enough to kill projectile unless multi targets are wanted
         std.debug.print("Projectile (class {}) hit target {}!\n", .{ self.class, target });
-        // Maybe need to find a way to avoid repeated impacts (on same) implemented here. can't remove from target list since it's a reference to the grid section
-        // Maybe ab "impacted" arraylist, or a state/timeout on the projectile
     }
 
     fn width(self: *Projectile) u16 {

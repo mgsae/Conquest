@@ -145,7 +145,7 @@ pub fn main() anyerror!void {
     defer rl.closeWindow(); // Close window and OpenGL context
 
     const flags = rl.ConfigFlags{
-        .fullscreen_mode = true,
+        .fullscreen_mode = false,
         .window_resizable = true,
         .window_undecorated = false, // Removes window border
         .window_transparent = false,
@@ -597,15 +597,15 @@ pub fn drawMap() void {
 
 fn drawEntities() void {
     if (Player.selected == null) {
-        for (e.units.items) |x| x.draw(1); // Interpolates
+        for (e.resources.items) |x| x.draw(1);
+        for (e.units.items) |x| x.draw(1);
         for (e.structures.items) |x| x.draw(1);
         for (e.players.items) |x| x.draw(1);
-        for (e.resources.items) |x| x.draw(1);
     } else {
+        for (e.resources.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
         for (e.units.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
         for (e.structures.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
         for (e.players.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
-        for (e.resources.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
     }
 }
 
@@ -684,12 +684,12 @@ const Map = struct { // Encapsulates map properties; see World for currently act
         var slice = try allocator.alloc(u.Point, total);
         var index: usize = 0;
 
-        // Define base subcell positions (this is the unrotated base pattern)
+        // Base subcell positions (unrotated base pattern)
         const subcell_positions = [_]u.Point{
-            u.Point{ .x = 3, .y = 3 },
-            u.Point{ .x = 3, .y = 7 },
-            u.Point{ .x = 7, .y = 3 },
-            u.Point{ .x = 7, .y = 7 },
+            u.Point{ .x = 2, .y = 3 },
+            u.Point{ .x = 2, .y = 5 },
+            u.Point{ .x = 9, .y = 3 },
+            u.Point{ .x = 9, .y = 5 },
         };
 
         for (0..cols) |col| {
@@ -710,11 +710,9 @@ const Map = struct { // Encapsulates map properties; see World for currently act
                         else => unreachable,
                     };
 
-                    // Multiply by u.Subcell.size to correctly position within the subcells
-                    const final_x = base_x + rotated_pos.x * u.Subcell.size;
-                    const final_y = base_y + rotated_pos.y * u.Subcell.size;
-
-                    slice[index] = u.Point.at(final_x, final_y);
+                    // Multiply by u.Subcell.size to correctly position within the subcells, and snap
+                    const final = u.Subcell.snapToNode(base_x + rotated_pos.x * u.Subcell.size, base_y + rotated_pos.y * u.Subcell.size, u.Subcell.size, u.Subcell.size);
+                    slice[index] = u.Point.at(final[0], final[1]);
                     index += 1; // Increment by 1 for each resource
                 }
             }

@@ -1615,10 +1615,27 @@ pub fn drawCircumference(x: i32, y: i32, radius: f32, col: rl.Color) void {
     rl.drawCircleLines(canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), scale, col);
 }
 
-/// Draws life-scaled rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
-pub fn drawEntityLife(x: i32, y: i32, width: i32, life: i32, max_life: i32) void {
-    const portion = width * @max(0, @divTrunc(@max(0, life), max_life));
-    rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(portion, main.Camera.canvas_zoom), canvasScale(15, main.Camera.canvas_zoom), rl.Color.green);
+/// Draws entity life-scaled rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
+pub fn drawLife(x: i32, y: i32, width: i32, life: i32, max_life: i32) void {
+    if (life <= 0 or max_life <= 0) return; // Don't draw if life or max_life is invalid
+
+    // Calculate portion based on life ratio
+    const life_ratio = asF32(i32, life) / asF32(i32, max_life);
+    const portion = asF32(i32, width) * life_ratio;
+
+    // Calculate positions and scaling
+    const draw_x = canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom);
+    const draw_y = canvasY(y - 5, main.Camera.canvas_offset_y, main.Camera.canvas_zoom);
+    const draw_width = canvasScale(asI32(f32, portion), main.Camera.canvas_zoom);
+    const draw_height = canvasScale(10, main.Camera.canvas_zoom);
+
+    rl.drawRectangle(draw_x, draw_y, draw_width, draw_height, rl.Color.white);
+}
+
+/// Draws entity life-scaled rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
+pub fn drawLifeInterpolated(x: i32, y: i32, width: i32, life: i32, max_life: i32, last_step: Point, frame: i16) void {
+    const interp_xy = interpolateStep(last_step.x, last_step.y, x, y, frame, main.World.MOVEMENT_DIVISIONS);
+    drawLife(interp_xy[0], interp_xy[1], width, life, max_life);
 }
 
 /// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
