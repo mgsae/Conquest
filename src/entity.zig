@@ -732,7 +732,7 @@ pub const Unit = struct {
     pub fn preset(class: u8) Properties { // Would set model here as well
         return switch (class) {
             0 => Properties{ .speed = 1.5, .width = 20, .height = 20, .life = 6000, .range = 150, .attackrate = 6 },
-            1 => Properties{ .speed = 1.75, .width = 25, .height = 25, .life = 8000, .range = 400, .attackrate = 5 },
+            1 => Properties{ .speed = 1.75, .width = 25, .height = 25, .life = 8000, .range = 300, .attackrate = 5 },
             2 => Properties{ .speed = 1, .width = 45, .height = 45, .life = 10000, .range = 500, .attackrate = 12 },
             3 => Properties{ .speed = 2, .width = 35, .height = 35, .life = 7000, .range = 250, .attackrate = 8 },
             else => @panic("Invalid unit class"),
@@ -792,8 +792,8 @@ pub const Structure = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = 150, .height = 150, .life = 4000, .restitution = 6.4, .capacity = 4 },
-            1 => Properties{ .width = 100, .height = 100, .life = 12000, .restitution = 11.0, .capacity = 1 },
+            0 => Properties{ .width = 150, .height = 150, .life = 12000, .restitution = 6.4, .capacity = 4 },
+            1 => Properties{ .width = 100, .height = 100, .life = 8000, .restitution = 11.0, .capacity = 1 },
             2 => Properties{ .width = 200, .height = 200, .life = 14000, .restitution = 8.0, .capacity = 8 },
             3 => Properties{ .width = 150, .height = 150, .life = 9000, .restitution = 4.0, .capacity = 5 },
             else => @panic("Invalid structure class"),
@@ -944,12 +944,22 @@ pub const Structure = struct {
 pub const Resource = struct {
     entity: *Entity,
     class: u8,
+    state: State,
     x: u16,
     y: u16,
     capacity: i16,
 
-    pub fn draw(self: *Unit, alpha: f32) void {
+    pub const State = enum {
+        Default,
+        Depleted,
+    };
+
+    pub fn draw(self: *Resource, alpha: f32) void {
         u.drawEntity(self.x, self.y, self.width(), self.height(), self.entity.color(alpha));
+    }
+
+    pub fn update(self: *Resource) void {
+        _ = self;
     }
 
     /// `Structure` property fields determined by `class`.
@@ -962,9 +972,42 @@ pub const Resource = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = 150, .height = 50, .capacity = 4 },
+            0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 40 },
             else => @panic("Invalid structure class"),
         };
+    }
+
+    pub fn create(x: u16, y: u16, class: u8) !*Resource {
+        const entity: *Entity = try main.World.grid.allocator.create(Entity);
+        const resource: *Resource = try main.World.grid.allocator.create(Resource);
+        const from_class = Resource.preset(class);
+
+        resource.* = Resource{
+            .entity = entity,
+            .class = class,
+            .state = State.Default,
+            .capacity = from_class.capacity,
+            .x = x,
+            .y = y,
+        };
+        entity.* = Entity{
+            .kind = Kind.Resource,
+            .ref = .{ .Resource = resource },
+        };
+
+        try main.World.grid.addToCell(entity, null, null);
+        return resource;
+    }
+
+    pub fn remove(self: *Resource) !void {
+        try main.World.grid.removeFromCell(self.entity, null, null); // Removes entity from grid
+        try main.World.grid.removeFromAllSections(self.entity);
+        try u.findAndSwapRemove(Resource, &resources, self); // Removes resource from the units collection
+        for (resources.items) |resource| {
+            std.debug.assert(resource != self); // For debugging, resource must be removed at this point
+        }
+        main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
+        main.World.grid.allocator.destroy(self); // Deallocates memory for the Resource
     }
 
     fn width(self: *Resource) u16 {

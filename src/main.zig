@@ -93,7 +93,7 @@ pub const World = struct {
 
     }
 
-    fn initializeEntities(allocator: std.mem.Allocator) void {
+    fn initializeEntities(allocator: std.mem.Allocator, map: Map) !void {
         e.players = std.ArrayList(*e.Player).init(allocator);
         e.structures = std.ArrayList(*e.Structure).init(allocator);
         e.units = std.ArrayList(*e.Unit).init(allocator);
@@ -102,13 +102,21 @@ pub const World = struct {
         World.dead_structures = std.ArrayList(*e.Structure).init(allocator);
         World.dead_units = std.ArrayList(*e.Unit).init(allocator);
         World.dead_resources = std.ArrayList(*e.Resource).init(allocator);
+
+        const resource_coords = map.resource_locations;
+        var resource: *e.Resource = undefined;
+        defer allocator.free(resource_coords);
+        for (resource_coords) |coord| {
+            resource = try e.Resource.create(coord.x, coord.y, 0); // Creates class 0 resource
+            try e.resources.append(resource);
+        }
     }
 
     fn initializePlayers(allocator: *std.mem.Allocator, map: Map, self_id: u8) !void {
-        const startCoords = map.start_locations;
-
+        const start_coords = map.start_locations;
+        defer allocator.free(start_coords);
         var player: *e.Player = undefined;
-        for (startCoords, 1..) |coord, i| { // IDs start at 1 (0 is neutral)
+        for (start_coords, 1..) |coord, i| { // IDs start at 1 (0 is neutral)
             if (i == self_id) {
                 player = try e.Player.createLocal(coord.x, coord.y, u.asU8(usize, i));
                 Player.self = player; // Sets player to local pointer
@@ -119,7 +127,6 @@ pub const World = struct {
             try e.players.append(player);
             std.debug.print("Player {} starting at: ({}, {})\n", .{ i, coord.x, coord.y });
         }
-        allocator.free(startCoords);
     }
 };
 
@@ -132,13 +139,13 @@ pub fn main() anyerror!void {
 
     // Initialize window
     //--------------------------------------------------------------------------------------
-    Camera.width = rl.getMonitorWidth(0);
-    Camera.height = rl.getMonitorHeight(0); // <- sets window to (1st) monitor dimensions
+    Camera.width = rl.getMonitorWidth(0); // Sets window to (1st) monitor dimensions
+    Camera.height = rl.getMonitorHeight(0); // Sets window to (1st) monitor dimensions
     rl.initWindow(Camera.width, Camera.height, "Conquest");
     defer rl.closeWindow(); // Close window and OpenGL context
 
     const flags = rl.ConfigFlags{
-        .fullscreen_mode = false,
+        .fullscreen_mode = true,
         .window_resizable = true,
         .window_undecorated = false, // Removes window border
         .window_transparent = false,
@@ -177,7 +184,7 @@ pub fn main() anyerror!void {
     const cellsigns_cache = try allocator.alloc(u32, World.grid.columns * World.grid.rows);
     defer allocator.free(cellsigns_cache);
     defer World.grid.deinit(&allocator);
-    World.initializeEntities(allocator);
+    try World.initializeEntities(allocator, map);
     try World.initializePlayers(&allocator, map, Player.id.?);
 
     // Testing/debugging
@@ -504,22 +511,37 @@ fn updateEntities(profile_frame: bool) !void {
         }
     }
     if (profile_frame) u.endTimer(1, "Updating units took {} seconds.");
+
+    // Resources
+    if (profile_frame) u.startTimer(1, "- Updating resources.");
+    for (e.resources.items) |resource| {
+        if (resource.state == e.Resource.State.Depleted) {
+            try World.dead_resources.append(resource); // To be destroyed in removeEntities
+        } else {
+            resource.update();
+        }
+    }
+    if (profile_frame) u.endTimer(1, "Updating resources took {} seconds.");
 }
 
 fn removeEntities() !void {
-    // Do same for other entities
-    for (World.dead_units.items) |unit| { // Second: Destroys units that were marked for destruction
+    for (World.dead_resources.items) |resources| { // Second: Removes resources that were marked for destruction
+        //std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
+        try resources.remove();
+    }
+    for (World.dead_units.items) |unit| { // Second: Removes units that were marked for destruction
         //std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
         try unit.remove();
     }
-    for (World.dead_structures.items) |structure| { // Second: Destroys units that were marked for destruction
+    for (World.dead_structures.items) |structure| { // Second: Removes structures that were marked for destruction
         //std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
         try structure.remove();
     }
-    for (World.dead_players.items) |p| { // Second: Destroys units that were marked for destruction
+    for (World.dead_players.items) |p| { // Second: Removes players that were marked for destruction
         //std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
         try p.remove();
     }
+    World.dead_resources.clearAndFree();
     World.dead_units.clearAndFree();
     World.dead_structures.clearAndFree();
     World.dead_players.clearAndFree();
@@ -578,12 +600,12 @@ fn drawEntities() void {
         for (e.units.items) |x| x.draw(1); // Interpolates
         for (e.structures.items) |x| x.draw(1);
         for (e.players.items) |x| x.draw(1);
-        // resources ...
+        for (e.resources.items) |x| x.draw(1);
     } else {
         for (e.units.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
         for (e.structures.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
         for (e.players.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
-        // resources ...
+        for (e.resources.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
     }
 }
 
@@ -604,6 +626,7 @@ const Map = struct { // Encapsulates map properties; see World for currently act
     width: u16,
     height: u16,
     start_locations: []u.Point,
+    resource_locations: []u.Point,
 
     /// Finds map from `id` and initializes the `World` with the new properties. Returns the opened `Map` or error if invalid `id`.
     pub fn open(allocator: *std.mem.Allocator, id: u32) !Map {
@@ -624,6 +647,7 @@ const Map = struct { // Encapsulates map properties; see World for currently act
                 .width = World.DEFAULT_WIDTH,
                 .height = World.DEFAULT_HEIGHT,
                 .start_locations = try defaultStartLocations(allocator, World.DEFAULT_WIDTH, World.DEFAULT_HEIGHT, 2),
+                .resource_locations = try defaultResourceLocations(allocator, World.DEFAULT_WIDTH, World.DEFAULT_HEIGHT),
             },
             else => error.MapNotFound,
         };
@@ -648,6 +672,52 @@ const Map = struct { // Encapsulates map properties; see World for currently act
         std.debug.print("Returning coordinates for {} players\n", .{player_count});
         for (slice) |coord| {
             std.debug.print("({}, {})\n", .{ coord.x, coord.y });
+        }
+
+        return slice;
+    }
+
+    fn defaultResourceLocations(allocator: *std.mem.Allocator, width: u16, height: u16) ![]u.Point {
+        const cols = @divTrunc(width, u.Grid.cell_size);
+        const rows = @divTrunc(height, u.Grid.cell_size);
+        const total = (cols * rows) * 4;
+        var slice = try allocator.alloc(u.Point, total);
+        var index: usize = 0;
+
+        // Define base subcell positions (this is the unrotated base pattern)
+        const subcell_positions = [_]u.Point{
+            u.Point{ .x = 3, .y = 3 },
+            u.Point{ .x = 3, .y = 7 },
+            u.Point{ .x = 7, .y = 3 },
+            u.Point{ .x = 7, .y = 7 },
+        };
+
+        for (0..cols) |col| {
+            const base_x = u.asU16(usize, col * u.Grid.cell_size);
+            for (0..rows) |row| {
+                const base_y = u.asU16(usize, row * u.Grid.cell_size);
+
+                // Determine the rotation based on the cell position
+                const rotation = (col + row) % 4;
+
+                // Rotate or reflect the base positions based on the rotation value
+                for (0..4) |i| {
+                    const rotated_pos = switch (rotation) {
+                        0 => subcell_positions[i], // No rotation
+                        1 => u.Point{ .x = subcell_positions[i].y, .y = 10 - subcell_positions[i].x }, // 90 degrees
+                        2 => u.Point{ .x = 10 - subcell_positions[i].x, .y = 10 - subcell_positions[i].y }, // 180 degrees
+                        3 => u.Point{ .x = 10 - subcell_positions[i].y, .y = subcell_positions[i].x }, // 270 degrees
+                        else => unreachable,
+                    };
+
+                    // Multiply by u.Subcell.size to correctly position within the subcells
+                    const final_x = base_x + rotated_pos.x * u.Subcell.size;
+                    const final_y = base_y + rotated_pos.y * u.Subcell.size;
+
+                    slice[index] = u.Point.at(final_x, final_y);
+                    index += 1; // Increment by 1 for each resource
+                }
+            }
         }
 
         return slice;
