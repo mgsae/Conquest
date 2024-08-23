@@ -79,6 +79,15 @@ pub const Entity = struct {
         }
     }
 
+    pub fn color(self: *Entity, alpha: f32) rl.Color {
+        return switch (self.kind) {
+            Kind.Player => u.idToColor(self.ref.Player.id, alpha),
+            Kind.Unit => u.idToColor(self.ref.Unit.owner, alpha),
+            Kind.Structure => u.idToColor(self.ref.Structure.owner, alpha),
+            Kind.Resource => u.opacity(rl.Color.white, alpha),
+        };
+    }
+
     pub fn inRangeOf(self: *Entity, target: *Entity, range: f32) bool {
         return u.isInRange(self, target, range);
     }
@@ -103,7 +112,6 @@ pub const Player = struct {
     height: u16,
     x: u16,
     y: u16,
-    color: rl.Color,
     speed: f16 = 5,
     state: State,
     local: bool = false,
@@ -115,9 +123,9 @@ pub const Player = struct {
 
     pub fn draw(self: Player, alpha: f32) void {
         if (main.Player.selected == self.entity) { // If selected by local player, draws circle
-            u.drawCircle(self.x, self.y, u.Grid.cell_half, u.opacity(self.color, alpha * 0.125));
+            u.drawCircle(self.x, self.y, u.Grid.cell_half, self.entity.color(alpha * 0.125));
         }
-        u.drawPlayer(self.x, self.y, self.width, self.height, u.opacity(self.color, alpha));
+        u.drawPlayer(self.x, self.y, self.width, self.height, self.entity.color(alpha));
     }
 
     pub fn update(self: *Player) anyerror!void {
@@ -231,13 +239,12 @@ pub const Player = struct {
         player.* = Player{
             .entity = entity,
             .id = id,
-            .life = 1000,
+            .life = 10000,
             .x = x,
             .y = y,
             .width = 100,
             .height = 100,
             .speed = 5,
-            .color = rl.Color.green,
             .state = State.Default,
             .local = true,
         };
@@ -258,13 +265,12 @@ pub const Player = struct {
         player.* = Player{
             .entity = entity,
             .id = id,
-            .life = 1000,
+            .life = 10000,
             .x = x,
             .y = y,
             .width = 100,
             .height = 100,
             .speed = 5,
-            .color = rl.Color.red,
             .state = State.Default,
             .local = false,
         };
@@ -337,13 +343,13 @@ pub const Unit = struct {
         if (self.state == State.Dead) return;
         // Draws model
         if (self.class == 0) { // Testing model for class 0, but expand to all
-            u.drawModel(self.model, self.width(), self.height(), u.opacity(self.color(), alpha), u.opacity(self.color(), alpha));
+            u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
         } else { // Fallback to the previous method for other classes
-            u.drawEntityInterpolated(self.x, self.y, self.width(), self.height(), u.opacity(self.color(), alpha), self.last_step, self.life);
+            u.drawEntityInterpolated(self.x, self.y, self.width(), self.height(), self.entity.color(alpha), self.last_step, self.life);
         }
         // If selected by player, draws target circumference with half alpha
         if (main.Player.selected == self.entity) {
-            u.drawCircumference(self.target.x, self.target.y, 100, u.opacity(self.color(), alpha / 2));
+            u.drawCircumference(self.target.x, self.target.y, 100, self.entity.color(alpha / 2));
         }
 
         u.drawEntityLife(self.x, self.y, preset(self.class).width, self.life, preset(self.class).life);
@@ -370,7 +376,7 @@ pub const Unit = struct {
         if (main.moveDivision(self.life)) {
             self.last_step = u.Point.at(self.x, self.y); // Sets last_step to current position
 
-            if (main.moveDivMultiple(self.life, 6)) { // Every 60 ticks
+            if (main.moveDivMultiple(self.life, preset(self.class).attackrate)) { // Every attackrate * 10 ticks
                 if (self.state == State.Attacking) self.state = State.Default; // Clears attacking status
                 if (self.getAttackTarget()) |target| {
                     if (try self.attack(target)) {
@@ -667,7 +673,7 @@ pub const Unit = struct {
             .owner = owner,
             .class = class,
             .life = from_class.life,
-            .model = try u.Model.createChain(main.World.grid.allocator, 4, start_point, 12), // do from_class
+            .model = try u.Model.createChain(main.World.grid.allocator, 3, start_point, 12), // do from_class
             .x = x,
             .y = y,
             .target = findTarget(owner, start_point),
@@ -715,30 +721,26 @@ pub const Unit = struct {
     /// `Unit` property template fields determined by `class`.
     pub const Properties = struct {
         speed: f16,
-        color: rl.Color,
         width: u16,
         height: u16,
         life: i16,
         range: f32,
+        attackrate: u8,
     };
 
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties { // Would set model here as well
         return switch (class) {
-            0 => Properties{ .speed = 1.5, .color = rl.Color.sky_blue, .width = 20, .height = 20, .life = 6000, .range = 150 },
-            1 => Properties{ .speed = 1.75, .color = rl.Color.blue, .width = 25, .height = 25, .life = 8000, .range = 400 },
-            2 => Properties{ .speed = 1, .color = rl.Color.dark_blue, .width = 45, .height = 45, .life = 10000, .range = 500 },
-            3 => Properties{ .speed = 2, .color = rl.Color.violet, .width = 35, .height = 35, .life = 7000, .range = 250 },
+            0 => Properties{ .speed = 1.5, .width = 20, .height = 20, .life = 6000, .range = 150, .attackrate = 6 },
+            1 => Properties{ .speed = 1.75, .width = 25, .height = 25, .life = 8000, .range = 400, .attackrate = 5 },
+            2 => Properties{ .speed = 1, .width = 45, .height = 45, .life = 10000, .range = 500, .attackrate = 12 },
+            3 => Properties{ .speed = 2, .width = 35, .height = 35, .life = 7000, .range = 250, .attackrate = 8 },
             else => @panic("Invalid unit class"),
         };
     }
 
     pub fn speed(self: *Unit) f16 {
         return Unit.preset(self.class).speed * main.World.MOVEMENT_DIVISIONS;
-    }
-
-    pub fn color(self: *Unit) rl.Color {
-        return Unit.preset(self.class).color;
     }
 
     fn range(self: *Unit) f32 {
@@ -762,7 +764,6 @@ pub const Structure = struct {
     x: u16,
     y: u16,
     class: u8,
-    color: rl.Color,
     life: i16,
     state: State,
     restitution: f16,
@@ -776,12 +777,11 @@ pub const Structure = struct {
 
     pub fn draw(self: *Structure, alpha: f32) void {
         if (self.state == State.Destroyed) return;
-        u.drawEntity(self.x, self.y, self.width(), self.height(), u.opacity(self.color, alpha));
+        u.drawEntity(self.x, self.y, self.width(), self.height(), self.entity.color(alpha));
     }
 
     /// `Structure` property fields determined by `class`.
     pub const Properties = struct {
-        color: rl.Color,
         width: u16,
         height: u16,
         life: i16,
@@ -792,10 +792,10 @@ pub const Structure = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .color = rl.Color.sky_blue, .width = 150, .height = 150, .life = 4000, .restitution = 6.4, .capacity = 4 },
-            1 => Properties{ .color = rl.Color.blue, .width = 100, .height = 100, .life = 12000, .restitution = 11.0, .capacity = 1 },
-            2 => Properties{ .color = rl.Color.dark_blue, .width = 200, .height = 200, .life = 14000, .restitution = 8.0, .capacity = 8 },
-            3 => Properties{ .color = rl.Color.violet, .width = 150, .height = 150, .life = 9000, .restitution = 4.0, .capacity = 5 },
+            0 => Properties{ .width = 150, .height = 150, .life = 4000, .restitution = 6.4, .capacity = 4 },
+            1 => Properties{ .width = 100, .height = 100, .life = 12000, .restitution = 11.0, .capacity = 1 },
+            2 => Properties{ .width = 200, .height = 200, .life = 14000, .restitution = 8.0, .capacity = 8 },
+            3 => Properties{ .width = 150, .height = 150, .life = 9000, .restitution = 4.0, .capacity = 5 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -838,7 +838,6 @@ pub const Structure = struct {
             .entity = entity,
             .owner = owner,
             .class = class,
-            .color = from_class.color,
             .life = from_class.life,
             .state = State.Default,
             .restitution = from_class.restitution,
@@ -950,12 +949,11 @@ pub const Resource = struct {
     capacity: i16,
 
     pub fn draw(self: *Unit, alpha: f32) void {
-        u.drawEntity(self.x, self.y, self.width(), self.height(), u.opacity(self.color(), alpha));
+        u.drawEntity(self.x, self.y, self.width(), self.height(), self.entity.color(alpha));
     }
 
     /// `Structure` property fields determined by `class`.
     pub const Properties = struct {
-        color: rl.Color,
         width: u16,
         height: u16,
         capacity: i16,
@@ -964,13 +962,9 @@ pub const Resource = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .color = rl.Color.white, .width = 150, .height = 50, .capacity = 4 },
+            0 => Properties{ .width = 150, .height = 50, .capacity = 4 },
             else => @panic("Invalid structure class"),
         };
-    }
-
-    fn color(self: *Resource) f32 {
-        return preset(self.class).color;
     }
 
     fn width(self: *Resource) u16 {

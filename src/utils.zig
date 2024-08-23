@@ -446,11 +446,19 @@ pub const Vector = struct {
     }
 
     pub fn toIntegers(vector: Vector) [2]i32 {
-        return [2]u16{ asI32(f32, vector.x), asI32(f32, vector.y) };
+        return [2]i32{ asI32(f32, vector.x), asI32(f32, vector.y) };
     }
 
     pub fn fromIntegers(x: i32, y: i32) Vector {
         return Vector{ .x = asF32(i32, x), .y = asF32(i32, y) };
+    }
+
+    pub fn toFloats(vector: Vector) [2]f32 {
+        return [2]f32{ vector.x, vector.y };
+    }
+
+    pub fn fromFloats(x: f32, y: f32) Vector {
+        return Vector{ .x = x, .y = y };
     }
 
     pub fn toScreen(self: Vector) Vector {
@@ -478,6 +486,10 @@ pub const Vector = struct {
     pub fn mapOffsetY(self: Vector, y_value: u16) u16 {
         const float = mapClamp(f32, asF32(u16, y_value) + self.y, 1, 1);
         return asU16(f32, float);
+    }
+
+    pub fn angle(self: Vector) f32 {
+        return deltaToAngle(asI32(f32, self.x), asI32(f32, self.y));
     }
 };
 
@@ -1535,6 +1547,16 @@ pub const Model = struct {
 
         return model;
     }
+
+    pub fn getElbowPosLocal(l1: f32, l2: f32, local_end_affector: Vector, elbow_direction_sign: *i32) Vector {
+        const numerator: f32 = l1 * l1 + local_end_affector.x * local_end_affector.x + local_end_affector.y * local_end_affector.y - l2 * l2;
+        const denominator: f32 = 2 * l1 * fastSqrt(local_end_affector.x * local_end_affector.x + local_end_affector.y * local_end_affector.y);
+
+        const elbow_angle_relative = std.math.acos(numerator / denominator);
+        if (elbow_direction_sign == 0) elbow_direction_sign = 1;
+
+        return Vector.fromFloats(1 * elbow_angle_relative + local_end_affector.angle(), l1);
+    }
 };
 
 // Drawing
@@ -1546,6 +1568,21 @@ pub fn opacity(color: rl.Color, alpha: f32) rl.Color {
         .b = color.b,
         .a = asU8(f32, asF32(u8, color.a) * alpha),
     };
+}
+
+fn idToHue(id: u8) rl.Color {
+    return switch (id) {
+        0 => rl.Color.gray,
+        1 => rl.Color.blue,
+        2 => rl.Color.red,
+        3 => rl.Color.green,
+        4 => rl.Color.purple,
+        else => rl.Color.brown,
+    };
+}
+
+pub fn idToColor(id: u8, alpha: f32) rl.Color {
+    return opacity(idToHue(id), alpha);
 }
 
 pub fn drawGuide(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
@@ -1602,23 +1639,19 @@ pub fn drawPlayer(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
 }
 
 pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, boneColor: rl.Color) void {
-    const thickness = @divTrunc(width + height, 4);
-    for (model.joints) |joint| { // Draw bones between joints
+    const max_thickness = @divTrunc(width + height, 4);
+    for (model.joints, 0..) |joint, j| { // Draw bones between joints
+        const thickness = asF32(u16, max_thickness) * (1 - 0.5 * (asF32(usize, j) / asF32(usize, model.joints.len - 1)));
         for (joint.connected_joints) |connected_joint_index| {
             const connected_joint = model.joints[connected_joint_index];
-            //const x1 = asI32(f32, joint.position.x);
-            //const y1 = asI32(f32, joint.position.y);
-            //const x2 = asI32(f32, connected_joint.position.x);
-            //const y2 = asI32(f32, connected_joint.position.y);
-            //rl.drawLine(canvasX(x1, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y1, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(x2, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y2, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), boneColor);
-
-            drawLineEx(joint.position, connected_joint.position, thickness, boneColor);
+            drawLineEx(joint.position, connected_joint.position, asI32(f32, thickness), boneColor);
         }
     }
-    for (model.joints) |joint| { // Draw each joint as a circle
+    for (model.joints, 0..) |joint, j| { // Draw each joint as a circle
+        const thickness = asF32(u16, max_thickness) * (1 - 0.5 * (asF32(usize, j) / asF32(usize, model.joints.len - 1)));
         const x = asI32(f32, joint.position.x);
         const y = asI32(f32, joint.position.y);
-        drawCircle(x, y, asF32(u16, thickness) * 1.5, jointColor);
+        drawCircle(x, y, thickness * 1.5, jointColor);
     }
 }
 

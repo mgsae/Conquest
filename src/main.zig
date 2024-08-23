@@ -803,8 +803,8 @@ pub fn drawGuide(class: u8) void {
     const building = e.Structure.preset(class);
     const collides = World.grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;
     if (collides != null or !isInBuildDistance() or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
-        u.drawGuideFail(xy[0], xy[1], building.width, building.height, building.color);
+        u.drawGuideFail(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));
     } else {
-        u.drawGuide(xy[0], xy[1], building.width, building.height, building.color);
+        u.drawGuide(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));
     }
 }
