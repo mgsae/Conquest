@@ -1002,7 +1002,7 @@ pub const Subcell = struct {
     }
 };
 
-pub const waypoint: type = struct {
+pub const Waypoint: type = struct {
     /// Takes the grid column/row of a given cell and returns the 4 waypoints along its edges. Order: left mid, top mid, right mid, bottom mid.
     pub fn cellSides(grid_x: usize, grid_y: usize) [4]Point {
         const node_x = @as(u16, @intCast(grid_x * Grid.cell_size));
@@ -1135,6 +1135,20 @@ pub fn mapClampY(y: i32, height: u16) u16 {
     const half_height = @as(i16, @intCast(@divTrunc(height, 2)));
     const clamped_y = @max(half_height, @min(y, @as(i32, @intCast(main.World.height)) - half_height));
     return @as(u16, @intCast(clamped_y));
+}
+
+/// Produces a world coordinate from float `x` by clamping to map dimensions and rounding to a u16.
+pub fn mapClampFloatX(x: f32, width: u16) u16 {
+    const half_width = @as(f32, @floatFromInt(@divTrunc(width, 2)));
+    const clamped_x = @max(half_width, @min(x, @as(f32, @floatFromInt(main.World.width)) - half_width));
+    return @as(u16, @intFromFloat(@round(clamped_x)));
+}
+
+/// Produces a world coordinate from float `y` by clamping to map dimensions and rounding to a u16.
+pub fn mapClampFloatY(y: f32, height: u16) u16 {
+    const half_height = @as(f32, @floatFromInt(@divTrunc(height, 2)));
+    const clamped_y = @max(half_height, @min(y, @as(f32, @floatFromInt(main.World.height)) - half_height));
+    return @as(u16, @intFromFloat(@round(clamped_y)));
 }
 
 /// Searches for `Entity` that satisfies the `condition`, starting with the section at the `origin` point.
@@ -1564,6 +1578,12 @@ pub fn drawCircumference(x: i32, y: i32, radius: f32, col: rl.Color) void {
     rl.drawCircleLines(canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), scale, col);
 }
 
+/// Draws life-scaled rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
+pub fn drawEntityLife(x: i32, y: i32, width: i32, life: i32, max_life: i32) void {
+    const portion = width * @max(0, @divTrunc(@max(0, life), max_life));
+    rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(portion, main.Camera.canvas_zoom), canvasScale(15, main.Camera.canvas_zoom), rl.Color.green);
+}
+
 /// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawEntity(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(width, main.Camera.canvas_zoom), canvasScale(height, main.Camera.canvas_zoom), col);
@@ -1602,7 +1622,7 @@ pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, b
     }
 }
 
-/// Not accurate for joints on erratic movement. Consider interpolating model, instead.
+/// Not accurate for joints on abrupt movement. Consider interpolating model, instead.
 pub fn drawModelInterpolated(model: *Model, jointRadius: f32, jointColor: rl.Color, boneColor: rl.Color, last_step: Point, frame: i16) void {
     // Calculate the interpolated position for the first joint (anchor)
     const offset = interpolateStepOffsets(last_step.x, last_step.y, asI32(f32, model.joints[0].position.x), asI32(f32, model.joints[0].position.y), frame, main.World.MOVEMENT_DIVISIONS);

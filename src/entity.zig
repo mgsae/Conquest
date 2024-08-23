@@ -345,6 +345,9 @@ pub const Unit = struct {
         if (main.Player.selected == self.entity) {
             u.drawCircumference(self.target.x, self.target.y, 100, u.opacity(self.color(), alpha / 2));
         }
+
+        u.drawEntityLife(self.x, self.y, preset(self.class).width, self.life, preset(self.class).life);
+
         // Draws projectiles with same alpha
         for (self.projectiles.items) |projectile| {
             projectile.draw(alpha);
@@ -408,14 +411,14 @@ pub const Unit = struct {
 
         if (self.state == State.Incapacitated) return;
 
-        // If step is out of bounds, clamps to map (ignoring collision) if needed, and retargets
+        // If step is out of bounds, clamps to map if needed, and retargets
         if (!u.isInMap(new_x, new_y, self.width(), self.height())) {
             if (!u.isInMap(old_x, old_y, self.width(), self.height())) {
                 const clamped_x = u.mapClampX(@as(i16, @intCast(new_x)), self.width());
                 const clamped_y = u.mapClampY(@as(i16, @intCast(new_y)), self.height());
                 _ = self.tryMove(clamped_x, clamped_y, old_x, old_y);
             }
-            _ = self.retarget(u.randomU16(main.World.width), u.randomU16(main.World.height)); // <--- just testing
+            _ = self.retarget();
             return;
         }
 
@@ -423,8 +426,12 @@ pub const Unit = struct {
             _ = self.moveAlongAxis(new_x, new_y, old_x, old_y); // If collided, tries moving along either axis
         }
 
-        if (old_x == self.x and old_y == self.y) { // If no change after moving, retarget
-            _ = self.retarget(u.randomU16(main.World.width), u.randomU16(main.World.height)); // <--- just testing
+        if (old_x == self.x and old_y == self.y) { // If no change after moving, retargets
+            if (main.moveDivMultiple(self.life, 2)) { // Alternating between random point and trying to head towards player again
+                self.target = offsetFromPosition(self.last_step); // Random nearby offset
+            } else { // Tries heading towards player again
+                self.target = findTarget(self.owner, self.last_step);
+            }
             return;
         }
     }
@@ -548,12 +555,10 @@ pub const Unit = struct {
         return [2]u16{ new_x, new_y };
     }
 
-    /// Sets unit's target destination while taking into account its current `cellsign` (TODO). Returns `true` if target has changed, returns `false` if target remains the same.
-    pub fn retarget(self: *Unit, x: u16, y: u16) bool {
+    /// Sets unit's target destination to closest target to the previous. Returns `true` if target has changed, returns `false` if target remains the same.
+    pub fn retarget(self: *Unit) bool {
         const prev_target = self.target;
-        // do more stuff here for pathing
-
-        self.target = u.Point.at(x, y);
+        self.target = findTarget(self.owner, self.target); // Closest enemy player to its target, or random nearby point
         return prev_target.x != self.target.x or prev_target.y != self.target.y;
     }
 
@@ -572,7 +577,11 @@ pub const Unit = struct {
         }
 
         if (closest_player != null) return u.Point.at(closest_player.?.x, closest_player.?.y);
+        return offsetFromPosition(position); // Returns random nearby point
+    }
 
+    /// Returns a world-randomized `Point` within a cell's distance from `position`.
+    fn offsetFromPosition(position: u.Point) u.Point {
         const x: i16 = @as(i16, @intCast(position.x)) + (u.randomI16(u.Grid.cell_size) - u.Grid.cell_half);
         const y: i16 = @as(i16, @intCast(position.y)) + (u.randomI16(u.Grid.cell_size) - u.Grid.cell_half);
         return u.Point.at(u.mapClampX(x, u.Grid.cell_half), u.mapClampX(y, u.Grid.cell_half));
@@ -610,7 +619,7 @@ pub const Unit = struct {
             //
         } else { // If farther than a subcell away, move by waypoints towards the target
 
-            const waypoint = u.waypoint.closestTowards(current, self.target, u.asU32(f32, distance), self.last_step);
+            const waypoint = u.Waypoint.closestTowards(current, self.target, u.asU32(f32, distance), self.last_step);
             const magnitude = u.adjustToDistance(current, waypoint, self.speed(), self.speed());
             // Get the offset from the upcoming waypoint
             const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(waypoint.x));
@@ -994,8 +1003,8 @@ pub const Projectile = struct {
             return;
         }
         const delta = u.vectorToDelta(self.angle, self.speed());
-        self.x = u.u16AddFloat(f32, self.x, delta[0]);
-        self.y = u.u16AddFloat(f32, self.y, delta[1]);
+        self.x = u.mapClampFloatX(u.asF32(u16, self.x) + delta[0], self.width());
+        self.y = u.mapClampFloatY(u.asF32(u16, self.y) + delta[1], self.height());
         self.life -= 1;
     }
 
@@ -1025,7 +1034,7 @@ pub const Projectile = struct {
         const projectile = try main.World.grid.allocator.create(Projectile); // Memory for projectile
         const angle = u.angleFromTo(source.x(), source.y(), target.x(), target.y());
         const from_class = preset(class);
-
+        // Launching from correct side of the source
         const delta = u.angleToSquareOffset(angle, source.width() + from_class.width, source.height() + from_class.height);
 
         projectile.* = Projectile{
