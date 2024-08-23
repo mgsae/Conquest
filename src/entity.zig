@@ -1042,18 +1042,18 @@ pub const Projectile = struct {
     /// Loops the projectile's target list doing a bounding box check for colliding entities. Returns first target found, else null.
     fn checkImpact(self: *Projectile) ?*Entity {
         // Calculate the projectile's bounding box (may be overkill, but useful for larger projectiles)
-        const left = self.x - @divTrunc(self.width(), 2);
+        const left = if (self.x > @divTrunc(self.width(), 2)) self.x - @divTrunc(self.width(), 2) else 0;
         const right = self.x + @divTrunc(self.width(), 2);
-        const top = self.y - @divTrunc(self.height(), 2);
+        const top = if (self.y > @divTrunc(self.height(), 2)) self.y - @divTrunc(self.height(), 2) else 0;
         const bottom = self.y + @divTrunc(self.height(), 2);
 
         if (self.targets) |target_list| {
             for (target_list.items) |target| {
                 const target_half_width = @divTrunc(target.width(), 2);
                 const target_half_height = @divTrunc(target.height(), 2);
-                const target_left = target.x() - target_half_width;
+                const target_left = if (target.x() > target_half_width) target.x() - target_half_width else 0;
                 const target_right = target.x() + target_half_width;
-                const target_top = target.y() - target_half_height;
+                const target_top = if (target.y() > target_half_height) target.y() - target_half_height else 0;
                 const target_bottom = target.y() + target_half_height;
 
                 // Check if the projectile's bounding box intersects with the target's bounding box

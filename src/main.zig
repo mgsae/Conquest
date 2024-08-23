@@ -62,8 +62,8 @@ pub const Player = struct {
 
 /// World properties, shared state initialized by initializeMap.
 pub const World = struct {
-    const DEFAULT_WIDTH = 16000; // 1920 * 8; // Limit for u16 coordinates: 65535
-    const DEFAULT_HEIGHT = 16000; // 1080 * 8; // Limit for u16 coordinates: 65535
+    const DEFAULT_WIDTH = 16000 / 2; // 1920 * 8; // Limit for u16 coordinates: 65535
+    const DEFAULT_HEIGHT = 16000 / 2; // 1080 * 8; // Limit for u16 coordinates: 65535
     pub const GRID_CELL_SIZE = 1000;
     pub const MOVEMENT_DIVISIONS = 10; // Modulus base for unit movement updates
     pub var tick_number: u64 = undefined; // Set upon map initialization
