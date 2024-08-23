@@ -15,6 +15,7 @@ pub const Config = struct {
     pub var profile_mode = false;
     pub var profile_timer = [4]f64{ 0, 0, 0, 0 };
     pub var keys: u.Key = undefined; // Keybindings
+    pub var game_active = true;
 };
 
 /// The local player's camera properties. Const values are universal, var values vary with play session.
@@ -47,10 +48,10 @@ pub const Camera = struct {
     }
 };
 
-/// The local player. Delivers varying properties from the client to the shared world state.
+/// The local player data. Delivers varying properties from the client to the shared world state.
 pub const Player = struct {
-    pub var self: *e.Player = undefined;
-    pub var id: u8 = undefined;
+    pub var self: ?*e.Player = null;
+    pub var id: ?u8 = null;
     pub var selected: ?*e.Entity = null;
     pub var changed_x: ?u16 = null;
     pub var changed_y: ?u16 = null;
@@ -88,7 +89,7 @@ pub const World = struct {
         grid.init(allocator, gridWidth, gridHeight, Config.BUFFERSIZE) catch return error.GridInitializationFailed;
 
         u.rngInit(map.id + width + height); // Initializes the RNG with the map id + width + height as the seed
-        tick_number = 0; // Starts the tick counter
+        tick_number = 0; // Starts the shared tick counter
 
     }
 
@@ -107,7 +108,7 @@ pub const World = struct {
         const startCoords = map.start_locations;
 
         var player: *e.Player = undefined;
-        for (startCoords, 0..) |coord, i| {
+        for (startCoords, 1..) |coord, i| { // IDs start at 1 (0 is neutral)
             if (i == self_id) {
                 player = try e.Player.createLocal(coord.x, coord.y, u.asU8(usize, i));
                 Player.self = player; // Sets player to local pointer
@@ -137,7 +138,7 @@ pub fn main() anyerror!void {
     defer rl.closeWindow(); // Close window and OpenGL context
 
     const flags = rl.ConfigFlags{
-        .fullscreen_mode = true,
+        .fullscreen_mode = false,
         .window_resizable = true,
         .window_undecorated = false, // Removes window border
         .window_transparent = false,
@@ -162,7 +163,7 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     // Initialize player
     //--------------------------------------------------------------------------------------
-    Player.id = 0; // obtain from server! u8 value corresponding to map's starting location
+    Player.id = 1; // obtain from server! u8 value corresponding to map's starting location
 
     // Initialize controls
     //--------------------------------------------------------------------------------------
@@ -177,7 +178,7 @@ pub fn main() anyerror!void {
     defer allocator.free(cellsigns_cache);
     defer World.grid.deinit(&allocator);
     World.initializeEntities(allocator);
-    try World.initializePlayers(&allocator, map, Player.id);
+    try World.initializePlayers(&allocator, map, Player.id.?);
 
     // Testing/debugging
     //--------------------------------------------------------------------------------------
@@ -190,10 +191,10 @@ pub fn main() anyerror!void {
     //for (0..5000) |_| {
     //    try e.units.append(try e.Unit.create(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), @as(u8, @intCast(u.randomU16(3)))));
     //}
-    for (0..0) |_| {
+    for (0..1) |_| {
         const class = @as(u8, @intCast(u.randomU16(3)));
         const xy = u.Subcell.snapToNode(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), e.Structure.preset(class).width, e.Structure.preset(class).height);
-        _ = e.Structure.construct(xy[0], xy[1], class);
+        _ = e.Structure.construct(3, xy[0], xy[1], class);
     }
 
     defer e.units.deinit();
@@ -212,7 +213,7 @@ pub fn main() anyerror!void {
 
     // Main game loop
     //--------------------------------------------------------------------------------------
-    while (!rl.windowShouldClose()) { // Detect window close button or ESC key
+    while (!rl.windowShouldClose() and Config.game_active) { // Detect window close button or ESC key
 
         // Profiling
         //----------------------------------------------------------------------------------
@@ -474,15 +475,18 @@ fn updateEntities(profile_frame: bool) !void {
     // Players
     if (profile_frame) u.startTimer(1, "- Updating players.");
     for (e.players.items) |p| {
-        // Life / lifecycle ?
-        try p.update();
+        if (p.state == e.Player.State.Dead) {
+            try World.dead_players.append(p); // To be destroyed in removeEntities
+        } else {
+            try p.update();
+        }
     }
     if (profile_frame) u.endTimer(1, "Updating players took {} seconds.");
 
     // Structures
     if (profile_frame) u.startTimer(1, "- Updating structures.");
     for (e.structures.items) |structure| {
-        if (structure.life == -u.i16max) {
+        if (structure.state == e.Structure.State.Destroyed) {
             try World.dead_structures.append(structure); // To be destroyed in removeEntities
         } else {
             structure.update();
@@ -490,10 +494,10 @@ fn updateEntities(profile_frame: bool) !void {
     }
     if (profile_frame) u.endTimer(1, "Updating structures took {} seconds.");
 
-    // Units
+    // Units (and projectiles)
     if (profile_frame) u.startTimer(1, "- Updating units.");
     for (e.units.items) |unit| {
-        if (unit.life == -u.i16max) {
+        if (unit.state == e.Unit.State.Dead) {
             try World.dead_units.append(unit); // To be destroyed in removeEntities
         } else {
             try unit.update();
@@ -508,7 +512,17 @@ fn removeEntities() !void {
         //std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
         try unit.remove();
     }
+    for (World.dead_structures.items) |structure| { // Second: Destroys units that were marked for destruction
+        //std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
+        try structure.remove();
+    }
+    for (World.dead_players.items) |p| { // Second: Destroys units that were marked for destruction
+        //std.debug.print("Removing unit at address {}. Entity address {}.\n", .{ @intFromPtr(unit), @intFromPtr(unit.entity) });
+        try p.remove();
+    }
     World.dead_units.clearAndFree();
+    World.dead_structures.clearAndFree();
+    World.dead_players.clearAndFree();
 }
 
 // Game loop: Drawing
@@ -640,8 +654,14 @@ const Map = struct { // Encapsulates map properties; see World for currently act
     }
 };
 
+/// Returns true when `life` is an exact divisor of the world's `MOVEMENT_DIVISIONS`.
 pub fn moveDivision(life: i16) bool {
     return @rem(life, World.MOVEMENT_DIVISIONS) == 0;
+}
+
+/// Returns true if `life` is an exact divisor of the specified `multiple` of the world's `MOVEMENT_DIVISIONS`.
+pub fn moveDivMultiple(life: i16, multiple: i16) bool {
+    return @rem(life, World.MOVEMENT_DIVISIONS * multiple) == 0;
 }
 
 // AI Player
@@ -701,23 +721,24 @@ pub const EnemyPlayerAI = struct {
 // Game controls interaction
 //----------------------------------------------------------------------------------
 fn processMoveInput(key_input: u32, changed_x: *?u16, changed_y: *?u16) !void { // Called in processInput
-    const speed = u.limitToTickRate(Player.self.speed);
-
+    if (Player.self == null) return;
+    const speed = u.limitToTickRate(Player.self.?.speed);
     if (Config.keys.actionActive(key_input, u.Key.Action.MoveUp)) {
-        changed_y.* = u.mapClampY(@truncate(u.i32SubFloat(f32, Player.self.y, speed)), Player.self.height);
+        changed_y.* = u.mapClampY(@truncate(u.i32SubFloat(f32, Player.self.?.y, speed)), Player.self.?.height);
     }
     if (Config.keys.actionActive(key_input, u.Key.Action.MoveLeft)) {
-        changed_x.* = u.mapClampX(@truncate(u.i32SubFloat(f32, Player.self.x, speed)), Player.self.width);
+        changed_x.* = u.mapClampX(@truncate(u.i32SubFloat(f32, Player.self.?.x, speed)), Player.self.?.width);
     }
     if (Config.keys.actionActive(key_input, u.Key.Action.MoveDown)) {
-        changed_y.* = u.mapClampY(@truncate(u.i32AddFloat(f32, Player.self.y, speed)), Player.self.height);
+        changed_y.* = u.mapClampY(@truncate(u.i32AddFloat(f32, Player.self.?.y, speed)), Player.self.?.height);
     }
     if (Config.keys.actionActive(key_input, u.Key.Action.MoveRight)) {
-        changed_x.* = u.mapClampX(@truncate(u.i32AddFloat(f32, Player.self.x, speed)), Player.self.width);
+        changed_x.* = u.mapClampX(@truncate(u.i32AddFloat(f32, Player.self.?.x, speed)), Player.self.?.width);
     }
 }
 
 fn processActionInput(key_input: u32) void { // Called in processInput
+    if (Player.self == null) return;
     if (Config.keys.actionActive(key_input, u.Key.Action.BuildOne)) {
         Player.build_index = 0;
     } else if (Config.keys.actionActive(key_input, u.Key.Action.BuildTwo)) {
@@ -740,9 +761,9 @@ fn processActionInput(key_input: u32) void { // Called in processInput
 }
 
 pub fn executeBuild(class: u8) void {
-    if (!isInBuildDistance()) return;
+    if (!isInBuildDistance() or Player.id == null) return;
     const xy = findBuildPosition(class);
-    const built = e.Structure.construct(Player.id, xy[0], xy[1], class);
+    const built = e.Structure.construct(Player.id.?, xy[0], xy[1], class);
     if (built) |building| {
         std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
         Player.selected = building.entity; // Hack, sets selected to building to instantly deselect it (in updateControls) by the same click
@@ -767,15 +788,17 @@ fn findBuildPosition(class: u8) [2]u16 {
 }
 
 fn isInBuildDistance() bool {
+    if (Player.self == null) return false;
     const subcell_center = u.screenToSubcell(rl.getMousePosition()).center();
     const distance_max = u.Grid.cell_half; //u.asU32(u16, e.Structure.preset(class).width + e.Structure.preset(class).height);
-    const distance = std.math.sqrt(u.distanceSquared(u.Point.at(Player.self.x, Player.self.y), u.Point.at(subcell_center[0], subcell_center[1])));
+    const distance = std.math.sqrt(u.distanceSquared(u.Point.at(Player.self.?.x, Player.self.?.y), u.Point.at(subcell_center[0], subcell_center[1])));
     return distance <= distance_max;
 }
 
 // Interface
 //----------------------------------------------------------------------------------
 pub fn drawGuide(class: u8) void {
+    if (Player.self == null) return;
     const xy = findBuildPosition(class);
     const building = e.Structure.preset(class);
     const collides = World.grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;

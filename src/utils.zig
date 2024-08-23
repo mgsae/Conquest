@@ -73,6 +73,8 @@ pub fn frameAdjusted(float: f32) f32 {
 //----------------------------------------------------------------------------------
 pub const Predicate = fn (entity: *e.Entity) bool; // Function pointer to an entity
 
+pub const UnitPredicate = fn (self: *e.Unit, entity: *e.Entity) bool; // Function pointer to unit, entity
+
 pub fn isUnit(entity: *e.Entity) bool {
     return entity.kind == e.Kind.Unit;
 }
@@ -91,10 +93,6 @@ pub fn isInRange(e1: *e.Entity, e2: *e.Entity, max_range: f32) bool {
 
 pub fn isEntityUnitInRange(self_entity: *e.Entity, target_entity: *e.Entity, maxRange: f32) bool {
     return isUnit(target_entity) and isInRange(self_entity, target_entity, maxRange);
-}
-
-pub fn isEnemy(entity: *e.Entity) bool {
-    return entity.kind == e.Kind.Unit;
 }
 
 // Value types and conversions
@@ -471,6 +469,16 @@ pub const Vector = struct {
     pub fn fromRaylib(rl_vector: rl.Vector2) Vector {
         return fromCoords(rl_vector.x, rl_vector.y);
     }
+
+    pub fn mapOffsetX(self: Vector, x_value: u16) u16 {
+        const float = mapClamp(f32, asF32(u16, x_value) + self.x, 1, 0);
+        return asU16(f32, float);
+    }
+
+    pub fn mapOffsetY(self: Vector, y_value: u16) u16 {
+        const float = mapClamp(f32, asF32(u16, y_value) + self.y, 1, 1);
+        return asU16(f32, float);
+    }
 };
 
 pub const Point = struct {
@@ -501,6 +509,14 @@ pub const Point = struct {
 
     pub fn fromVector(vector: Vector) Point {
         return Point{ asU16(f32, vector.x), asU16(f32, vector.y) };
+    }
+
+    pub fn fromIntegers(x: i32, y: i32) Point {
+        return Point.at(mapClampX(asU16(i32, @max(0, x)), 1), mapClampY(asU16(i32, @max(0, y)), 1));
+    }
+
+    pub fn toIntegers(point: Point) [2]i32 {
+        return [2]i32{ asI32(u16, point.x), asI32(u16, point.y) };
     }
 
     /// Moves the point by a horizontal and/or vertical offset. Clamped to map limits.
@@ -593,6 +609,28 @@ pub fn angleFromDir(dir: u8) f32 {
         8 => 90.0, ///// Up
         9 => 45.0, ///// Up-Right
         else => 0.0, //// Defaults to up for invalid input
+    };
+}
+
+pub fn cardinalDirFromAngle(angle: f32) u8 {
+    return switch (@as(i32, @intFromFloat(@round(angle)))) {
+        225...314 => 2, ///// Down
+        135...224 => 4, ///// Left
+        0...44 => 6, ///// Right
+        315...360 => 6, ///// Right
+        45...134 => 8, ///// Up
+        else => 6, //// Defaults to right
+    };
+}
+
+pub fn angleToSquareOffset(angle: f32, width: u16, height: u16) Vector {
+    const dir = cardinalDirFromAngle(angle);
+    return switch (dir) {
+        2 => Vector{ .x = 0, .y = @divTrunc(asF32(u16, height), 2) }, // Down (positive y-offset)
+        4 => Vector{ .x = -@divTrunc(asF32(u16, width), 2), .y = 0 }, // Left (negative x-offset)
+        6 => Vector{ .x = @divTrunc(asF32(u16, width), 2), .y = 0 }, // Right (positive x-offset)
+        8 => Vector{ .x = 0, .y = -@divTrunc(asF32(u16, height), 2) }, // Up (negative y-offset)
+        else => Vector{ .x = @divTrunc(asF32(u16, width), 2), .y = 0 }, // Defaults to right
     };
 }
 
@@ -1078,7 +1116,7 @@ pub fn isInMap(x: u16, y: u16, width: u16, height: u16) bool {
 
 /// Clamps `coordinate` of type `T` to the map's dimensions and returns as same type. Set axis 0 for map width and 1 for map height.
 pub fn mapClamp(T: type, coordinate: T, diameter: T, axis: u8) T {
-    const radius = @divTrunc(diameter, 2);
+    const radius = as(T, @divTrunc(diameter, 2), i32);
     const pos = as(T, coordinate, i32);
     const clamped = if (axis == 0)
         @max(radius, @min(pos, @as(i32, @intCast(main.World.width)) - radius))
@@ -1087,13 +1125,13 @@ pub fn mapClamp(T: type, coordinate: T, diameter: T, axis: u8) T {
     return as(i32, clamped, T);
 }
 
-pub fn mapClampX(x: i16, width: u16) u16 {
+pub fn mapClampX(x: i32, width: u16) u16 {
     const half_width = @as(i16, @intCast(@divTrunc(width, 2)));
     const clamped_x = @max(half_width, @min(x, @as(i32, @intCast(main.World.width)) - half_width));
     return @as(u16, @intCast(clamped_x));
 }
 
-pub fn mapClampY(y: i16, height: u16) u16 {
+pub fn mapClampY(y: i32, height: u16) u16 {
     const half_height = @as(i16, @intCast(@divTrunc(height, 2)));
     const clamped_y = @max(half_height, @min(y, @as(i32, @intCast(main.World.height)) - half_height));
     return @as(u16, @intCast(clamped_y));
@@ -1120,7 +1158,7 @@ pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.
             };
 
             for (&offsets) |offset| {
-                if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.cols and offset.y < grid.rows) {
+                if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.columns and offset.y < grid.rows) {
                     const entities: ?*std.ArrayList(*e.Entity) = grid.sectionEntities(offset.x, offset.y);
                     if (entities != null) {
                         found_any_entity = true;
@@ -1142,6 +1180,55 @@ pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.
 
         radius += 2; // Increases radius by 2 since each section covers 3x3 cells, thus overlaps by one on each side
     }
+    return null; // If no entity was found after the entire search
+}
+
+/// Searches for `Entity` that satisfies the `condition`, starting with the section at the `origin` `Unit`. Returns pointer to first `Entity` found, or `null`.
+pub fn unitConcentricSearch(grid: *e.Grid, origin: *e.Unit, condition: UnitPredicate) ?*e.Entity {
+    const origin_col = asI32(usize, Grid.x(origin.x));
+    const origin_row = asI32(usize, Grid.y(origin.y));
+    var closest_entity: ?*e.Entity = null;
+    var closest_distance = std.math.inf(f32);
+
+    var radius: i32 = 0;
+    while (true) {
+        var found_any_entity = false;
+        var d: i32 = -radius;
+
+        while (d <= radius) {
+            // Check the four sides of the square at this radius
+            const offsets = [4]Point{
+                Point.fromIntegers(origin_col + d, origin_row - radius), // Top
+                Point.fromIntegers(origin_col + d, origin_row + radius), // Bottom
+                Point.fromIntegers(origin_col - radius, origin_row + d), // Left
+                Point.fromIntegers(origin_col + radius, origin_row + d), // Right
+            };
+
+            for (&offsets) |offset| {
+                if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.columns and offset.y < grid.rows) {
+                    const entities: ?*std.ArrayList(*e.Entity) = grid.sectionEntities(offset.x, offset.y);
+                    if (entities != null) {
+                        found_any_entity = true;
+                        for (entities.?.items) |entity| {
+                            if (condition(origin, entity)) {
+                                const distance = asF32(u32, distanceSquared(Point.at(origin.x, origin.y), Point.at(entity.x(), entity.y())));
+                                if (distance < closest_distance) {
+                                    closest_entity = entity;
+                                    closest_distance = distance;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            d += 1;
+        }
+        if (closest_entity != null) return closest_entity; // If found entity in this radius, return the closest one
+        if (!found_any_entity) break; // If no entities were found overall, stop searching
+
+        radius += 2; // Increases radius by 2 since each section covers 3x3 cells, thus overlaps by one on each side
+    }
+
     return null; // If no entity was found after the entire search
 }
 
@@ -1175,10 +1262,11 @@ pub fn mapToCanvas(x: i32, y: i32) [2]i32 {
 
 /// Sets canvas offset values to center on the player position.
 pub fn canvasOnPlayer() void {
+    if (main.Player.self == null) return;
     const screen_width_f = @as(f32, @floatFromInt(rl.getScreenWidth()));
     const screen_height_f = @as(f32, @floatFromInt(rl.getScreenHeight()));
-    main.Camera.canvas_offset_x_target = -(@as(f32, @floatFromInt(main.Player.self.x)) * main.Camera.canvas_zoom) + (screen_width_f / 2);
-    main.Camera.canvas_offset_y_target = -(@as(f32, @floatFromInt(main.Player.self.y)) * main.Camera.canvas_zoom) + (screen_height_f / 2);
+    main.Camera.canvas_offset_x_target = -(@as(f32, @floatFromInt(main.Player.self.?.x)) * main.Camera.canvas_zoom) + (screen_width_f / 2);
+    main.Camera.canvas_offset_y_target = -(@as(f32, @floatFromInt(main.Player.self.?.y)) * main.Camera.canvas_zoom) + (screen_height_f / 2);
 }
 
 /// Sets canvas offset values to center on the position of `entity`.
@@ -1222,8 +1310,9 @@ pub fn screenToSubcell(screen_position: rl.Vector2) Subcell {
 
 /// Returns vector distance from `screen_position` to the current canvas position of the local player.
 pub fn screenToPlayerVector(screen_position: rl.Vector2) rl.Vector2 {
-    const player_x = canvasX(main.Player.self.x - @divTrunc(main.Player.self.width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom);
-    const player_y = canvasY(main.Player.self.y - @divTrunc(main.Player.self.height, 2), main.Camera.canvas_offset_y, main.Camera.canvas_zoom);
+    if (main.Player.self == null) return rl.Vector2.init(0, 0);
+    const player_x = canvasX(main.Player.self.?.x - @divTrunc(main.Player.self.?.width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom);
+    const player_y = canvasY(main.Player.self.?.y - @divTrunc(main.Player.self.?.height, 2), main.Camera.canvas_offset_y, main.Camera.canvas_zoom);
     return rl.Vector2.init(screen_position.x - @as(f32, @floatFromInt(player_x)), screen_position.y - @as(f32, @floatFromInt(player_y)));
 }
 
