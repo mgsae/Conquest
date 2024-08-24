@@ -999,7 +999,7 @@ pub const Subcell = struct {
 
     /// Aligns the top left of the rectangle centered on `x`,`y` with the top left of its closest subcell.
     pub fn snapToNode(x: u16, y: u16, width: u16, height: u16) [2]u16 {
-        const snapped_center = Subcell.nodeFromCoordinates(x - width / 2, y - height / 2);
+        const snapped_center = Subcell.nodeFromCoordinates(if (x > width / 2) x - width / 2 else 0, if (y > height / 2) y - height / 2 else 0);
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
     }
 

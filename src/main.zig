@@ -555,7 +555,7 @@ fn draw(profile_frame: bool) void {
     drawMap();
     if (profile_frame) u.endTimer(1, "Drawing map took {} seconds.");
     if (profile_frame) u.startTimer(1, "- Drawing entities.");
-    drawEntities();
+    drawEntities(profile_frame);
     if (profile_frame) u.endTimer(1, "Drawing entities took {} seconds.");
     if (profile_frame) u.startTimer(1, "- Drawing UI.");
     drawInterface();
@@ -595,12 +595,20 @@ pub fn drawMap() void {
 
 }
 
-fn drawEntities() void {
+fn drawEntities(profile_frame: bool) void {
     if (Player.selected == null) {
+        if (profile_frame) u.startTimer(2, "\n- - Drawing resources.");
         for (e.resources.items) |x| x.draw(1);
+        if (profile_frame) u.endTimer(2, "Drawing resources took {} seconds.");
+        if (profile_frame) u.startTimer(2, "- - Drawing units.");
         for (e.units.items) |x| x.draw(1);
+        if (profile_frame) u.endTimer(2, "Drawing units took {} seconds.");
+        if (profile_frame) u.startTimer(2, "- - Drawing structures.");
         for (e.structures.items) |x| x.draw(1);
+        if (profile_frame) u.endTimer(2, "Drawing structures took {} seconds.");
+        if (profile_frame) u.startTimer(2, "- - Drawing players.");
         for (e.players.items) |x| x.draw(1);
+        if (profile_frame) u.endTimer(2, "Drawing players took {} seconds.");
     } else {
         for (e.resources.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
         for (e.units.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
@@ -735,7 +743,7 @@ pub fn moveDivMultiple(life: i16, multiple: i16) bool {
 pub const EnemyPlayerAI = struct {
     player: *e.Player,
 
-    const directions = [8]u8{ 1, 2, 3, 4, 6, 7, 8, 9 };
+    var directions = [8]u8{ 1, 2, 3, 4, 6, 7, 8, 9 };
 
     pub fn initialize(ai: *e.Player) EnemyPlayerAI {
         return EnemyPlayerAI{ .player = ai };
@@ -749,9 +757,12 @@ pub const EnemyPlayerAI = struct {
         // ... Special patterns, e.g. defense, attack
         // ... Special patterns, e.g. defense, attack
         // Default pattern
-        if (tick % move_all < move_all)
+        if (tick % move_all < move_all / 2) // half the time
             continuousMove(ai, tick, move_duration) catch return null;
-        if (tick % 300 == 0) {
+        if (tick % 180 == 0) {
+            // Shuffles direction array
+            u.shuffleArray(u8, &directions);
+
             // Generate a "random" structure class value between 0 and 3
             const class_value = u.asU8(u64, tick / 300 % 4);
             constructBuilding(ai, class_value, tick);

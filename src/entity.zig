@@ -328,7 +328,7 @@ pub const Player = struct {
 
         if (self.local == true) {
             main.Config.game_active = false;
-            std.debug.print("You lost! Exiting game, better luck next time.\n", .{});
+            std.debug.print("\n\nYou lost! Exiting game, better luck next time.\n\n", .{});
         } else { // Goes through owned structures/units and converts owner to id 0 (neutral)
             for (structures.items) |structure| {
                 if (structure.owner == self.id) structure.owner = 0;
@@ -646,14 +646,14 @@ pub const Unit = struct {
 
     }
 
-    /// Returns a world-randomized `Point` within a cell's distance from `position`.
+    /// Returns a world-randomized `Point` within half a cell's distance from `position`.
     fn offsetFromPosition(position: u.Point) u.Point {
-        const x: i16 = @as(i16, @intCast(position.x)) + (u.randomI16(u.Grid.cell_size) - u.Grid.cell_half);
-        const y: i16 = @as(i16, @intCast(position.y)) + (u.randomI16(u.Grid.cell_size) - u.Grid.cell_half);
+        const x: i16 = @as(i16, @intCast(position.x)) + (u.randomI16(u.Grid.cell_half) - u.Grid.cell_half / 2);
+        const y: i16 = @as(i16, @intCast(position.y)) + (u.randomI16(u.Grid.cell_half) - u.Grid.cell_half / 2);
         return u.Point.at(u.mapClampX(x, u.Grid.cell_half), u.mapClampX(y, u.Grid.cell_half));
     }
 
-    /// Calculates and returns the unit's immediate move based on its current `target` and `class` (not implemented yet).
+    /// Calculates and returns the unit's immediate move based on its current `target` and `class`.
     fn getStep(self: *Unit) u.Point {
 
         // Get the current position of unit and overall distance to target
@@ -674,40 +674,40 @@ pub const Unit = struct {
 
             // If within a subcell of the target point, retarget
             if (distance <= u.Subcell.size) {
-                std.debug.print("Reached target directly, retargeting.\n", .{});
+                //std.debug.print("Reached target directly, retargeting.\n", .{});
                 if (self.class != 0) return current; // Non-gatherers, pause to trigger retarget
 
                 // Gatherers, pick up or deliver
                 if (self.state != State.Carrying) { // Gatherers not carrying
-                    std.debug.print("Not carrying, will check for resource to target.\n", .{});
+                    //std.debug.print("Not carrying, will check for resource to target.\n", .{});
                     const resource = u.concentricSearch(&main.World.grid, self.last_step, Entity.isAvailableResource);
                     if (resource) |r| {
                         if (self.entity.isTouching(r)) { // Is at resource, drain it and set carry state
-                            std.debug.print("Is touching resource, will decrease its capacity and set own state to Carrying.\n", .{});
+                            //std.debug.print("Is touching resource, will decrease its capacity and set own state to Carrying.\n", .{});
                             r.ref.Resource.capacity -= 1;
                             self.state = State.Carrying;
                         } else {
-                            std.debug.print("Is not touching resource, will set it to target.\n", .{});
+                            //std.debug.print("Is not touching resource, will set it to target.\n", .{});
                             self.target = u.Point.atEntity(r); // Not at resource, sets to target
                         }
                     } else { // Found no resource, so targets random nearby position
-                        std.debug.print("Found no resource,  so will target random nearby position.\n", .{});
+                        //std.debug.print("Found no resource,  so will target random nearby position.\n", .{});
                         self.target = offsetFromPosition(self.last_step);
                     }
                 } else { // Gatherers already carrying
-                    std.debug.print("Am carrying, will check for class zero building nearby.\n", .{});
+                    //std.debug.print("Am carrying, will check for class zero building nearby.\n", .{});
                     const class_zero_building = u.concentricSearch(&main.World.grid, self.last_step, Entity.isStructureZero);
                     if (class_zero_building) |b| {
                         if (self.entity.isTouching(b)) { // Is at building, increases its capacity by 1
-                            std.debug.print("Is touching building, will increase its capacity and set own state to Default.\n", .{});
+                            //std.debug.print("Is touching building, will increase its capacity and set own state to Default.\n", .{});
                             b.ref.Structure.capacity += 1;
                             self.state = State.Default;
                         } else {
-                            std.debug.print("Is not touching building, will set it to target.\n", .{});
+                            //std.debug.print("Is not touching building, will set it to target.\n", .{});
                             self.target = u.Point.atEntity(b); // Not at building, sets to target
                         }
                     } else { // Found no class zero building, so targets random nearby position
-                        std.debug.print("Found no building,  so will target random nearby position.\n", .{});
+                        //std.debug.print("Found no building,  so will target random nearby position.\n", .{});
                         self.target = offsetFromPosition(self.last_step);
                     }
                 }
@@ -896,10 +896,10 @@ pub const Structure = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = 150, .height = 150, .life = 12000, .restitution = 6.4, .capacity = 4 },
-            1 => Properties{ .width = 100, .height = 100, .life = 8000, .restitution = 11.0, .capacity = 1 },
-            2 => Properties{ .width = 200, .height = 200, .life = 14000, .restitution = 14.0, .capacity = 8 },
-            3 => Properties{ .width = 150, .height = 150, .life = 9000, .restitution = 4.0, .capacity = 5 },
+            0 => Properties{ .width = 150, .height = 150, .life = 12000, .restitution = 8.6, .capacity = 3 },
+            1 => Properties{ .width = 100, .height = 100, .life = 8000, .restitution = 4.0, .capacity = 1 },
+            2 => Properties{ .width = 200, .height = 200, .life = 14000, .restitution = 14.0, .capacity = 6 },
+            3 => Properties{ .width = 150, .height = 150, .life = 9000, .restitution = 11.0, .capacity = 4 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -1065,7 +1065,7 @@ pub const Resource = struct {
     }
 
     pub fn update(self: *Resource) void {
-        _ = self;
+        if (self.capacity <= 0) self.state = State.Depleted;
     }
 
     /// `Structure` property fields determined by `class`.
@@ -1078,7 +1078,7 @@ pub const Resource = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 40 },
+            0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100 },
             1 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 40 },
             2 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 40 },
             3 => Properties{ .width = u.Subcell.size / 3, .height = u.Subcell.size / 3, .capacity = 40 },
