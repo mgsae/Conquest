@@ -1165,22 +1165,22 @@ pub fn mapClampFloatY(y: f32, height: u16) u16 {
 
 /// Searches for `Entity` that satisfies the `condition`, starting with the section at the `origin` point.
 pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.Entity {
-    const origin_col = Grid.x(origin.x);
-    const origin_row = Grid.y(origin.y);
+    const origin_col = asI32(usize, Grid.x(origin.x));
+    const origin_row = asI32(usize, Grid.y(origin.y));
     var closest_entity: ?*e.Entity = null;
     var closest_distance = std.math.inf(f32);
 
     var radius: i32 = 0;
     while (true) {
         var found_any_entity = false;
+        var d: i32 = -radius;
 
-        for (-radius..radius) |d| {
-            // Check the four sides of the square at this radius
+        while (d <= radius) { // Check the four sides of the square at this radius
             const offsets = [4]Point{
-                Point{ .x = origin_col + d, .y = origin_row - radius }, // Top
-                Point{ .x = origin_col + d, .y = origin_row + radius }, // Bottom
-                Point{ .x = origin_col - radius, .y = origin_row + d }, // Left
-                Point{ .x = origin_col + radius, .y = origin_row + d }, // Right
+                Point.fromIntegers(origin_col + d, origin_row - radius), // Top
+                Point.fromIntegers(origin_col + d, origin_row + radius), // Bottom
+                Point.fromIntegers(origin_col - radius, origin_row + d), // Left
+                Point.fromIntegers(origin_col + radius, origin_row + d), // Right
             };
 
             for (&offsets) |offset| {
@@ -1190,7 +1190,7 @@ pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.
                         found_any_entity = true;
                         for (entities.?.items) |entity| {
                             if (condition(entity)) {
-                                const distance = distanceSquared(origin, Point.at(entity.x(), entity.y()));
+                                const distance = asF32(u32, distanceSquared(Point.at(origin.x, origin.y), Point.at(entity.x(), entity.y())));
                                 if (distance < closest_distance) {
                                     closest_entity = entity;
                                     closest_distance = distance;
@@ -1200,6 +1200,7 @@ pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.
                     }
                 }
             }
+            d += 1;
         }
         if (closest_entity != null) return closest_entity; // If found entity in this radius, return the closest one
         if (!found_any_entity) break; // If no entities were found overall, stop searching
@@ -1629,7 +1630,7 @@ pub fn drawLife(x: i32, y: i32, width: i32, life: i32, max_life: i32) void {
     const draw_width = canvasScale(asI32(f32, portion), main.Camera.canvas_zoom);
     const draw_height = canvasScale(10, main.Camera.canvas_zoom);
 
-    rl.drawRectangle(draw_x, draw_y, draw_width, draw_height, rl.Color.white);
+    rl.drawRectangle(draw_x, draw_y, draw_width, draw_height, rl.Color.green);
 }
 
 /// Draws entity life-scaled rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.

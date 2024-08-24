@@ -145,7 +145,7 @@ pub fn main() anyerror!void {
     defer rl.closeWindow(); // Close window and OpenGL context
 
     const flags = rl.ConfigFlags{
-        .fullscreen_mode = false,
+        .fullscreen_mode = true,
         .window_resizable = true,
         .window_undecorated = false, // Removes window border
         .window_transparent = false,
@@ -680,15 +680,13 @@ const Map = struct { // Encapsulates map properties; see World for currently act
     fn defaultResourceLocations(allocator: *std.mem.Allocator, width: u16, height: u16) ![]u.Point {
         const cols = @divTrunc(width, u.Grid.cell_size);
         const rows = @divTrunc(height, u.Grid.cell_size);
-        const total = (cols * rows) * 4;
+        const total = (cols * rows) * 2;
         var slice = try allocator.alloc(u.Point, total);
         var index: usize = 0;
 
         // Base subcell positions (unrotated base pattern)
         const subcell_positions = [_]u.Point{
             u.Point{ .x = 2, .y = 3 },
-            u.Point{ .x = 2, .y = 5 },
-            u.Point{ .x = 9, .y = 3 },
             u.Point{ .x = 9, .y = 5 },
         };
 
@@ -701,7 +699,7 @@ const Map = struct { // Encapsulates map properties; see World for currently act
                 const rotation = (col + row) % 4;
 
                 // Rotate or reflect the base positions based on the rotation value
-                for (0..4) |i| {
+                for (0..2) |i| {
                     const rotated_pos = switch (rotation) {
                         0 => subcell_positions[i], // No rotation
                         1 => u.Point{ .x = subcell_positions[i].y, .y = 10 - subcell_positions[i].x }, // 90 degrees
