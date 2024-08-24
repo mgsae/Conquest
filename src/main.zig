@@ -63,7 +63,7 @@ pub const Player = struct {
 /// World properties, shared state initialized by initializeMap.
 pub const World = struct {
     const DEFAULT_WIDTH = 16000; // 1920 * 8; // Limit for u16 coordinates: 65535
-    const DEFAULT_HEIGHT = 16000; // 1080 * 8; // Limit for u16 coordinates: 65535
+    const DEFAULT_HEIGHT = 10000; // 1080 * 8; // Limit for u16 coordinates: 65535
     pub const GRID_CELL_SIZE = 1000;
     pub const MOVEMENT_DIVISIONS = 10; // Modulus base for unit movement updates
     pub var tick_number: u64 = undefined; // Set upon map initialization
@@ -862,12 +862,11 @@ fn findBuildPosition(class: u8) [2]u16 {
 
     var snapped = u.Subcell.snapToNode(subcell.node.x, subcell.node.y, building.width, building.height);
 
-    if (@rem(@divTrunc((building.width + building.height), 2), u.Subcell.size) != 0) { // If not subcell multiple
-        const mouse_map_pos = u.screenToMap(mouse_position);
-        std.debug.print("building not subcell multiple. mouse map position: {any}, subcell.center: {any}.\n", .{ mouse_map_pos, subcell.center() });
-        if (mouse_map_pos[0] > subcell.center()[0] - 100) snapped[0] += (u.Subcell.size / 2);
-        if (mouse_map_pos[1] > subcell.center()[1] - 100) snapped[1] += (u.Subcell.size / 2);
-    }
+    //if (@rem(@divTrunc((building.width + building.height), 2), u.Subcell.size) != 0) { // If not subcell multiple
+    const mouse_map_pos = u.screenToMap(mouse_position);
+    if (mouse_map_pos[0] > subcell.center()[0] - 100) snapped[0] += (u.Subcell.size / 2);
+    if (mouse_map_pos[1] > subcell.center()[1] - 100) snapped[1] += (u.Subcell.size / 2);
+    //}
 
     return [2]u16{ snapped[0], snapped[1] };
 }
