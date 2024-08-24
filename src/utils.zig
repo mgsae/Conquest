@@ -73,7 +73,7 @@ pub fn frameAdjusted(float: f32) f32 {
 //----------------------------------------------------------------------------------
 pub const Predicate = fn (entity: *e.Entity) bool; // Function pointer to an entity
 
-pub const UnitPredicate = fn (self: *e.Unit, entity: *e.Entity) bool; // Function pointer to unit, entity
+pub const Relation = fn (self: *e.Entity, other: *e.Entity) bool; // Function pointer to entity, entity
 
 pub fn isUnit(entity: *e.Entity) bool {
     return entity.kind == e.Kind.Unit;
@@ -541,6 +541,13 @@ pub const Point = struct {
         self.y = mapClampY(shifted_y, 1);
     }
 
+    pub fn getCircumference(self: Point, radius: u8) Circle {
+        return Circle{
+            .center = self,
+            .radius = radius,
+        };
+    }
+
     /// Returns the Grid columns and rows in which the point is located.
     pub fn getCellCoordinates(self: *Point) [2]usize {
         return [2]usize{ Grid.x(self.x), Grid.y(self.y) };
@@ -551,6 +558,91 @@ pub const Point = struct {
         return Subcell.at(self.x, self.y);
     }
 };
+
+pub const Circle = struct {
+    center: Point,
+    radius: u16,
+
+    pub fn at(center: Point, radius: u16) Circle {
+        return Circle{
+            .center = center,
+            .radius = radius,
+        };
+    }
+
+    pub fn atCoords(x: u16, y: u16, radius: u16) Circle {
+        return Circle{
+            .center = Point.at(x, y),
+            .radius = radius,
+        };
+    }
+
+    pub fn atIntegers(x: i32, y: i32, radius: u16) Circle {
+        return Circle{
+            .center = Point.fromIntegers(x, y),
+            .radius = radius,
+        };
+    }
+
+    pub fn contains(self: Circle, point: Point) bool {
+        return distanceSquared(self.center, point) <= (self.radius * self.radius);
+    }
+
+    /// Returns a circle centered on a rectangle whose radius represents the average distance from the rectangle's center to its edges.
+    pub fn atRect(center: Point, width: u16, height: u16) Circle {
+        return Circle{
+            .center = center,
+            .radius = if (width > u16max - height) u16max else (width + height) / 4,
+        };
+    }
+
+    /// Returns a circle centered on `x`,`y` whose diameter equals the rectangle diagonal.
+    pub fn encompass(x: u16, y: u16, width: u16, height: u16) Circle {
+        const width_sq = if (width > u16max / width) u16max else width * width;
+        const height_sq = if (height > u16max / height) u16max else height * height;
+        const sum_squares = if (width_sq > u16max - height_sq) u16max else width_sq + height_sq;
+        const diagonal = fastSqrt(asF32(u16, sum_squares));
+        return Circle{
+            .center = Point.at(x, y),
+            .radius = asU16(f32, diagonal / 2.0),
+        };
+    }
+
+    /// Returns a circle centered on `x`,`y` whose diameter equals the rectangle diagonal, plus buffer.
+    pub fn around(x: u16, y: u16, width: u16, height: u16, buffer: u16) Circle {
+        const width_sq = if (width > u16max / width) u16max else width * width;
+        const height_sq = if (height > u16max / height) u16max else height * height;
+        const sum_squares = if (width_sq > u16max - height_sq) u16max else width_sq + height_sq;
+        const diagonal = fastSqrt(asF32(u16, sum_squares));
+        return Circle{
+            .center = Point.at(x, y),
+            .radius = asU16(f32, diagonal / 2.0) + buffer,
+        };
+    }
+
+    /// Returns a circle centered on an entity whose radius represents the average distance from the entity's center to its edges.
+    pub fn atEntity(entity: *e.Entity) Circle {
+        return atRect(Point.atEntity(entity), entity.width(), entity.height());
+    }
+
+    /// Returns a circle centered on an entity whose diameter equals the rectangle diagonal.
+    pub fn encompassEntity(entity: *e.Entity) Circle {
+        return encompass(entity.x(), entity.y(), entity.width(), entity.height());
+    }
+
+    /// Returns a circle centered on an entity whose radius equals the distance from the entity's center to its corners, plus buffer.
+    pub fn aroundEntity(entity: *e.Entity, buffer: u16) Circle {
+        return around(entity.x(), entity.y(), entity.width(), entity.height(), buffer);
+    }
+};
+
+// Returns half the diagonal length, which is the "reach" from the center to the furthest point (corner).
+pub fn reachFromRect(width: u16, height: u16) u16 {
+    const width_sq = if (width > u16max / width) u16max else width * width;
+    const height_sq = if (height > u16max / height) u16max else height * height;
+    const sum_squares = if (width_sq > u16max - height_sq) u16max else width_sq + height_sq;
+    return asU16(f32, fastSqrt(asF32(u16, sum_squares)) / 2);
+}
 
 pub fn deltaXy(x1: u16, y1: u16, x2: u16, y2: u16) [2]i16 {
     return [2]i16{ @as(i16, @intCast(x1)) - @as(i16, @intCast(x2)), @as(i16, @intCast(y1)) - @as(i16, @intCast(y2)) };
@@ -784,6 +876,7 @@ pub fn fastSqrt(number: f32) f32 {
 pub const Grid = struct {
     pub const cell_size = main.World.GRID_CELL_SIZE;
     pub const cell_half: comptime_int = cell_size / 2;
+    pub const cell_size_squared = Grid.cell_size * Grid.cell_size;
 
     pub inline fn section() [9][2]i16 {
         return [_][2]i16{
@@ -1041,7 +1134,7 @@ pub const Waypoint: type = struct {
         }
     }
 
-    pub fn closestTowards(current: Point, target: Point, total_distance: u32, previous_step: Point) Point {
+    pub fn closestTowards(current: Point, target: Point, total_distance_squared: u32, previous_step: Point) Point {
         const current_cell_center = Grid.cellCenter(current.x, current.y);
         var closest_grid_x = Grid.x(current_cell_center.x);
         var closest_grid_y = Grid.y(current_cell_center.y);
@@ -1058,7 +1151,7 @@ pub const Waypoint: type = struct {
         const dy = @as(i32, target.y) - @as(i32, current.y);
 
         var best_waypoint: ?Point = null;
-        var best_distance = total_distance;
+        var best_distance_squared = total_distance_squared; // Using squared since only comparison is needed
         var best_biased_alignment: f32 = 0;
 
         // Bias factor to discourage oscillation
@@ -1081,17 +1174,17 @@ pub const Waypoint: type = struct {
             const biased_alignment = if (prev_alignment > 0) alignment * bias_factor else alignment;
 
             if (biased_alignment >= 0) {
-                const wp_to_target = distanceSquared(wp, target);
-                const current_to_wp = distanceSquared(current, wp);
-                const new_distance = current_to_wp + wp_to_target;
+                const wp_to_target_squared = distanceSquared(wp, target);
+                const current_to_wp_squared = distanceSquared(current, wp);
+                const new_distance_squared = current_to_wp_squared + wp_to_target_squared;
 
                 // Compare both distance and biased alignment
-                if (best_waypoint == null or (new_distance < best_distance) or (new_distance == best_distance and biased_alignment > best_biased_alignment)) {
-                    best_distance = new_distance;
+                if (best_waypoint == null or (new_distance_squared < best_distance_squared) or (new_distance_squared == best_distance_squared and biased_alignment > best_biased_alignment)) {
+                    best_distance_squared = new_distance_squared;
                     best_biased_alignment = biased_alignment;
                     best_waypoint = wp;
-                } else if (new_distance == best_distance and biased_alignment == best_biased_alignment) {
-                    // Tie-breaking using lexicographical ordering if distance and alignment are the same
+                } else if (new_distance_squared == best_distance_squared and biased_alignment == best_biased_alignment) {
+                    // If distance and alignment are the same, tie-breaks using lexicographical ordering
                     if (wp.x < best_waypoint.?.x or (wp.x == best_waypoint.?.x and wp.y < best_waypoint.?.y)) {
                         best_waypoint = wp;
                     }
@@ -1210,10 +1303,10 @@ pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.
     return null; // If no entity was found after the entire search
 }
 
-/// Searches for `Entity` that satisfies the `condition`, starting with the section at the `origin` `Unit`. Returns pointer to first `Entity` found, or `null`.
-pub fn unitConcentricSearch(grid: *e.Grid, origin: *e.Unit, condition: UnitPredicate) ?*e.Entity {
-    const origin_col = asI32(usize, Grid.x(origin.x));
-    const origin_row = asI32(usize, Grid.y(origin.y));
+/// Searches for `Entity` that satisfies the `relation` to `origin` `Entity`. Returns pointer to nearest `Entity` found, or `null`.
+pub fn concentricRelationalSearch(grid: *e.Grid, origin: *e.Entity, relation: Relation) ?*e.Entity {
+    const origin_col = asI32(usize, Grid.x(origin.x()));
+    const origin_row = asI32(usize, Grid.y(origin.y()));
     var closest_entity: ?*e.Entity = null;
     var closest_distance = std.math.inf(f32);
 
@@ -1237,8 +1330,8 @@ pub fn unitConcentricSearch(grid: *e.Grid, origin: *e.Unit, condition: UnitPredi
                     if (entities != null) {
                         found_any_entity = true;
                         for (entities.?.items) |entity| {
-                            if (condition(origin, entity)) {
-                                const distance = asF32(u32, distanceSquared(Point.at(origin.x, origin.y), Point.at(entity.x(), entity.y())));
+                            if (relation(origin, entity)) { // Check if relation holds
+                                const distance = asF32(u32, distanceSquared(Point.at(origin.x(), origin.y()), Point.at(entity.x(), entity.y())));
                                 if (distance < closest_distance) {
                                     closest_entity = entity;
                                     closest_distance = distance;
@@ -1257,6 +1350,28 @@ pub fn unitConcentricSearch(grid: *e.Grid, origin: *e.Unit, condition: UnitPredi
     }
 
     return null; // If no entity was found after the entire search
+}
+
+/// Searches for `Structure` connected to `origin` `Structure`. Returns slice of any `Structure` found, or `null`.
+pub fn findConnectedStructures(grid: *e.Grid, origin: *e.Structure) !?[]*e.Structure {
+    const origin_col = Grid.x(origin.x);
+    const origin_row = Grid.y(origin.y);
+    const entities: ?*std.ArrayList(*e.Entity) = grid.sectionEntities(origin_col, origin_row);
+    var structures = std.ArrayList(*e.Structure).init(grid.allocator.*);
+    defer structures.deinit();
+
+    if (entities) |entitylist| {
+        for (entitylist.items) |entity| {
+            if (entity.kind == e.Kind.Structure and e.Entity.isTouching(origin.entity, entity)) {
+                try structures.append(entity.ref.Structure);
+            }
+        }
+    }
+    if (structures.items.len > 0) {
+        return try structures.toOwnedSlice(); // Converts the ArrayList to a slice
+    } else {
+        return null;
+    }
 }
 
 // AI
@@ -1611,9 +1726,9 @@ pub fn drawCircle(x: i32, y: i32, radius: f32, col: rl.Color) void {
 }
 
 /// Uses raylib to draw a circumference scaled and positioned to canvas.
-pub fn drawCircumference(x: i32, y: i32, radius: f32, col: rl.Color) void {
-    const scale = asF32(i32, canvasScale(asI32(f32, radius), main.Camera.canvas_zoom));
-    rl.drawCircleLines(canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), scale, col);
+pub fn drawCircumference(circle: Circle, col: rl.Color) void {
+    const scale = asF32(i32, canvasScale(circle.radius, main.Camera.canvas_zoom));
+    rl.drawCircleLines(canvasX(circle.center.x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(circle.center.y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), scale, col);
 }
 
 /// Draws entity life-scaled rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
@@ -1639,6 +1754,23 @@ pub fn drawLifeInterpolated(x: i32, y: i32, width: i32, life: i32, max_life: i32
     drawLife(interp_xy[0], interp_xy[1], width, life, max_life);
 }
 
+/// Draws structure capacity-scaled rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
+pub fn drawCapacity(x: i32, y: i32, width: i32, height: i32, capacity: i32, max_capacity: i32) void {
+    if (capacity <= 0 or max_capacity <= 0) return; // Don't draw if capacity or max_capacity is invalid
+
+    // Calculate portion based on life ratio
+    const capacity_ratio = asF32(i32, @min(max_capacity, capacity)) / asF32(i32, max_capacity);
+    const portion = asF32(i32, width) * capacity_ratio;
+
+    // Calculate positions and scaling
+    const draw_x = canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom);
+    const draw_y = canvasY(y + (@divTrunc(height, 2) - 10), main.Camera.canvas_offset_y, main.Camera.canvas_zoom);
+    const draw_width = canvasScale(asI32(f32, portion), main.Camera.canvas_zoom);
+    const draw_height = canvasScale(10, main.Camera.canvas_zoom);
+
+    rl.drawRectangle(draw_x, draw_y, draw_width, draw_height, rl.Color.dark_gray);
+}
+
 /// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawEntity(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(width, main.Camera.canvas_zoom), canvasScale(height, main.Camera.canvas_zoom), col);
@@ -1653,7 +1785,7 @@ pub fn drawEntityInterpolated(x: i32, y: i32, width: i32, height: i32, col: rl.C
 /// Draws rectangle and build radius centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawPlayer(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     drawEntity(x, y, width, height, col);
-    drawCircumference(x, y, Grid.cell_half, opacity(col, 0.25));
+    drawCircumference(Circle.atIntegers(x, y, Grid.cell_half), opacity(col, 0.25));
 }
 
 pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, boneColor: rl.Color) void {

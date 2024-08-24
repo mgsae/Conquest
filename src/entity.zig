@@ -88,6 +88,15 @@ pub const Entity = struct {
         };
     }
 
+    pub fn owner(self: *Entity) u8 {
+        return switch (self.kind) {
+            Kind.Player => self.ref.Player.id,
+            Kind.Unit => self.ref.Unit.owner,
+            Kind.Structure => self.ref.Structure.owner,
+            Kind.Resource => 0, // Let's say resource owner is 0 (neutral)
+        };
+    }
+
     pub fn speed(self: *Entity) f16 {
         return switch (self.kind) {
             Kind.Player => self.ref.Player.speed,
@@ -98,6 +107,10 @@ pub const Entity = struct {
 
     pub fn inRangeOf(self: *Entity, target: *Entity, range: f32) bool {
         return u.isInRange(self, target, range);
+    }
+
+    pub fn reach(self: *Entity) u16 {
+        return u.reachFromRect(self.width(), self.height());
     }
 
     /// Returns the bigger of two entities, or null if same size.
@@ -123,9 +136,18 @@ pub const Entity = struct {
         return false;
     }
 
-    pub fn isStructureZero(entity: *Entity) bool {
-        if (entity.kind == Kind.Structure) return entity.ref.Structure.class == 0;
+    pub fn isOwnStructure(self: *Entity, other: *Entity) bool {
+        if (other.kind == Kind.Structure) return other.ref.Structure.owner == self.owner();
         return false;
+    }
+
+    pub fn isEnemy(self: *Entity, other: *Entity) bool {
+        return switch (other.kind) {
+            Kind.Unit => other.ref.Unit.owner != self.owner(),
+            Kind.Structure => other.ref.Structure.owner != self.owner(),
+            Kind.Player => other.ref.Player.id != self.owner(),
+            else => false, // Resources are not enemies
+        };
     }
 
     pub fn playerFromId(id: u8) ?*Player {
@@ -359,7 +381,7 @@ pub const Unit = struct {
     x: u16,
     y: u16,
     life: i16,
-    target: u.Point,
+    target: u.Circle,
     last_step: u.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
     model: *u.Model,
@@ -384,7 +406,7 @@ pub const Unit = struct {
         }
         // If selected by player, draws target circumference with half alpha
         if (main.Player.selected == self.entity) {
-            u.drawCircumference(self.target.x, self.target.y, 100, self.entity.color(alpha / 2));
+            u.drawCircumference(self.target, self.entity.color(alpha / 2));
         }
 
         u.drawLifeInterpolated(self.x, self.y, preset(self.class).width, self.life, preset(self.class).life, self.last_step, self.life);
@@ -471,11 +493,11 @@ pub const Unit = struct {
 
         if (old_x == self.x and old_y == self.y) { // If no change after moving, retargets
             if (main.moveDivMultiple(self.life, 2)) { // Alternating between random point and trying to head towards player again
-                self.target = offsetFromPosition(self.last_step); // Random nearby offset
+                self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size); // Random nearby offset
 
             } else { // Tries heading towards player/resource again
                 if (self.class != 0) { // Non-gatherers
-                    self.target = findTarget(self.owner, self.last_step);
+                    self.target = findTarget(self.owner, self.last_step, self.entity.reach());
                 }
             }
             return;
@@ -578,9 +600,9 @@ pub const Unit = struct {
                 moved_distance = pushed(obstacle_unit, angle, @min(distance, distance * u.sizeFactor(self.width(), self.height(), obstacle_unit.width(), obstacle_unit.height())));
                 const push_delta_xy = u.vectorToDelta(angle, moved_distance);
                 const push_new_x = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + push_delta_xy[0]));
-                const push_new_yY = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + push_delta_xy[1]));
+                const push_new_y = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + push_delta_xy[1]));
 
-                self.move(push_new_x, push_new_yY) catch return 0; // Re-checks for collision and updates grid here
+                self.move(push_new_x, push_new_y) catch return 0; // Re-checks for collision and updates grid here
             }
         } else {
             //std.debug.print("Pushee collided with a non-unit: {}\n", .{obstacle.?});
@@ -605,12 +627,12 @@ pub const Unit = struct {
     pub fn retarget(self: *Unit) bool {
         const prev_target = self.target;
 
-        self.target = findTarget(self.owner, self.target); // Closest enemy player to its target, or random nearby point
-        return prev_target.x != self.target.x or prev_target.y != self.target.y;
+        self.target = findTarget(self.owner, self.target.center, self.entity.reach()); // Closest enemy player to its target, or random nearby point
+        return prev_target.center.x != self.target.center.x or prev_target.center.y != self.target.center.y;
     }
 
     /// Returns the position of the closest enemy player. Returns random nearby point if none.
-    pub fn findTarget(owner: u8, position: u.Point) u.Point {
+    pub fn findTarget(owner: u8, position: u.Point, reach: u16) u.Circle {
         var closest_player: ?*Player = null;
         var closest_distance: f32 = std.math.inf(f32);
 
@@ -623,12 +645,12 @@ pub const Unit = struct {
             }
         }
 
-        if (closest_player != null) return u.Point.at(closest_player.?.x, closest_player.?.y);
-        return offsetFromPosition(position); // Returns random nearby point
+        if (closest_player != null) return u.Circle.aroundEntity(closest_player.?.entity, reach);
+        return u.Circle.at(offsetFromPosition(position), u.Subcell.size); // Returns random nearby circle
     }
 
     /// Returns the position of the closest non-depleted `Resource`. Returns random nearby point if none.
-    pub fn findResource(position: u.Point) u.Point {
+    pub fn findResource(position: u.Point, reach: u16) u.Circle {
         var closest_resource: ?*Resource = null;
         var closest_distance: f32 = std.math.inf(f32);
 
@@ -641,8 +663,8 @@ pub const Unit = struct {
             }
         }
 
-        if (closest_resource != null) return u.Point.at(closest_resource.?.x, closest_resource.?.y);
-        return offsetFromPosition(position); // Returns random nearby point
+        if (closest_resource != null) return u.Circle.aroundEntity(closest_resource.?.entity, reach);
+        return u.Circle.at(offsetFromPosition(position), u.Subcell.size); // Returns random nearby circle
 
     }
 
@@ -664,20 +686,19 @@ pub const Unit = struct {
             return current;
         }
 
-        var distance = u.fastSqrt(u.asF32(u32, u.distanceSquared(current, self.target)));
+        var distance_squared = u.distanceSquared(current, self.target.center);
 
-        // Check if within cell of target
-        if (distance <= u.Grid.cell_size) {
+        // Check if within a cell's distance of target
+        if (distance_squared <= u.Grid.cell_size_squared) {
             // std.debug.print("Within target cell at {},{}. Target is at {},{}.\n", .{ self.x, self.y, self.target.x, self.target.y });
-            const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(self.target.x));
-            const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(self.target.y));
+            const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(self.target.center.x));
+            const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(self.target.center.y));
 
-            // If within a subcell of the target point, retarget
-            if (distance <= u.Subcell.size) {
-                //std.debug.print("Reached target directly, retargeting.\n", .{});
+            // If within perimeter of the target point, retarget
+            if (self.target.contains(u.Point.at(self.x, self.y))) {
                 if (self.class != 0) return current; // Non-gatherers, pause to trigger retarget
 
-                // Gatherers, pick up or deliver
+                // Gatherers, check whether pick up or deliver
                 if (self.state != State.Carrying) { // Gatherers not carrying
                     //std.debug.print("Not carrying, will check for resource to target.\n", .{});
                     const resource = u.concentricSearch(&main.World.grid, self.last_step, Entity.isAvailableResource);
@@ -688,33 +709,34 @@ pub const Unit = struct {
                             self.state = State.Carrying;
                         } else {
                             //std.debug.print("Is not touching resource, will set it to target.\n", .{});
-                            self.target = u.Point.atEntity(r); // Not at resource, sets to target
+                            self.target = u.Circle.aroundEntity(r, self.entity.reach()); // Not at resource, sets to target
                         }
                     } else { // Found no resource, so targets random nearby position
                         //std.debug.print("Found no resource,  so will target random nearby position.\n", .{});
-                        self.target = offsetFromPosition(self.last_step);
+                        self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
                     }
                 } else { // Gatherers already carrying
-                    //std.debug.print("Am carrying, will check for class zero building nearby.\n", .{});
-                    const class_zero_building = u.concentricSearch(&main.World.grid, self.last_step, Entity.isStructureZero);
-                    if (class_zero_building) |b| {
+                    //std.debug.print("Am carrying, will check for own building nearby.\n", .{});
+                    const own_building = u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure);
+                    if (own_building) |b| {
                         if (self.entity.isTouching(b)) { // Is at building, increases its capacity by 1
                             //std.debug.print("Is touching building, will increase its capacity and set own state to Default.\n", .{});
                             b.ref.Structure.capacity += 1;
                             self.state = State.Default;
                         } else {
                             //std.debug.print("Is not touching building, will set it to target.\n", .{});
-                            self.target = u.Point.atEntity(b); // Not at building, sets to target
+                            self.target = u.Circle.aroundEntity(b, self.entity.reach()); // Not at building, sets to target
                         }
-                    } else { // Found no class zero building, so targets random nearby position
+                    } else { // Found no own building, so targets random nearby position
                         //std.debug.print("Found no building,  so will target random nearby position.\n", .{});
-                        self.target = offsetFromPosition(self.last_step);
+                        self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
                     }
                 }
-                distance = u.fastSqrt(u.asF32(u32, u.distanceSquared(current, self.target)));
+                distance_squared = u.distanceSquared(current, self.target.center); // Recalculates
             }
 
             // Otherwise go directly towards the target
+            const distance = u.fastSqrt(u.asF32(u32, distance_squared)); // Computes actual distance to ensure arrival
             const angle = u.deltaToAngle(dx, dy);
             const magnitude = @min(self.speed(), distance);
             const vector = u.vectorToDelta(angle, magnitude);
@@ -722,7 +744,7 @@ pub const Unit = struct {
             //
         } else { // If farther than a subcell away, move by waypoints towards the target
 
-            const waypoint = u.Waypoint.closestTowards(current, self.target, u.asU32(f32, distance), self.last_step);
+            const waypoint = u.Waypoint.closestTowards(current, self.target.center, distance_squared, self.last_step);
             const magnitude = u.adjustToDistance(current, waypoint, self.speed(), self.speed());
             // Get the offset from the upcoming waypoint
             const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(waypoint.x));
@@ -737,7 +759,7 @@ pub const Unit = struct {
 
     /// Does a concentric search for an enemy.
     fn getAttackTarget(self: *Unit) ?*Entity {
-        const found_entity = u.unitConcentricSearch(&main.World.grid, self, isEnemy);
+        const found_entity = u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isEnemy);
         if (found_entity != null and self.entity.inRangeOf(found_entity.?, range(self))) return found_entity;
         return null;
     }
@@ -758,13 +780,6 @@ pub const Unit = struct {
         return true;
     }
 
-    pub fn isEnemy(self: *Unit, entity: *Entity) bool {
-        if (entity.kind == Kind.Unit) return entity.ref.Unit.owner != self.owner;
-        if (entity.kind == Kind.Structure) return entity.ref.Structure.owner != self.owner;
-        if (entity.kind == Kind.Player) return entity.ref.Player.id != self.owner;
-        return false;
-    }
-
     pub fn create(owner: u8, x: u16, y: u16, class: u8) !*Unit {
         const entity = try main.World.grid.allocator.create(Entity); // Memory for the parent entity
         const unit = try main.World.grid.allocator.create(Unit); // Memory for unit
@@ -780,7 +795,7 @@ pub const Unit = struct {
             .model = try u.Model.createChain(main.World.grid.allocator, 3, start_point, 12), // do from_class
             .x = x,
             .y = y,
-            .target = if (class == 0) findResource(start_point) else findTarget(owner, start_point),
+            .target = if (class == 0) findResource(start_point, u.reachFromRect(from_class.width, from_class.height)) else findTarget(owner, start_point, u.reachFromRect(from_class.width, from_class.height)),
             .last_step = start_point,
             .cached_cellsigns = [_]u32{0} ** 9,
             .projectiles = projectiles,
@@ -882,6 +897,9 @@ pub const Structure = struct {
     pub fn draw(self: *Structure, alpha: f32) void {
         if (self.state == State.Destroyed) return;
         u.drawEntity(self.x, self.y, self.width(), self.height(), self.entity.color(alpha));
+
+        u.drawLife(self.x, self.y, preset(self.class).width, self.life, preset(self.class).life);
+        u.drawCapacity(self.x, self.y, preset(self.class).width, preset(self.class).height, self.capacity, preset(self.class).capacity);
     }
 
     /// `Structure` property fields determined by `class`.
@@ -916,8 +934,20 @@ pub const Structure = struct {
                 } else |err| {
                     std.debug.print("Failed to spawn unit: {}. May want some sort of indication.\n", .{err});
                 }
+                if (self.capacity > 0) { // Overflow capacity transfer to connected buildings
+                    const connected = u.findConnectedStructures(&main.World.grid, self) catch null;
+                    if (connected) |buildings| {
+                        for (buildings) |building| {
+                            if (self.capacity > building.capacity) {
+                                building.capacity += 1;
+                                self.capacity -= 1;
+                            } else { // Breaks on first neighbor with higher capacity
+                                break;
+                            }
+                        }
+                    }
+                }
             }
-            // Regeneration?
         }
         if (self.life <= 0) self.destroy();
     }
