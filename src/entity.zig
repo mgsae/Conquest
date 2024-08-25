@@ -399,11 +399,17 @@ pub const Unit = struct {
     pub fn draw(self: *Unit, alpha: f32) void {
         if (self.state == State.Dead) return;
         // Draws model
-        if (self.class == 0) { // Testing model for class 0, but expand to all
-            u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
-        } else { // Fallback to the previous method for other classes
-            u.drawEntityInterpolated(self.x, self.y, self.width(), self.height(), self.entity.color(alpha), self.last_step, self.life);
-        }
+        u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
+
+        //if (self.class == 0) { // Testing model for class 0, but expand to all
+        //    if (self.state == State.Carrying) {
+        //        u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
+        //    } else { // change model if carrying
+        //        u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
+        //    }
+        //} else { // Fallback to the previous method for other classes
+        //    u.drawEntityInterpolated(self.x, self.y, self.width(), self.height(), self.entity.color(alpha), self.last_step, self.life);
+        //}
         // If selected by player, draws target circumference with half alpha
         if (main.Player.selected == self.entity) {
             u.drawCircumference(self.target, self.entity.color(alpha / 2));
@@ -424,10 +430,10 @@ pub const Unit = struct {
         }
 
         // Updating model
-        if (self.class == 0) { // Model for class 0 (gathering wyrm)
-            const factor = u.Interpolation.getFactor(self.life, main.World.MOVEMENT_DIVISIONS);
-            self.model.updateRigidBodyInterpolated(0, u.Vector.fromPoint(self.last_step), u.Vector.fromCoords(self.x, self.y), factor);
-        }
+        //if (self.class == 0) { // Model for class 0 (gathering wyrm)
+        const factor = u.Interpolation.getFactor(self.life, main.World.MOVEMENT_DIVISIONS);
+        self.model.updateRigidBodyInterpolated(0, u.Vector.fromPoint(self.last_step), u.Vector.fromCoords(self.x, self.y), factor);
+        //}
 
         // Updating movement/action (every 10 ticks)
         if (main.moveDivision(self.life)) {
@@ -792,7 +798,7 @@ pub const Unit = struct {
             .owner = owner,
             .class = class,
             .life = from_class.life,
-            .model = try u.Model.createChain(main.World.grid.allocator, 3, start_point, 12), // do from_class
+            .model = try u.Model.createChain(main.World.grid.allocator, 3 + class, start_point, 12 + u.asF32(u8, class)),
             .x = x,
             .y = y,
             .target = if (class == 0) findResource(start_point, u.reachFromRect(from_class.width, from_class.height)) else findTarget(owner, start_point, u.reachFromRect(from_class.width, from_class.height)),
@@ -941,9 +947,8 @@ pub const Structure = struct {
                             if (self.capacity > building.capacity) {
                                 building.capacity += 1;
                                 self.capacity -= 1;
-                            } else { // Breaks on first neighbor with higher capacity
-                                break;
                             }
+                            if (self.capacity <= 0) break;
                         }
                     }
                 }

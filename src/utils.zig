@@ -1134,6 +1134,7 @@ pub const Waypoint: type = struct {
         }
     }
 
+    /// Finds the waypoint most aligned with `target` from the `current` point.
     pub fn closestTowards(current: Point, target: Point, total_distance_squared: u32, previous_step: Point) Point {
         const current_cell_center = Grid.cellCenter(current.x, current.y);
         var closest_grid_x = Grid.x(current_cell_center.x);
@@ -1797,11 +1798,12 @@ pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, b
             drawLineEx(joint.position, connected_joint.position, asI32(f32, thickness), boneColor);
         }
     }
-    for (model.joints, 0..) |joint, j| { // Draw each joint as a circle
-        const thickness = asF32(u16, max_thickness) * (1 - 0.5 * (asF32(usize, j) / asF32(usize, model.joints.len - 1)));
-        const x = asI32(f32, joint.position.x);
-        const y = asI32(f32, joint.position.y);
-        drawCircle(x, y, thickness * 1.5, jointColor);
+    for (model.joints, 0..) |joint, j| { // Draw each joint
+        const w = asI32(usize, width / (j + 1));
+        const h = asI32(usize, height / (j + 1));
+        const x = asI32(f32, joint.position.x) - @divTrunc(w, 2);
+        const y = asI32(f32, joint.position.y) - @divTrunc(h, 2);
+        drawRect(x, y, w, h, jointColor);
     }
 }
 
@@ -1820,9 +1822,9 @@ pub fn drawModelInterpolated(model: *Model, jointRadius: f32, jointColor: rl.Col
             rl.drawLineEx(canvasX(x1, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y1, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasX(x2, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y2, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), 10, boneColor);
         }
     }
-    for (model.joints) |joint| { // Draw joints as circles
+    for (model.joints) |joint| { // Draw joints
         const x = asI32(f32, joint.position.x + offset[0]);
         const y = asI32(f32, joint.position.y + offset[1]);
-        drawCircle(x, y, jointRadius, jointColor);
+        drawRect(x, y, jointRadius, jointRadius, jointColor);
     }
 }
