@@ -430,10 +430,8 @@ pub const Unit = struct {
         }
 
         // Updating model
-        //if (self.class == 0) { // Model for class 0 (gathering wyrm)
         const factor = u.Interpolation.getFactor(self.life, main.World.MOVEMENT_DIVISIONS);
         self.model.updateRigidBodyInterpolated(0, u.Vector.fromPoint(self.last_step), u.Vector.fromCoords(self.x, self.y), factor);
-        //}
 
         // Updating movement/action (every 10 ticks)
         if (main.moveDivision(self.life)) {
@@ -793,12 +791,21 @@ pub const Unit = struct {
         projectiles.* = std.ArrayList(*Projectile).init(main.World.grid.allocator.*);
         const from_class = Unit.preset(class);
         const start_point = u.Point.at(x, y);
+
+        var model: *u.Model = undefined;
+
+        // Determine if this unit should have legs
+        model = try u.Model.createChain(main.World.grid.allocator, 3 + class, start_point, 12 + u.asF32(u8, class));
+        if (class > 0) {
+            try u.Legs.attach(main.World.grid.allocator, model, 4, 10.0); // Assuming 4 legs with 10.0 length
+        }
+
         unit.* = Unit{
             .entity = entity,
             .owner = owner,
             .class = class,
             .life = from_class.life,
-            .model = try u.Model.createChain(main.World.grid.allocator, 3 + class, start_point, 12 + u.asF32(u8, class)),
+            .model = model,
             .x = x,
             .y = y,
             .target = if (class == 0) findResource(start_point, u.reachFromRect(from_class.width, from_class.height)) else findTarget(owner, start_point, u.reachFromRect(from_class.width, from_class.height)),
@@ -862,6 +869,10 @@ pub const Unit = struct {
             3 => Properties{ .speed = 2, .width = 35, .height = 35, .life = 7000, .range = 250, .attackrate = 8 },
             else => @panic("Invalid unit class"),
         };
+    }
+
+    pub fn hasLegs(self: *Unit) bool {
+        return self.class > 0;
     }
 
     pub fn speed(self: *Unit) f16 {

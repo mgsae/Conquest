@@ -1521,8 +1521,15 @@ const Joint = struct {
     distances: []f32, // Array of distances to each connected joint
 };
 
+const Leg = struct {
+    upper_joint: Joint,
+    lower_joint: Joint,
+    is_moving_forward: bool,
+};
+
 pub const Model = struct {
     joints: []Joint, // Array of joints in the model
+    legs: ?*Legs, // Optional pointer to legs
 
     pub fn new(joints: []Joint) Model {
         return Model{
@@ -1617,6 +1624,10 @@ pub const Model = struct {
         anchor_joint.position.y = previous_position.y + ((1 - interpolation_factor) * (new_anchor_position.y - previous_position.y));
         // Calls the regular update
         updateRigidBody(self, anchor_index, anchor_joint.position);
+        // If model has legs, update them
+        if (self.legs) |legs| {
+            legs.updateLegMovement(interpolation_factor);
+        }
     }
 
     /// Creates a snake-like model with the specified number of joints starting from an initial position and with a specified distance between joints.
@@ -1660,6 +1671,7 @@ pub const Model = struct {
         const model = try allocator.create(Model);
         model.* = Model{
             .joints = joints,
+            .legs = null, // Has no legs
         };
 
         return model;
@@ -1673,6 +1685,62 @@ pub const Model = struct {
         if (elbow_direction_sign == 0) elbow_direction_sign = 1;
 
         return Vector.fromFloats(1 * elbow_angle_relative + local_end_affector.angle(), l1);
+    }
+};
+
+pub const Legs = struct {
+    legs: []Leg, // Array of legs
+
+    pub fn updateLegMovement(self: *Legs, interpolation_factor: f32) void {
+        // Logic for updating leg movement
+        for (self.legs) |*leg| {
+            if (leg.is_moving_forward) {
+                leg.lower_joint.position.x += interpolation_factor;
+            } else {
+                leg.lower_joint.position.x -= interpolation_factor;
+            }
+
+            if (interpolation_factor >= 1.0) {
+                leg.is_moving_forward = !leg.is_moving_forward;
+            }
+        }
+    }
+
+    pub fn attach(allocator: *std.mem.Allocator, model: *Model, leg_count: usize, leg_length: f32) !void {
+        var legs = try allocator.alloc(Leg, leg_count);
+
+        const joint_spacing = @divTrunc(model.joints.len, leg_count);
+
+        for (0..leg_count) |i| {
+            const upper_joint = model.joints[i * joint_spacing];
+
+            var lower_joint_position = upper_joint.position;
+            lower_joint_position.y -= leg_length; // Legs extend downwards
+
+            // Allocate memory for connected_joints and distances
+            var connected_joints = try allocator.alloc(usize, 1);
+            connected_joints[0] = i * joint_spacing;
+
+            var distances = try allocator.alloc(f32, 1);
+            distances[0] = leg_length;
+
+            legs[i] = Leg{
+                .upper_joint = upper_joint, // Reference the upper joint directly
+                .lower_joint = Joint{
+                    .position = lower_joint_position,
+                    .connected_joints = connected_joints, // Assign the allocated slice
+                    .distances = distances, // Assign the allocated slice
+                },
+                .is_moving_forward = i % 2 == 0, // Alternate initial movement direction
+            };
+        }
+
+        const legged_model = try allocator.create(Legs);
+        legged_model.* = Legs{
+            .legs = legs,
+        };
+
+        model.legs = legged_model; // Assign the legs to the model
     }
 };
 
