@@ -429,6 +429,44 @@ pub const Vector = struct {
     x: f32,
     y: f32,
 
+    pub fn add(self: Vector, other: Vector) Vector {
+        return Vector{
+            .x = self.x + other.x,
+            .y = self.y + other.y,
+        };
+    }
+
+    pub fn subtract(self: Vector, other: Vector) Vector {
+        return Vector{
+            .x = self.x - other.x,
+            .y = self.y - other.y,
+        };
+    }
+
+    pub fn length(self: Vector) f32 {
+        return std.math.sqrt(self.x * self.x + self.y * self.y);
+    }
+
+    pub fn normalize(self: Vector) Vector {
+        const len = self.length();
+        if (len == 0.0) return Vector{ .x = 0.0, .y = 0.0 };
+        return Vector{
+            .x = self.x / len,
+            .y = self.y / len,
+        };
+    }
+
+    pub fn scale(self: Vector, factor: f32) Vector {
+        return Vector{
+            .x = self.x * factor,
+            .y = self.y * factor,
+        };
+    }
+
+    pub fn shift(self: Vector, x_delta: f32, y_delta: f32) Vector {
+        return Vector{ .x = self.x + x_delta, .y = self.y + y_delta };
+    }
+
     pub fn toPoint(self: Vector) Point {
         return Point{ mapClampX(asI16(f32, self.x), 1), mapClampY(asI16(f32, self.y), 1) };
     }
@@ -1594,11 +1632,13 @@ pub const Model = struct {
         for (self.joints[1..], 1..) |*joint, i| { // Start from the second joint since the first is the anchor
             const previous_joint = &self.joints[i - 1];
             const target_distance = joint.distances[0]; // Assuming each joint has one distance to the previous joint
+
             //std.debug.print("current joint: {}. previous joint: {}\n", .{ joint, previous_joint });
             // Calculate the direction from the previous joint to the current joint
             var dx = joint.position.x - previous_joint.position.x;
             var dy = joint.position.y - previous_joint.position.y;
             //std.debug.print("dx dy: {} {}\n", .{ dx, dy });
+
             const current_distance = fastSqrt(dx * dx + dy * dy);
             //std.debug.print("distance between joint and previous joint: {}\n", .{current_distance});
             // Normalize the direction vector if the distance is not zero
@@ -1619,14 +1659,17 @@ pub const Model = struct {
     pub fn updateRigidBodyInterpolated(self: *Model, anchor_index: usize, previous_anchor_position: Vector, new_anchor_position: Vector, interpolation_factor: f32) void {
         const anchor_joint = &self.joints[anchor_index];
         const previous_position = previous_anchor_position;
+
         // Interpolates anchor position based on the provided interpolation factor
         anchor_joint.position.x = previous_position.x + ((1 - interpolation_factor) * (new_anchor_position.x - previous_position.x));
         anchor_joint.position.y = previous_position.y + ((1 - interpolation_factor) * (new_anchor_position.y - previous_position.y));
-        // Calls the regular update
+
+        // Update the rest of the model
         updateRigidBody(self, anchor_index, anchor_joint.position);
-        // If model has legs, update them
+
+        // If model has legs, position them at the anchor
         if (self.legs) |legs| {
-            legs.updateLegMovement(interpolation_factor);
+            legs.updateLegMovement(anchor_joint.position, interpolation_factor);
         }
     }
 
@@ -1682,7 +1725,7 @@ pub const Model = struct {
         const denominator: f32 = 2 * l1 * fastSqrt(local_end_affector.x * local_end_affector.x + local_end_affector.y * local_end_affector.y);
 
         const elbow_angle_relative = std.math.acos(numerator / denominator);
-        if (elbow_direction_sign == 0) elbow_direction_sign = 1;
+        if (elbow_direction_sign.* == 0) elbow_direction_sign.* = 1;
 
         return Vector.fromFloats(1 * elbow_angle_relative + local_end_affector.angle(), l1);
     }
@@ -1691,16 +1734,25 @@ pub const Model = struct {
 pub const Legs = struct {
     legs: []Leg, // Array of legs
 
-    pub fn updateLegMovement(self: *Legs, interpolation_factor: f32) void {
-        // Logic for updating leg movement
-        for (self.legs) |*leg| {
+    pub fn updateLegMovement(self: *Legs, anchor_position: Vector, interpolation_factor: f32) void {
+        for (self.legs, 0..) |*leg, j| {
+            leg.upper_joint.position = if (j % 2 == 0) anchor_position.shift(5, 0) else anchor_position.shift(-5, 0);
+
+            // Calculate the leg movement (simulating walking)
+            // You can adjust these values to make the leg movement more realistic
             if (leg.is_moving_forward) {
-                leg.lower_joint.position.x += interpolation_factor;
+                leg.lower_joint.position.x = leg.upper_joint.position.x + interpolation_factor * 100;
+                leg.lower_joint.position.y = leg.upper_joint.position.y - interpolation_factor * 100;
             } else {
-                leg.lower_joint.position.x -= interpolation_factor;
+                leg.lower_joint.position.x = leg.upper_joint.position.x - interpolation_factor * 100;
+                leg.lower_joint.position.y = leg.upper_joint.position.y + interpolation_factor * 100;
             }
 
-            if (interpolation_factor >= 1.0) {
+            // Make sure the lower joint follows the upper joint vertically (this assumes leg moves up and down relative to the upper joint)
+            leg.lower_joint.position.y = leg.upper_joint.position.y - leg.lower_joint.distances[0]; // The distance is the leg length
+
+            // Reverse direction if needed
+            if (leg.lower_joint.position.x > leg.upper_joint.position.x + 5.0 or leg.lower_joint.position.x < leg.upper_joint.position.x - 5.0) {
                 leg.is_moving_forward = !leg.is_moving_forward;
             }
         }
@@ -1872,6 +1924,21 @@ pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, b
         const x = asI32(f32, joint.position.x) - @divTrunc(w, 2);
         const y = asI32(f32, joint.position.y) - @divTrunc(h, 2);
         drawRect(x, y, w, h, jointColor);
+    }
+
+    // Draw legs if they exist
+    if (model.legs) |legs| {
+        for (legs.legs) |leg| {
+            // Draw the bone of the leg (line between upper and lower joint)
+            drawLineEx(leg.upper_joint.position, leg.lower_joint.position, max_thickness / 2, boneColor);
+
+            // Optionally, draw the lower joint of the leg
+            const w = asI32(usize, width / 2);
+            const h = asI32(usize, height / 2);
+            const x = asI32(f32, leg.lower_joint.position.x) - @divTrunc(w, 2);
+            const y = asI32(f32, leg.lower_joint.position.y) - @divTrunc(h, 2);
+            drawRect(x, y, w, h, jointColor);
+        }
     }
 }
 
