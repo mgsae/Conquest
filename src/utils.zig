@@ -1146,33 +1146,26 @@ pub const Subcell = struct {
 };
 
 pub const Waypoint: type = struct {
-    /// Limits waypoints to inside map and towards main path.
-    fn isValid(x: i32, y: i32) bool {
+    /// Returns whether the coordinates are closer to the horizontal than the vertical center.
+    fn goHorz(x: i32, y: i32) bool {
         const center_x = main.World.width / 2;
         const center_y = main.World.height / 2;
-        const is_quadrant1 = (x > center_x and y <= center_y);
-        const is_quadrant2 = (x <= center_x and y <= center_y);
-        const is_quadrant3 = (x <= center_x and y > center_y);
-        const is_quadrant4 = (x > center_x and y > center_y);
-
-        const en_route_q1 = (is_quadrant1 and (y <= (-1 * (x - center_x) + center_y)));
-        const en_route_q2 = (is_quadrant2 and (y <= (x - center_x + center_y)));
-        const en_route_q3 = (is_quadrant3 and (y >= (x - center_x + center_y)));
-        const en_route_q4 = (is_quadrant4 and (y >= (-1 * (x - center_x) + center_y)));
-        const en_route = en_route_q1 or en_route_q2 or en_route_q3 or en_route_q4;
-
-        return (en_route and x > 0 and x < main.World.width and y > 0 and y < main.World.height);
+        return (@abs(x - center_x) < @abs(y - center_y));
     }
 
     /// Takes the grid column/row of a given cell and returns the 4 waypoints along its edges. Order: left mid, top mid, right mid, bottom mid.
     pub fn cellSides(grid_x: usize, grid_y: usize) [4]?Point {
         const node_x = @as(u16, @intCast(grid_x * Grid.cell_size));
         const node_y = @as(u16, @intCast(grid_y * Grid.cell_size));
+
+        // Determine whether the movement should be horizontal or vertical
+        const horizontal = goHorz(node_x, node_y);
+
         return [4]?Point{
-            if (isValid(node_x, node_y + Grid.cell_half)) Point.at(node_x, node_y + Grid.cell_half) else null, // left mid
-            if (isValid(node_x + Grid.cell_half, node_y)) Point.at(node_x + Grid.cell_half, node_y) else null, // top mid
-            if (isValid(node_x + Grid.cell_size, node_y + Grid.cell_half)) Point.at(node_x + Grid.cell_size, node_y + Grid.cell_half) else null, // Right mid
-            if (isValid(node_x + Grid.cell_half, node_y + Grid.cell_size)) Point.at(node_x + Grid.cell_half, node_y + Grid.cell_size) else null, // Bottom mid
+            if (horizontal) Point.at(node_x, node_y + Grid.cell_half) else null, // left mid
+            if (!horizontal) Point.at(node_x + Grid.cell_half, node_y) else null, // top mid
+            if (horizontal) Point.at(node_x + Grid.cell_size, node_y + Grid.cell_half) else null, // right mid
+            if (!horizontal) Point.at(node_x + Grid.cell_half, node_y + Grid.cell_size) else null, // bottom mid
         };
     }
     /// Takes world `x`,`y` cordinates and returns the closest waypoint.

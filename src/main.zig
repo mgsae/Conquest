@@ -112,28 +112,28 @@ pub const World = struct {
             try e.resources.append(resource);
         }
         // Class 1 resource (dividers)
-        for (0..grid.columns) |col| {
-            if (col % 3 == 0) {
-                const x = col * u.Grid.cell_size;
-                for (0..height) |y| {
-                    if (y % (u.Subcell.size / 2) == 0) {
-                        resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
-                        try e.resources.append(resource);
-                    }
-                }
-            }
-        }
-        for (0..grid.rows) |row| {
-            if (row % 3 == 0) {
-                const y = row * u.Grid.cell_size;
-                for (0..width) |x| {
-                    if (x % (u.Subcell.size / 2) == 0) {
-                        resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
-                        try e.resources.append(resource);
-                    }
-                }
-            }
-        }
+        //for (0..grid.columns) |col| {
+        //    if (col % 3 == 0) {
+        //        const x = col * u.Grid.cell_size;
+        //        for (0..height) |y| {
+        //            if (y % (u.Subcell.size / 2) == 0) {
+        //                resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
+        //                try e.resources.append(resource);
+        //            }
+        //        }
+        //    }
+        //}
+        //for (0..grid.rows) |row| {
+        //    if (row % 3 == 0) {
+        //        const y = row * u.Grid.cell_size;
+        //        for (0..width) |x| {
+        //            if (x % (u.Subcell.size / 2) == 0) {
+        //                resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
+        //                try e.resources.append(resource);
+        //            }
+        //        }
+        //    }
+        //}
     }
 
     fn initializePlayers(allocator: *std.mem.Allocator, map: Map, self_id: u8) !void {
