@@ -1146,15 +1146,33 @@ pub const Subcell = struct {
 };
 
 pub const Waypoint: type = struct {
+    /// Limits waypoints to inside map and towards main path.
+    fn isValid(x: i32, y: i32) bool {
+        const center_x = main.World.width / 2;
+        const center_y = main.World.height / 2;
+        const is_quadrant1 = (x > center_x and y <= center_y);
+        const is_quadrant2 = (x <= center_x and y <= center_y);
+        const is_quadrant3 = (x <= center_x and y > center_y);
+        const is_quadrant4 = (x > center_x and y > center_y);
+
+        const en_route_q1 = (is_quadrant1 and (y <= (-1 * (x - center_x) + center_y)));
+        const en_route_q2 = (is_quadrant2 and (y <= (x - center_x + center_y)));
+        const en_route_q3 = (is_quadrant3 and (y >= (x - center_x + center_y)));
+        const en_route_q4 = (is_quadrant4 and (y >= (-1 * (x - center_x) + center_y)));
+        const en_route = en_route_q1 or en_route_q2 or en_route_q3 or en_route_q4;
+
+        return (en_route and x > 0 and x < main.World.width and y > 0 and y < main.World.height);
+    }
+
     /// Takes the grid column/row of a given cell and returns the 4 waypoints along its edges. Order: left mid, top mid, right mid, bottom mid.
-    pub fn cellSides(grid_x: usize, grid_y: usize) [4]Point {
+    pub fn cellSides(grid_x: usize, grid_y: usize) [4]?Point {
         const node_x = @as(u16, @intCast(grid_x * Grid.cell_size));
         const node_y = @as(u16, @intCast(grid_y * Grid.cell_size));
-        return [4]Point{
-            Point.at(node_x, node_y + Grid.cell_half), // left mid
-            Point.at(node_x + Grid.cell_half, node_y), // top mid
-            Point.at(node_x + Grid.cell_size, node_y + Grid.cell_half), // Right mid
-            Point.at(node_x + Grid.cell_half, node_y + Grid.cell_size), // Bottom mid
+        return [4]?Point{
+            if (isValid(node_x, node_y + Grid.cell_half)) Point.at(node_x, node_y + Grid.cell_half) else null, // left mid
+            if (isValid(node_x + Grid.cell_half, node_y)) Point.at(node_x + Grid.cell_half, node_y) else null, // top mid
+            if (isValid(node_x + Grid.cell_size, node_y + Grid.cell_half)) Point.at(node_x + Grid.cell_size, node_y + Grid.cell_half) else null, // Right mid
+            if (isValid(node_x + Grid.cell_half, node_y + Grid.cell_size)) Point.at(node_x + Grid.cell_half, node_y + Grid.cell_size) else null, // Bottom mid
         };
     }
     /// Takes world `x`,`y` cordinates and returns the closest waypoint.
@@ -1177,7 +1195,7 @@ pub const Waypoint: type = struct {
         const current_cell_center = Grid.cellCenter(current.x, current.y);
         var closest_grid_x = Grid.x(current_cell_center.x);
         var closest_grid_y = Grid.y(current_cell_center.y);
-
+        // Shifts current cell if near edge
         if (current.x > current_cell_center.x and (current_cell_center.x + Grid.cell_half) < target.x) closest_grid_x += 1;
         if (current.x < current_cell_center.x and (current_cell_center.x - Grid.cell_half) > target.x) closest_grid_x -= 1;
         if (current.y > current_cell_center.y and (current_cell_center.y + Grid.cell_half) < target.y) closest_grid_y += 1;
@@ -1197,35 +1215,36 @@ pub const Waypoint: type = struct {
         const bias_factor = 0.5; // The lower, the stronger bias away from previous_step
 
         for (waypoints) |wp| {
+            if (wp == null) continue;
             // Vector from current to the waypoint under consideration
-            const wp_dx = @as(i32, wp.x) - @as(i32, current.x);
-            const wp_dy = @as(i32, wp.y) - @as(i32, current.y);
+            const wp_dx = @as(i32, wp.?.x) - @as(i32, current.x);
+            const wp_dy = @as(i32, wp.?.y) - @as(i32, current.y);
 
             // Dot product, degree of alignment with the overall vector
             const alignment: f32 = asF32(i32, dx * wp_dx + dy * wp_dy);
 
             // Vector from previous step to current waypoint
-            const prev_dx = @as(i32, wp.x) - @as(i32, previous_step.x);
-            const prev_dy = @as(i32, wp.y) - @as(i32, previous_step.y);
+            const prev_dx = @as(i32, wp.?.x) - @as(i32, previous_step.x);
+            const prev_dy = @as(i32, wp.?.y) - @as(i32, previous_step.y);
             const prev_alignment = dx * prev_dx + dy * prev_dy;
 
             // Apply bias if waypoint is in the direction of the previous step
             const biased_alignment = if (prev_alignment > 0) alignment * bias_factor else alignment;
 
             if (biased_alignment >= 0) {
-                const wp_to_target_squared = distanceSquared(wp, target);
-                const current_to_wp_squared = distanceSquared(current, wp);
+                const wp_to_target_squared = distanceSquared(wp.?, target);
+                const current_to_wp_squared = distanceSquared(current, wp.?);
                 const new_distance_squared = current_to_wp_squared + wp_to_target_squared;
 
                 // Compare both distance and biased alignment
                 if (best_waypoint == null or (new_distance_squared < best_distance_squared) or (new_distance_squared == best_distance_squared and biased_alignment > best_biased_alignment)) {
                     best_distance_squared = new_distance_squared;
                     best_biased_alignment = biased_alignment;
-                    best_waypoint = wp;
+                    best_waypoint = wp.?;
                 } else if (new_distance_squared == best_distance_squared and biased_alignment == best_biased_alignment) {
                     // If distance and alignment are the same, tie-breaks using lexicographical ordering
-                    if (wp.x < best_waypoint.?.x or (wp.x == best_waypoint.?.x and wp.y < best_waypoint.?.y)) {
-                        best_waypoint = wp;
+                    if (wp.?.x < best_waypoint.?.x or (wp.?.x == best_waypoint.?.x and wp.?.y < best_waypoint.?.y)) {
+                        best_waypoint = wp.?;
                     }
                 }
             }
@@ -1238,8 +1257,8 @@ pub const Waypoint: type = struct {
             // Setting point to a pseudorandom based on last step position and target
             const random = @rem(previous_step.x + target.y, 4);
 
-            std.debug.print("No best waypoint found. Pseudorandom waypoint chosen. Current: {}, Previous Step: {}, Chose waypoint: {}, at {}.\n", .{ current, previous_step, random, waypoints[random] });
-            return waypoints[random];
+            std.debug.print("No best waypoint found. Pseudorandom waypoint chosen. Current: {}, Previous Step: {}, Chose waypoint: {}, at {any}.\n", .{ current, previous_step, random, waypoints[random] });
+            return waypoints[random] orelse current;
         }
     }
 };
