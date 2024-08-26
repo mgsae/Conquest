@@ -62,8 +62,8 @@ pub const Player = struct {
 
 /// World properties, shared state initialized by initializeMap.
 pub const World = struct {
-    const DEFAULT_WIDTH = 16000; // 1920 * 8; // Limit for u16 coordinates: 65535
-    const DEFAULT_HEIGHT = 10000; // 1080 * 8; // Limit for u16 coordinates: 65535
+    const DEFAULT_WIDTH = 15000; // 1920 * 8; // Limit for u16 coordinates: 65535
+    const DEFAULT_HEIGHT = 9000; // 1080 * 8; // Limit for u16 coordinates: 65535
     pub const GRID_CELL_SIZE = 1000;
     pub const MOVEMENT_DIVISIONS = 10; // Modulus base for unit movement updates
     pub var tick_number: u64 = undefined; // Set upon map initialization
@@ -106,9 +106,33 @@ pub const World = struct {
         const resource_coords = map.resource_locations;
         var resource: *e.Resource = undefined;
         defer allocator.free(resource_coords);
+        // Class 0 resources (capacity)
         for (resource_coords) |coord| {
-            resource = try e.Resource.create(coord.x, coord.y, 0); // Creates class 0 resource
+            resource = try e.Resource.create(coord.x, coord.y, 0);
             try e.resources.append(resource);
+        }
+        // Class 1 resource (dividers)
+        for (0..grid.columns) |col| {
+            if (col % 3 == 0) {
+                const x = col * u.Grid.cell_size;
+                for (0..height) |y| {
+                    if (y % (u.Subcell.size / 2) == 0) {
+                        resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
+                        try e.resources.append(resource);
+                    }
+                }
+            }
+        }
+        for (0..grid.rows) |row| {
+            if (row % 3 == 0) {
+                const y = row * u.Grid.cell_size;
+                for (0..width) |x| {
+                    if (x % (u.Subcell.size / 2) == 0) {
+                        resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
+                        try e.resources.append(resource);
+                    }
+                }
+            }
         }
     }
 
@@ -662,7 +686,7 @@ const Map = struct { // Encapsulates map properties; see World for currently act
     }
 
     fn defaultStartLocations(allocator: *std.mem.Allocator, width: u16, height: u16, player_count: u8) ![]u.Point {
-        const offset = u.Grid.cell_half * 3;
+        const offset = u.Grid.cell_half * 3; // Starts one and a half cell in from corner
         const coordinates: [4]u.Point = [_]u.Point{
             u.Point{ .x = offset, .y = offset },
             u.Point{ .x = width - offset, .y = height - offset },

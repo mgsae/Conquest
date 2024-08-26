@@ -1735,24 +1735,34 @@ pub const Legs = struct {
     legs: []Leg, // Array of legs
 
     pub fn updateLegMovement(self: *Legs, anchor_position: Vector, interpolation_factor: f32) void {
-        for (self.legs, 0..) |*leg, j| {
-            leg.upper_joint.position = if (j % 2 == 0) anchor_position.shift(5, 0) else anchor_position.shift(-5, 0);
+        const leg_swing_amplitude = 20.0; // Adjust this value for higher or lower leg swings
+        const leg_swing_frequency = 2.0 * std.math.pi; // Full cycle for sine wave (0 to 1 to 0)
 
-            // Calculate the leg movement (simulating walking)
-            // You can adjust these values to make the leg movement more realistic
-            if (leg.is_moving_forward) {
-                leg.lower_joint.position.x = leg.upper_joint.position.x + interpolation_factor * 100;
-                leg.lower_joint.position.y = leg.upper_joint.position.y - interpolation_factor * 100;
-            } else {
-                leg.lower_joint.position.x = leg.upper_joint.position.x - interpolation_factor * 100;
-                leg.lower_joint.position.y = leg.upper_joint.position.y + interpolation_factor * 100;
+        for (self.legs, 0..) |*leg, j| {
+            const phase_shift: f32 = if (leg.is_moving_forward) 0.0 else std.math.pi; // Phase shift for opposite legs
+
+            // Calculate the swing position using a sine wave for smooth motion
+            const swing_position = leg_swing_amplitude * @sin(interpolation_factor * leg_swing_frequency + phase_shift);
+
+            leg.upper_joint.position = if (j % 2 == 0)
+                anchor_position.shift(5, 0)
+            else
+                anchor_position.shift(-5, 0);
+
+            // Calculate the target position for the lower joint
+            leg.lower_joint.position.x = leg.upper_joint.position.x + swing_position;
+            leg.lower_joint.position.y = leg.upper_joint.position.y - leg.lower_joint.distances[0]; // Keep leg length consistent
+
+            if (leg.is_moving_forward and swing_position > 0) {
+                // Foot is planted (approaching the ground)
+                leg.lower_joint.position.y = leg.upper_joint.position.y - leg.lower_joint.distances[0];
+            } else if (swing_position <= 0) {
+                // Foot is lifting (moving backward)
+                leg.lower_joint.position.y = leg.upper_joint.position.y - (leg.lower_joint.distances[0] - @abs(swing_position));
             }
 
-            // Make sure the lower joint follows the upper joint vertically (this assumes leg moves up and down relative to the upper joint)
-            leg.lower_joint.position.y = leg.upper_joint.position.y - leg.lower_joint.distances[0]; // The distance is the leg length
-
-            // Reverse direction if needed
-            if (leg.lower_joint.position.x > leg.upper_joint.position.x + 5.0 or leg.lower_joint.position.x < leg.upper_joint.position.x - 5.0) {
+            // Reverse direction if necessary (when the leg reaches its forward/backward limit)
+            if (interpolation_factor >= 1.0) {
                 leg.is_moving_forward = !leg.is_moving_forward;
             }
         }

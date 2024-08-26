@@ -1125,9 +1125,9 @@ pub const Resource = struct {
     pub fn preset(class: u8) Properties {
         return switch (class) {
             0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100 },
-            1 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 40 },
+            1 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 1000 },
             2 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 40 },
-            3 => Properties{ .width = u.Subcell.size / 3, .height = u.Subcell.size / 3, .capacity = 40 },
+            3 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 40 },
             else => @panic("Invalid structure class"),
         };
     }
