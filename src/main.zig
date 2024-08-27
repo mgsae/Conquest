@@ -16,6 +16,7 @@ pub const Config = struct {
     pub var profile_timer = [4]f64{ 0, 0, 0, 0 };
     pub var keys: u.Key = undefined; // Keybindings
     pub var game_active = true;
+    var textureManager: TextureManager = undefined;
 };
 
 /// The local player's camera properties. Const values are universal, var values vary with play session.
@@ -210,6 +211,12 @@ pub fn main() anyerror!void {
     defer World.grid.deinit(&allocator);
     try World.initializeEntities(allocator, map);
     try World.initializePlayers(&allocator, map, Player.id.?);
+
+    // Initialize graphics
+    //--------------------------------------------------------------------------------------
+    Config.textureManager.init(&allocator);
+    Config.textureManager.loadAllTextures() catch std.debug.print("Failed to load textures.\n", .{});
+    defer Config.textureManager.unloadAllTextures();
 
     // Testing/debugging
     //--------------------------------------------------------------------------------------
@@ -574,6 +581,66 @@ fn removeEntities() !void {
 // Game loop: Drawing
 //----------------------------------------------------------------------------------
 
+pub const Texture = struct {
+    texture: rl.Texture2D,
+
+    pub fn init(self: *Texture, filename: []const u8) void {
+        // Load the texture
+        self.texture = rl.loadTexture(filename[0..]);
+    }
+
+    pub fn draw(self: *Texture, x: i32, y: i32, tint: rl.Color) void {
+        rl.drawTexture(self.texture, x, y, tint);
+    }
+
+    pub fn unload(self: *Texture) void {
+        rl.unloadTexture(self.texture);
+    }
+};
+
+pub const TextureManager = struct {
+    textures: std.StringHashMap(*rl.Texture2D),
+    allocator: *std.mem.Allocator, // Add the allocator field
+
+    pub fn init(self: *TextureManager, allocator: *std.mem.Allocator) void {
+        self.allocator = allocator; // Initialize the allocator
+        self.textures = std.StringHashMap(*rl.Texture2D).init(allocator.*);
+    }
+
+    pub fn loadAllTextures(self: *TextureManager) !void {
+        try self.load("land", "img/land.png");
+        // Add other textures here...
+    }
+
+    pub fn load(self: *TextureManager, name: []const u8, filename: [*:0]const u8) !void {
+        const texture = try self.allocator.create(rl.Texture2D);
+        const loaded_texture = rl.loadTexture(filename);
+        if (loaded_texture.id == 0) {
+            return error.FailedToLoadTexture;
+        }
+
+        // Copy the loaded texture into the allocated memory
+        texture.* = loaded_texture;
+
+        // Store the pointer to the texture in the hashmap
+        try self.textures.put(name, texture);
+    }
+
+    pub fn get(self: *TextureManager, name: []const u8) !*rl.Texture2D {
+        const texture_ptr = self.textures.get(name) orelse return error.TextureNotFound;
+        return texture_ptr;
+    }
+
+    pub fn unloadAllTextures(self: *TextureManager) void {
+        var it = self.textures.iterator();
+        while (it.next()) |entry| {
+            rl.unloadTexture(entry.value_ptr.*.*);
+            self.allocator.destroy(entry.value_ptr.*);
+        }
+        self.textures.deinit();
+    }
+};
+
 fn draw(profile_frame: bool) void {
     if (profile_frame) u.startTimer(1, "- Drawing map.");
     drawMap();
@@ -588,8 +655,24 @@ fn draw(profile_frame: bool) void {
 
 /// Draws map and grid markers relative to current canvas
 pub fn drawMap() void {
-    // Draw the map area
-    u.drawRect(0, 0, World.width, World.height, rl.Color.ray_white);
+    // Retrieve the texture, handle the potential null case
+    const landTexture = Config.textureManager.get("land") catch null;
+
+    if (landTexture == null) {
+        std.debug.print("Warning: 'land' texture not found!\n", .{});
+        return;
+    }
+
+    // Draw the map area using the texture
+    for (0..World.height) |y| {
+        if (y % (u.Subcell.size) == 0) {
+            for (0..World.width) |x| {
+                if (x % (u.Subcell.size) == 0) {
+                    u.drawTexture(landTexture.?.*, u.asI32(usize, x), u.asI32(usize, y), rl.Color.white);
+                }
+            }
+        }
+    }
 
     // Draw subgrid lines
     var rowIndex: i32 = 1;

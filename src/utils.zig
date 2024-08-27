@@ -1919,6 +1919,22 @@ pub fn drawEntity(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(width, main.Camera.canvas_zoom), canvasScale(height, main.Camera.canvas_zoom), col);
 }
 
+pub fn initTexture(filename: [*:0]const u8) rl.Texture2D {
+    return rl.loadTexture(filename);
+}
+
+pub fn drawTexture(texture: rl.Texture2D, x: i32, y: i32, tint: rl.Color) void {
+    const textureWidth = texture.width;
+    const textureHeight = texture.height;
+    const zoom = main.Camera.canvas_zoom;
+    const centerX = x - @divTrunc(textureWidth, 2);
+    const centerY = y - @divTrunc(textureHeight, 2);
+    const canvasXPos = canvasX(centerX, main.Camera.canvas_offset_x, zoom);
+    const canvasYPos = canvasY(centerY, main.Camera.canvas_offset_y, zoom);
+    const position = Vector.fromIntegers(canvasXPos, canvasYPos);
+    rl.drawTextureEx(texture, position.toRaylib(), 0.0, zoom, tint);
+}
+
 /// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas, interpolated by `frame` since `last_step`. The full interpolation interval is determined by `MOVEMENT_DIVISIONS`.
 pub fn drawEntityInterpolated(x: i32, y: i32, width: i32, height: i32, col: rl.Color, last_step: Point, frame: i16) void {
     const interp_xy = interpolateStep(last_step.x, last_step.y, x, y, frame, main.World.MOVEMENT_DIVISIONS);
