@@ -675,24 +675,24 @@ pub fn drawMap() void {
     }
 
     // Draw subgrid lines
-    var rowIndex: i32 = 1;
-    while (rowIndex * u.Subcell.size < World.height) : (rowIndex += 1) {
-        u.drawRect(0, @as(i32, @intCast(u.Subcell.size * rowIndex)), World.width, 2, rl.Color.light_gray);
-    }
-    var colIndex: i32 = 1;
-    while (colIndex * u.Subcell.size < World.width) : (colIndex += 1) {
-        u.drawRect(@as(i32, @intCast(u.Subcell.size * colIndex)), 0, 2, World.height, rl.Color.light_gray);
-    }
-
+    //var rowIndex: i32 = 1;
+    //while (rowIndex * u.Subcell.size < World.height) : (rowIndex += 1) {
+    //    u.drawRect(0, @as(i32, @intCast(u.Subcell.size * rowIndex)), World.width, 2, rl.Color.light_gray);
+    //}
+    //var colIndex: i32 = 1;
+    //while (colIndex * u.Subcell.size < World.width) : (colIndex += 1) {
+    //    u.drawRect(@as(i32, @intCast(u.Subcell.size * colIndex)), 0, 2, World.height, rl.Color.light_gray);
+    //}
+    //
     // Draw grid lines
-    rowIndex = 1;
-    while (rowIndex * u.Grid.cell_size < World.height) : (rowIndex += 1) {
-        u.drawRect(0, @as(i32, @intCast(u.Grid.cell_size * rowIndex)), World.width, 5, rl.Color.light_gray);
-    }
-    colIndex = 1;
-    while (colIndex * u.Grid.cell_size < World.width) : (colIndex += 1) {
-        u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 5, World.height, rl.Color.light_gray);
-    }
+    //rowIndex = 1;
+    //while (rowIndex * u.Grid.cell_size < World.height) : (rowIndex += 1) {
+    //    u.drawRect(0, @as(i32, @intCast(u.Grid.cell_size * rowIndex)), World.width, 5, rl.Color.light_gray);
+    //}
+    //colIndex = 1;
+    //while (colIndex * u.Grid.cell_size < World.width) : (colIndex += 1) {
+    //    u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 5, World.height, rl.Color.light_gray);
+    //}
 
     // Draw the edges of the map
     u.drawRect(0, -10, World.width, 20, rl.Color.dark_gray); // Top edge

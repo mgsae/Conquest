@@ -1272,7 +1272,7 @@ pub const Projectile = struct {
         const damage = preset(self.class).damage;
         target.setLife(if (target.life() >= damage) target.life() - damage else 0);
         self.life -= 100; // Should be enough to kill projectile unless multi targets are wanted
-        std.debug.print("Projectile (class {}) hit target {}!\n", .{ self.class, target });
+        //std.debug.print("Projectile (class {}) hit target {}!\n", .{ self.class, target });
     }
 
     fn width(self: *Projectile) u16 {
