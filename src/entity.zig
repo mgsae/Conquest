@@ -795,7 +795,10 @@ pub const Unit = struct {
         var model: *u.Model = undefined;
 
         // Determine if this unit should have legs
-        model = try u.Model.createChain(main.World.grid.allocator, 3 + class, start_point, 12 + u.asF32(u8, class));
+        model = try u.Model.createRectangle(main.World.grid.allocator, start_point);
+
+        //model = try u.Model.createChain(main.World.grid.allocator, 2, start_point, 12 + u.asF32(u8, class));
+
         //if (class > 0) {
         //    try u.Legs.attach(main.World.grid.allocator, model, 4, 10.0); // Assuming 4 legs with 10.0 length
         //}

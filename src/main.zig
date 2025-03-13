@@ -3,7 +3,7 @@ const std: type = @import("std");
 const u = @import("utils.zig");
 const e = @import("entity.zig");
 
-/// The local player's game config properties. Const values are universal, var values vary with play session.
+/// The local game config properties. Const values are universal, var values vary with play session.
 pub const Config = struct {
     pub const TICKRATE = 60; // Target logical fps
     pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
@@ -19,7 +19,7 @@ pub const Config = struct {
     var textureManager: TextureManager = undefined;
 };
 
-/// The local player's camera properties. Const values are universal, var values vary with play session.
+/// The local game camera properties. Const values are universal, var values vary with play session.
 pub const Camera = struct {
     pub const SCROLL_RATE: f16 = 25.0; // Camera move effect size
     pub const SCROLL_SPEED: f16 = 0.25; // Camera move interpolation speed
@@ -59,6 +59,8 @@ pub const Player = struct {
     pub var build_guide: ?u8 = null;
     pub var build_index: ?u8 = null;
     pub var build_order: ?u8 = null;
+    pub var unit_count: u16 = 0;
+    pub var structure_count: u16 = 0;
 };
 
 /// World properties, shared state initialized by initializeMap.
@@ -523,22 +525,30 @@ fn updateEntities(profile_frame: bool) !void {
 
     // Structures
     if (profile_frame) u.startTimer(1, "- Updating structures.");
+    Player.structure_count = 0;
     for (e.structures.items) |structure| {
         if (structure.state == e.Structure.State.Destroyed) {
             try World.dead_structures.append(structure); // To be destroyed in removeEntities
         } else {
             structure.update();
+            if (structure.owner == Player.id) {
+                Player.structure_count += 1;
+            }
         }
     }
     if (profile_frame) u.endTimer(1, "Updating structures took {} seconds.");
 
     // Units (and projectiles)
     if (profile_frame) u.startTimer(1, "- Updating units.");
+    Player.unit_count = 0;
     for (e.units.items) |unit| {
         if (unit.state == e.Unit.State.Dead) {
             try World.dead_units.append(unit); // To be destroyed in removeEntities
         } else {
             try unit.update();
+            if (unit.owner == Player.id) {
+                Player.unit_count += 1;
+            }
         }
     }
     if (profile_frame) u.endTimer(1, "Updating units took {} seconds.");
@@ -585,7 +595,6 @@ pub const Texture = struct {
     texture: rl.Texture2D,
 
     pub fn init(self: *Texture, filename: []const u8) void {
-        // Load the texture
         self.texture = rl.loadTexture(filename[0..]);
     }
 
@@ -695,10 +704,10 @@ pub fn drawMap() void {
     //}
 
     // Draw the edges of the map
-    u.drawRect(0, -10, World.width, 20, rl.Color.dark_gray); // Top edge
-    u.drawRect(0, World.height - 10, World.width, 20, rl.Color.dark_gray); // Bottom edge
-    u.drawRect(-10, 0, 20, World.height, rl.Color.dark_gray); // Left edge
-    u.drawRect(World.width - 10, 0, 20, World.height, rl.Color.dark_gray); // Right edge
+    //u.drawRect(0, -10, World.width, 20, rl.Color.dark_gray); // Top edge
+    //u.drawRect(0, World.height - 10, World.width, 20, rl.Color.dark_gray); // Bottom edge
+    //u.drawRect(-10, 0, 20, World.height, rl.Color.dark_gray); // Left edge
+    //u.drawRect(World.width - 10, 0, 20, World.height, rl.Color.dark_gray); // Right edge
 
 }
 
@@ -727,6 +736,14 @@ fn drawEntities(profile_frame: bool) void {
 /// Draws user interface
 pub fn drawInterface() void {
     if (Player.build_guide != null) drawGuide(Player.build_guide.?);
+
+    // dashboard
+    rl.drawRectangle(0, rl.getScreenHeight() - 200, rl.getScreenWidth(), 200, rl.Color.white);
+    var buffer: [64]u8 = undefined;
+    var text = std.fmt.bufPrintZ(&buffer, "Units: {}", .{Player.unit_count}) catch "Error";
+    rl.drawText(text, 50, rl.getScreenHeight() - 160, 28, rl.Color.black);
+    text = std.fmt.bufPrintZ(&buffer, "Structures: {}", .{Player.structure_count}) catch "Error";
+    rl.drawText(text, 50, rl.getScreenHeight() - 120, 28, rl.Color.black);
 
     // Development tools
     rl.drawFPS(40, 40);

@@ -1685,6 +1685,29 @@ pub const Model = struct {
         }
     }
 
+    pub fn createRectangle(allocator: *std.mem.Allocator, position: Point) !*Model {
+        const model = try allocator.create(Model);
+        const joints = try allocator.alloc(Joint, 1); // Just 1 joint, centered
+
+        // Convert position using your casting function
+        const x = asF32(u16, position.x);
+        const y = asF32(u16, position.y);
+
+        // Single joint at the center of the rectangle
+        joints[0] = Joint{
+            .position = Vector{ .x = x, .y = y },
+            .connected_joints = &[_]usize{}, // No connections
+            .distances = &[_]f32{}, // No distances needed
+        };
+
+        model.* = Model{
+            .joints = joints, // Required for compatibility
+            .legs = null, // No legs
+        };
+
+        return model;
+    }
+
     /// Creates a snake-like model with the specified number of joints starting from an initial position and with a specified distance between joints.
     pub fn createChain(allocator: *std.mem.Allocator, joint_count: usize, initial_position: Point, distance: f32) !*Model {
         var joints = try allocator.alloc(Joint, joint_count);
