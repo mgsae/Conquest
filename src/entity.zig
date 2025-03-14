@@ -473,7 +473,7 @@ pub const Unit = struct {
         self.life -= 1;
     }
 
-    /// Searches for collision at `new_x`,`new_y`. If no obstacle is found, sets position to `x`, `y`. If obstacle is found, tries moving along edge.
+    /// Searches for collision at new_x,new_y. If no obstacle is found, sets position to x, y. If obstacle is found, tries moving along edge.
     fn move(self: *Unit, new_x: u16, new_y: u16) !void {
         const old_x = self.x;
         const old_y = self.y;
@@ -492,7 +492,9 @@ pub const Unit = struct {
         }
 
         if (!self.tryMove(new_x, new_y, old_x, old_y)) { // Tries executing regular move
-            _ = self.moveAlongAxis(new_x, new_y, old_x, old_y); // If collided, tries moving along either axis
+            if (self.moveAlongAxis(new_x, new_y, old_x, old_y)) { // If collided, tries moving along either axis
+                _ = self.moveAlongAxis(new_x, new_y, old_x, old_y);
+            }
         }
 
         if (old_x == self.x and old_y == self.y) { // If no change after moving, retargets
@@ -508,7 +510,7 @@ pub const Unit = struct {
         }
     }
 
-    /// Searches for collision at `new_x`,`new_y`. If unhindered, executes the movement, updates the grid, and returns `true`. If hindered, returns `false`.
+    /// Searches for collision at new_x,new_y. If unhindered, executes the movement, updates the grid, and returns true. If hindered, returns false.
     fn tryMove(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) bool {
         //std.debug.print("Entities list retrieved: length = {any}, address = {}\n", .{ entities.?.items.len, @intFromPtr(entities) });
         const collision = self.checkCollision(new_x, new_y);
@@ -521,8 +523,8 @@ pub const Unit = struct {
         return false;
     }
 
-    /// Compares `new_x`,`new_y` and `old_x`,`old_y` to find largest difference. Tries `tryMove()` along either dimension, prioritizing the dominant axis.
-    /// Executes move if collision check passes, returning `true`.
+    /// Compares new_x,new_y and old_x,old_y to find largest difference. Tries tryMove() along either dimension, prioritizing the dominant axis.
+    /// Executes move if collision check passes, returning true.
     fn moveAlongAxis(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) bool {
         const diffX: i32 = @as(i32, @intCast(new_x)) - @as(i32, @intCast(old_x));
         const diffY: i32 = @as(i32, @intCast(new_y)) - @as(i32, @intCast(old_y));
@@ -866,7 +868,7 @@ pub const Unit = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties { // Would set model here as well
         return switch (class) {
-            0 => Properties{ .speed = 1.5, .width = 20, .height = 20, .life = 6000, .range = 150, .attackrate = 6 },
+            0 => Properties{ .speed = 1.5, .width = 20, .height = 20, .life = 2000, .range = 150, .attackrate = 6 },
             1 => Properties{ .speed = 1.75, .width = 25, .height = 25, .life = 8000, .range = 300, .attackrate = 5 },
             2 => Properties{ .speed = 1, .width = 45, .height = 45, .life = 10000, .range = 500, .attackrate = 12 },
             3 => Properties{ .speed = 2, .width = 35, .height = 35, .life = 7000, .range = 250, .attackrate = 8 },
@@ -1128,9 +1130,9 @@ pub const Resource = struct {
     pub fn preset(class: u8) Properties {
         return switch (class) {
             0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100 },
-            1 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 1000 },
-            2 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 40 },
-            3 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 40 },
+            1 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 50 },
+            2 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 800 },
+            3 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 20 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -1185,10 +1187,11 @@ pub const Projectile = struct {
     y: u16,
     angle: f32,
     life: i16,
+    color: rl.Color,
     targets: ?*std.ArrayList(*Entity), // Populated upon launch
 
     pub fn draw(self: *Projectile, alpha: f32) void {
-        u.drawEntity(self.x, self.y, self.width(), self.height(), u.opacity(preset(self.class).color, alpha));
+        u.drawEntity(self.x, self.y, self.width(), self.height(), u.opacity(self.color, alpha));
     }
 
     pub fn update(self: *Projectile) void {
@@ -1210,16 +1213,15 @@ pub const Projectile = struct {
         life: i16,
         damage: i16,
         speed: f16,
-        color: rl.Color,
     };
 
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .life = 40, .speed = 8, .color = rl.Color.sky_blue, .width = 4, .height = 4, .damage = 250 },
-            1 => Properties{ .life = 56, .speed = 14, .color = rl.Color.blue, .width = 4, .height = 4, .damage = 750 },
-            2 => Properties{ .life = 128, .speed = 6, .color = rl.Color.dark_blue, .width = 8, .height = 8, .damage = 2000 },
-            3 => Properties{ .life = 72, .speed = 12, .color = rl.Color.violet, .width = 6, .height = 6, .damage = 1250 },
+            0 => Properties{ .life = 40, .speed = 8, .width = 4, .height = 4, .damage = 250 },
+            1 => Properties{ .life = 56, .speed = 14, .width = 4, .height = 4, .damage = 750 },
+            2 => Properties{ .life = 128, .speed = 6, .width = 8, .height = 8, .damage = 2000 },
+            3 => Properties{ .life = 72, .speed = 12, .width = 6, .height = 6, .damage = 1250 },
             else => @panic("Invalid projectile class"),
         };
     }
@@ -1238,6 +1240,7 @@ pub const Projectile = struct {
             .y = delta.mapOffsetY(source.y()),
             .life = from_class.life,
             .angle = angle,
+            .color = source.color(1),
             .targets = Grid.sectionEntities(&main.World.grid, u.Grid.x(source.x()), u.Grid.x(source.y())),
         };
         return projectile;

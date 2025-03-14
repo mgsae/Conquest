@@ -37,9 +37,10 @@ pub fn printGridEntities(grid: *e.Grid) void {
     const players = e.players.items.len;
     const structures = e.structures.items.len;
     const units = e.units.items.len;
-    std.debug.print("Total entities on the grid: {} ({} players, {} structures, {} units).\n", .{ total_entities, players, structures, units });
-    if (total_entities != players + structures + units) {
-        std.log.err("DISCREPANCY DETECTED! Number of entities does not match the combined number of players, structures, and units.\n", .{});
+    const resources = e.resources.items.len;
+    std.debug.print("Total entities on the grid: {} ({} players, {} structures, {} units, {} resources).\n", .{ total_entities, players, structures, units, resources });
+    if (total_entities != players + structures + units + resources) {
+        std.log.err("DISCREPANCY DETECTED! Number of entities does not match the combined number of players, structures, units, and resources.\n", .{});
     }
 }
 
@@ -1154,7 +1155,7 @@ pub const Waypoint: type = struct {
     }
 
     /// Takes the grid column/row of a given cell and returns the 4 waypoints along its edges. Order: left mid, top mid, right mid, bottom mid.
-    pub fn cellSides(grid_x: usize, grid_y: usize) [4]?Point {
+    pub fn cellSidesStraight(grid_x: usize, grid_y: usize) [4]?Point {
         const node_x = @as(u16, @intCast(grid_x * Grid.cell_size));
         const node_y = @as(u16, @intCast(grid_y * Grid.cell_size));
 
@@ -1168,6 +1169,19 @@ pub const Waypoint: type = struct {
             if (!horizontal) Point.at(node_x + Grid.cell_half, node_y + Grid.cell_size) else null, // bottom mid
         };
     }
+    // New cellsides fn that does not enforce vert/horz path
+    pub fn cellSides(grid_x: usize, grid_y: usize) [4]?Point {
+        const node_x = @as(u16, @intCast(grid_x * Grid.cell_size));
+        const node_y = @as(u16, @intCast(grid_y * Grid.cell_size));
+
+        return [4]?Point{
+            Point.at(node_x, node_y + Grid.cell_half), // left mid
+            Point.at(node_x + Grid.cell_half, node_y), // top mid
+            Point.at(node_x + Grid.cell_size, node_y + Grid.cell_half), // right mid
+            Point.at(node_x + Grid.cell_half, node_y + Grid.cell_size), // bottom mid
+        };
+    }
+
     /// Takes world `x`,`y` cordinates and returns the closest waypoint.
     pub fn closest(x: u16, y: u16) Point {
         const waypoints = cellSides(Grid.x(x), Grid.y(y));
@@ -1946,14 +1960,14 @@ pub fn initTexture(filename: [*:0]const u8) rl.Texture2D {
     return rl.loadTexture(filename);
 }
 
-pub fn drawTexture(texture: rl.Texture2D, x: i32, y: i32, tint: rl.Color) void {
+pub fn drawTexture(texture: rl.Texture2D, x: f32, y: f32, tint: rl.Color) void {
     const textureWidth = texture.width;
     const textureHeight = texture.height;
-    const zoom = main.Camera.canvas_zoom;
-    const centerX = x - @divTrunc(textureWidth, 2);
-    const centerY = y - @divTrunc(textureHeight, 2);
-    const canvasXPos = canvasX(centerX, main.Camera.canvas_offset_x, zoom);
-    const canvasYPos = canvasY(centerY, main.Camera.canvas_offset_y, zoom);
+    const zoom = @round(main.Camera.canvas_zoom);
+    const centerX = x - @round(asF32(c_int, textureWidth) / 2);
+    const centerY = y - @round(asF32(c_int, textureHeight) / 2);
+    const canvasXPos = canvasX(asI32(f32, centerX), main.Camera.canvas_offset_x, zoom);
+    const canvasYPos = canvasY(asI32(f32, centerY), main.Camera.canvas_offset_y, zoom);
     const position = Vector.fromIntegers(canvasXPos, canvasYPos);
     rl.drawTextureEx(texture, position.toRaylib(), 0.0, zoom, tint);
 }

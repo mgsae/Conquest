@@ -111,32 +111,34 @@ pub const World = struct {
         defer allocator.free(resource_coords);
         // Class 0 resources (capacity)
         for (resource_coords) |coord| {
-            resource = try e.Resource.create(coord.x, coord.y, 0);
-            try e.resources.append(resource);
+            if (u.randomU16(100) > 50) {
+                resource = try e.Resource.create(coord.x, coord.y, 0);
+                try e.resources.append(resource);
+            }
         }
         // Class 1 resource (dividers)
-        //for (0..grid.columns) |col| {
-        //    if (col % 3 == 0) {
-        //        const x = col * u.Grid.cell_size;
-        //        for (0..height) |y| {
-        //            if (y % (u.Subcell.size / 2) == 0) {
-        //                resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
-        //                try e.resources.append(resource);
-        //            }
-        //        }
-        //    }
-        //}
-        //for (0..grid.rows) |row| {
-        //    if (row % 3 == 0) {
-        //        const y = row * u.Grid.cell_size;
-        //        for (0..width) |x| {
-        //            if (x % (u.Subcell.size / 2) == 0) {
-        //                resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
-        //                try e.resources.append(resource);
-        //            }
-        //        }
-        //    }
-        //}
+        for (0..grid.columns) |col| {
+            if (col % 3 == 0) {
+                const x = col * u.Grid.cell_size;
+                for (0..height) |y| {
+                    if (y % (u.Subcell.size / 2) == 0) {
+                        resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
+                        try e.resources.append(resource);
+                    }
+                }
+            }
+        }
+        for (0..grid.rows) |row| {
+            if (row % 3 == 0) {
+                const y = row * u.Grid.cell_size;
+                for (0..width) |x| {
+                    if (x % (u.Subcell.size / 2) == 0) {
+                        resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
+                        try e.resources.append(resource);
+                    }
+                }
+            }
+        }
     }
 
     fn initializePlayers(allocator: *std.mem.Allocator, map: Map, self_id: u8) !void {
@@ -166,31 +168,20 @@ pub fn main() anyerror!void {
 
     // Initialize window
     //--------------------------------------------------------------------------------------
-    Camera.width = rl.getMonitorWidth(0); // Sets window to (1st) monitor dimensions
-    Camera.height = rl.getMonitorHeight(0); // Sets window to (1st) monitor dimensions
-    rl.initWindow(Camera.width, Camera.height, "Conquest");
-    defer rl.closeWindow(); // Close window and OpenGL context
+    var flags = rl.ConfigFlags{};
+    flags.window_highdpi = true;
+    flags.vsync_hint = false;
+    flags.borderless_windowed_mode = true;
+    flags.fullscreen_mode = false;
 
-    const flags = rl.ConfigFlags{
-        .fullscreen_mode = false,
-        .window_resizable = true,
-        .window_undecorated = true, // Removes window border
-        .window_transparent = false,
-        .msaa_4x_hint = false,
-        .vsync_hint = false,
-        .window_hidden = false,
-        .window_always_run = false,
-        .window_minimized = false,
-        .window_maximized = false,
-        .window_unfocused = false,
-        .window_topmost = false,
-        .window_highdpi = false,
-        .window_mouse_passthrough = false,
-        .borderless_windowed_mode = false,
-        .interlaced_hint = false,
-    };
-    rl.setWindowState(flags);
-    rl.setTargetFPS(120);
+    rl.setConfigFlags(flags);
+
+    // Initialize window
+    Camera.width = rl.getMonitorWidth(0);
+    Camera.height = rl.getMonitorHeight(0);
+    rl.initWindow(Camera.width, Camera.height, "Conquest");
+    //rl.setTargetFPS(120);
+    defer rl.closeWindow(); // Close window and OpenGL context
 
     //--------------------------------------------------------------------------------------
     // Game initialization (move to its own function/context)
@@ -677,7 +668,7 @@ pub fn drawMap() void {
         if (y % (u.Subcell.size) == 0) {
             for (0..World.width) |x| {
                 if (x % (u.Subcell.size) == 0) {
-                    u.drawTexture(landTexture.?.*, u.asI32(usize, x), u.asI32(usize, y), rl.Color.white);
+                    u.drawTexture(landTexture.?.*, u.asF32(usize, x), u.asF32(usize, y), rl.Color.white);
                 }
             }
         }
@@ -744,6 +735,20 @@ pub fn drawInterface() void {
     rl.drawText(text, 50, rl.getScreenHeight() - 160, 28, rl.Color.black);
     text = std.fmt.bufPrintZ(&buffer, "Structures: {}", .{Player.structure_count}) catch "Error";
     rl.drawText(text, 50, rl.getScreenHeight() - 120, 28, rl.Color.black);
+    if (Player.selected != null) {
+        text = std.fmt.bufPrintZ(&buffer, "Owner: {}", .{Player.selected.?.owner()}) catch "Error";
+        rl.drawText(text, 300, rl.getScreenHeight() - 160, 28, rl.Color.black);
+        const kind = switch (Player.selected.?.kind) {
+            e.Kind.Player => "Player",
+            e.Kind.Unit => "Unit",
+            e.Kind.Structure => "Structure",
+            e.Kind.Resource => "Resource",
+        };
+        text = std.fmt.bufPrintZ(&buffer, "Kind: {s}", .{kind}) catch "Error";
+        rl.drawText(text, 300, rl.getScreenHeight() - 120, 28, rl.Color.black);
+        text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{Player.selected.?.life()}) catch "Error";
+        rl.drawText(text, 300, rl.getScreenHeight() - 80, 28, rl.Color.black);
+    }
 
     // Development tools
     rl.drawFPS(40, 40);
