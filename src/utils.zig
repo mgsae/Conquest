@@ -1439,6 +1439,47 @@ pub fn findConnectedStructures(grid: *e.Grid, origin: *e.Structure) !?[]*e.Struc
     }
 }
 
+// Game data
+//----------------------------------------------------------------------------------
+pub fn kindToString(kind: e.Kind) []const u8 {
+    return switch (kind) {
+        .Player => "Player",
+        .Unit => "Unit",
+        .Structure => "Structure",
+        .Resource => "Resource",
+    };
+}
+
+pub fn unitTypeFromClass(class: u8) []const u8 {
+    return switch (class) {
+        0 => "Gatherer",
+        1 => "Dude",
+        2 => "Megadude",
+        3 => "Other Guy",
+        else => "Huh..? Unknown unit?",
+    };
+}
+
+pub fn structureTypeFromClass(class: u8) []const u8 {
+    return switch (class) {
+        0 => "Gatherer Spawner",
+        1 => "Dude Spawner",
+        2 => "Megadude Spawner",
+        3 => "Other Guy Spawner",
+        else => "Huh..? Unknown building?",
+    };
+}
+
+pub fn resourceTypeFromClass(class: u8) []const u8 {
+    return switch (class) {
+        0 => "Some Nice Shit",
+        1 => "Some Other Nice Stuff",
+        2 => "Ehh....?",
+        3 => "Is there more?",
+        else => "Huh..? Unknown resource?",
+    };
+}
+
 // AI
 //----------------------------------------------------------------------------------
 
@@ -1960,14 +2001,14 @@ pub fn initTexture(filename: [*:0]const u8) rl.Texture2D {
     return rl.loadTexture(filename);
 }
 
-pub fn drawTexture(texture: rl.Texture2D, x: f32, y: f32, tint: rl.Color) void {
+pub fn drawTexture(texture: rl.Texture2D, x: i32, y: i32, tint: rl.Color) void {
     const textureWidth = texture.width;
     const textureHeight = texture.height;
-    const zoom = @round(main.Camera.canvas_zoom);
-    const centerX = x - @round(asF32(c_int, textureWidth) / 2);
-    const centerY = y - @round(asF32(c_int, textureHeight) / 2);
-    const canvasXPos = canvasX(asI32(f32, centerX), main.Camera.canvas_offset_x, zoom);
-    const canvasYPos = canvasY(asI32(f32, centerY), main.Camera.canvas_offset_y, zoom);
+    const zoom = main.Camera.canvas_zoom;
+    const centerX = x - @divFloor(textureWidth, 2);
+    const centerY = y - @divFloor(textureHeight, 2);
+    const canvasXPos = canvasX(centerX, main.Camera.canvas_offset_x, zoom);
+    const canvasYPos = canvasY(centerY, main.Camera.canvas_offset_y, zoom);
     const position = Vector.fromIntegers(canvasXPos, canvasYPos);
     rl.drawTextureEx(texture, position.toRaylib(), 0.0, zoom, tint);
 }

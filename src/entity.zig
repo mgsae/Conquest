@@ -1494,7 +1494,9 @@ pub const Grid = struct {
                 }
             }
         } else {
-            std.debug.print("Error: Attempted to remove entity {} from non-existent cell {}.\n", .{ @intFromPtr(entity), key });
+            std.debug.print("PANIC: Entity {} attempted to remove from non-existent cell (x={}, y={}, hash={})\nFor comparison, player is at x={}, y={}.\n", .{ @intFromPtr(entity), x, y, key, players.items[1].x, players.items[1].y });
+            std.debug.print("Entity last known position: (x={}, y={})\n", .{ entity.x(), entity.y() });
+            std.debug.print("Is entity still in grid?: {}\n", .{self.cells.contains(key)});
             @panic("Attempted to remove entity from non-existent cell!");
         }
 
@@ -1511,7 +1513,7 @@ pub const Grid = struct {
             // std.debug.print("(Grid update start) Moving entity with ptr {} from cell hash {} to cell hash {}.\n", .{ @intFromPtr(entity), oldKey, newKey });
 
             self.removeFromCell(entity, old_x, old_y) catch |err| {
-                std.log.err("Failed to remove entity {} from old cell {}, error: {}\n", .{ @intFromPtr(entity), oldKey, err });
+                std.log.err("Failed to remove entity {} ({}) from old cell (x={}, y={}, hash={}). Error: {}\n", .{ @intFromPtr(entity), entity.kind, old_x, old_y, oldKey, err });
                 return;
             };
 

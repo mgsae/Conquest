@@ -121,7 +121,7 @@ pub const World = struct {
             if (col % 3 == 0) {
                 const x = col * u.Grid.cell_size;
                 for (0..height) |y| {
-                    if (y % (u.Subcell.size / 2) == 0) {
+                    if (y % (u.Subcell.size / 2) == 0 and y % 1000 != 0) {
                         resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
                         try e.resources.append(resource);
                     }
@@ -132,7 +132,7 @@ pub const World = struct {
             if (row % 3 == 0) {
                 const y = row * u.Grid.cell_size;
                 for (0..width) |x| {
-                    if (x % (u.Subcell.size / 2) == 0) {
+                    if (x % (u.Subcell.size / 2) == 0 and x % 1000 != 0) {
                         resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
                         try e.resources.append(resource);
                     }
@@ -310,7 +310,7 @@ pub fn main() anyerror!void {
         rl.beginDrawing();
         defer rl.endDrawing();
 
-        rl.clearBackground(rl.Color.white);
+        rl.clearBackground(rl.Color.black);
         draw(profile_frame);
         if (profile_frame) u.endTimer(0, "Drawing phase took {} seconds in total.\n");
 
@@ -668,7 +668,7 @@ pub fn drawMap() void {
         if (y % (u.Subcell.size) == 0) {
             for (0..World.width) |x| {
                 if (x % (u.Subcell.size) == 0) {
-                    u.drawTexture(landTexture.?.*, u.asF32(usize, x), u.asF32(usize, y), rl.Color.white);
+                    u.drawTexture(landTexture.?.*, @as(i32, @intCast(x)), @as(i32, @intCast(y)), rl.Color.white);
                 }
             }
         }
@@ -728,26 +728,33 @@ fn drawEntities(profile_frame: bool) void {
 pub fn drawInterface() void {
     if (Player.build_guide != null) drawGuide(Player.build_guide.?);
 
-    // dashboard
+    // Dashboard
     rl.drawRectangle(0, rl.getScreenHeight() - 200, rl.getScreenWidth(), 200, rl.Color.white);
     var buffer: [64]u8 = undefined;
-    var text = std.fmt.bufPrintZ(&buffer, "Units: {}", .{Player.unit_count}) catch "Error";
-    rl.drawText(text, 50, rl.getScreenHeight() - 160, 28, rl.Color.black);
+
+    var text = std.fmt.bufPrintZ(&buffer, "Player: {?}", .{Player.id}) catch "Error";
+    rl.drawText(text, 50, rl.getScreenHeight() - 180, 28, rl.Color.black);
+    text = std.fmt.bufPrintZ(&buffer, "Units: {}", .{Player.unit_count}) catch "Error";
+    rl.drawText(text, 50, rl.getScreenHeight() - 140, 28, rl.Color.black);
     text = std.fmt.bufPrintZ(&buffer, "Structures: {}", .{Player.structure_count}) catch "Error";
-    rl.drawText(text, 50, rl.getScreenHeight() - 120, 28, rl.Color.black);
+    rl.drawText(text, 50, rl.getScreenHeight() - 100, 28, rl.Color.black);
+    if (Player.build_guide != null) {
+        text = std.fmt.bufPrintZ(&buffer, "Creating: {s}", .{u.structureTypeFromClass(Player.build_guide.?)}) catch "Error";
+        rl.drawText(text, 50, rl.getScreenHeight() - 60, 28, rl.Color.black);
+    }
+
     if (Player.selected != null) {
-        text = std.fmt.bufPrintZ(&buffer, "Owner: {}", .{Player.selected.?.owner()}) catch "Error";
-        rl.drawText(text, 300, rl.getScreenHeight() - 160, 28, rl.Color.black);
-        const kind = switch (Player.selected.?.kind) {
-            e.Kind.Player => "Player",
-            e.Kind.Unit => "Unit",
-            e.Kind.Structure => "Structure",
-            e.Kind.Resource => "Resource",
+        text = std.fmt.bufPrintZ(&buffer, "Player: {}", .{Player.selected.?.owner()}) catch "Error";
+        rl.drawText(text, 300, rl.getScreenHeight() - 180, 28, rl.Color.black);
+        text = switch (Player.selected.?.kind) {
+            e.Kind.Player => "Creator",
+            e.Kind.Unit => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(Player.selected.?.ref.Unit.class), u.kindToString(e.Kind.Unit) }) catch "Error",
+            e.Kind.Structure => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(Player.selected.?.ref.Structure.class), u.kindToString(e.Kind.Structure) }) catch "Error",
+            e.Kind.Resource => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(Player.selected.?.ref.Resource.class), u.kindToString(e.Kind.Resource) }) catch "Error",
         };
-        text = std.fmt.bufPrintZ(&buffer, "Kind: {s}", .{kind}) catch "Error";
-        rl.drawText(text, 300, rl.getScreenHeight() - 120, 28, rl.Color.black);
+        rl.drawText(text, 300, rl.getScreenHeight() - 140, 28, rl.Color.black);
         text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{Player.selected.?.life()}) catch "Error";
-        rl.drawText(text, 300, rl.getScreenHeight() - 80, 28, rl.Color.black);
+        rl.drawText(text, 300, rl.getScreenHeight() - 100, 28, rl.Color.black);
     }
 
     // Development tools
