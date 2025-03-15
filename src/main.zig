@@ -428,6 +428,8 @@ pub fn updateCanvasZoom(mousewheel_delta: f32) void {
         // Adjust offsets to keep the mouse position consistent
         Camera.setX(Camera.canvas_offset_x_target + (canvas_mouse_x_new_zoom - canvas_mouse_x_old_zoom) * Camera.canvas_zoom);
         Camera.setY(Camera.canvas_offset_y_target + (canvas_mouse_y_new_zoom - canvas_mouse_y_old_zoom) * Camera.canvas_zoom);
+
+        // std.debug.print("Updated zoom: {d} -- drawing texture zoom: {d}. \n", .{ Camera.canvas_zoom, @max(1, @ceil(Camera.canvas_zoom)) });
     }
 }
 
@@ -662,7 +664,7 @@ pub fn drawMap() void {
         std.debug.print("Warning: 'land' texture not found!\n", .{});
         return;
     }
-
+    rl.setTextureFilter(landTexture.?.*, rl.TextureFilter.texture_filter_point);
     // Draw the map area using the texture
     for (0..World.height) |y| {
         if (y % (u.Subcell.size) == 0) {

@@ -2004,7 +2004,7 @@ pub fn initTexture(filename: [*:0]const u8) rl.Texture2D {
 pub fn drawTexture(texture: rl.Texture2D, x: i32, y: i32, tint: rl.Color) void {
     const textureWidth = texture.width;
     const textureHeight = texture.height;
-    const zoom = main.Camera.canvas_zoom;
+    const zoom = @max(1, @ceil(main.Camera.canvas_zoom));
     const centerX = x - @divFloor(textureWidth, 2);
     const centerY = y - @divFloor(textureHeight, 2);
     const canvasXPos = canvasX(centerX, main.Camera.canvas_offset_x, zoom);
