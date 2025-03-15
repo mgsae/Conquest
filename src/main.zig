@@ -11,6 +11,7 @@ pub const Config = struct {
     pub const PLAYER_SEARCH_LIMIT = 2056; // Player collision search limit, must exceed #entities in 3x3 cells
     pub const UNIT_SEARCH_LIMIT = 1028; // Unit collision search limit
     pub const BUFFERSIZE = 65536; // Limit to number of entities updated via sectionSearch per tick
+    pub const DB_SIZE_Y = 200;
     pub var last_tick_time: f64 = 0.0;
     pub var profile_mode = false;
     pub var profile_timer = [4]f64{ 0, 0, 0, 0 };
@@ -468,7 +469,7 @@ pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
 
     // Restrict target canvas to map bounds
     const min_offset_x: f32 = screen_width_float - @as(f32, @floatFromInt(World.width)) * Camera.canvas_zoom;
-    const min_offset_y: f32 = screen_height_float - @as(f32, @floatFromInt(World.height)) * Camera.canvas_zoom;
+    const min_offset_y: f32 = (screen_height_float - Config.DB_SIZE_Y) - @as(f32, @floatFromInt(World.height)) * Camera.canvas_zoom;
     if (Camera.canvas_offset_x_target > 0) Camera.canvas_offset_x_target = 0;
     if (Camera.canvas_offset_y_target > 0) Camera.canvas_offset_y_target = 0;
     if (Camera.canvas_offset_x_target < min_offset_x) Camera.canvas_offset_x_target = min_offset_x;
@@ -731,7 +732,7 @@ pub fn drawInterface() void {
     if (Player.build_guide != null) drawGuide(Player.build_guide.?);
 
     // Dashboard
-    rl.drawRectangle(0, rl.getScreenHeight() - 200, rl.getScreenWidth(), 200, rl.Color.white);
+    rl.drawRectangle(0, rl.getScreenHeight() - Config.DB_SIZE_Y, rl.getScreenWidth(), Config.DB_SIZE_Y, rl.Color.white);
     var buffer: [64]u8 = undefined;
 
     var text = std.fmt.bufPrintZ(&buffer, "Player: {?}", .{Player.id}) catch "Error";
