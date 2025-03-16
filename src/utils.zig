@@ -514,7 +514,7 @@ pub const Vector = struct {
     }
 
     pub fn fromRaylib(rl_vector: rl.Vector2) Vector {
-        return fromCoords(rl_vector.x, rl_vector.y);
+        return fromFloats(rl_vector.x, rl_vector.y);
     }
 
     pub fn mapOffsetX(self: Vector, x_value: u16) u16 {

@@ -358,7 +358,6 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
             Player.build_order = Player.build_guide.?;
         }
     } else { // Build guide is inactive
-        std.debug.print("Scaled zoom: {d}\n", .{u.zoomNormalized(Camera.canvas_zoom)});
         if (stored_mouse_input_l.equals(rl.Vector2.zero()) == 0) { // Mouse left pressed, checks/stores selection
             const map_coords = u.screenToMap(stored_mouse_input_l);
             const at_mouse = World.grid.collidesWith(map_coords[0], map_coords[1], 1, 1, null) catch null;
@@ -370,7 +369,7 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
                 Player.selection_origin = stored_mouse_input_l; // Saves mouse position as box origin
                 std.debug.print("Mouse pressed not on entity, starting selection box.\n", .{});
             }
-            // Making area selection, mouse left released
+            // Making area selection, but mouse left not down
         } else if (Player.selection_origin != null and !(rl.isMouseButtonDown(rl.MouseButton.mouse_button_left))) {
             std.debug.print("Mouse released while selection started, finding selection.\n", .{});
             const start = Player.selection_origin.?;
@@ -382,19 +381,11 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
             const min_y = @min(start.y, end.y);
             const max_y = @max(start.y, end.y);
 
-            std.debug.print("Selection box start {d}/{d}, end {d}/{d}.\n", .{ start.x, start.y, end.x, end.y });
-            std.debug.print("Selection box bounds, min {d}/{d}, max {d}/{d}.\n", .{ min_x, min_y, max_x, max_y });
-
             if (max_x > min_x and max_y > min_y) {
                 const map_min = u.screenToMap(rl.Vector2.init(min_x, min_y));
                 const map_max = u.screenToMap(rl.Vector2.init(max_x, max_y));
-                const zoom = u.zoomNormalized(Camera.canvas_zoom);
-                const width = u.asU16(f32, @max(1, u.asF32(u16, (map_max[0] - map_min[0] + 1)) * zoom));
-                const height = u.asU16(f32, @max(1, u.asF32(u16, (map_max[1] - map_min[1] + 1)) * zoom));
 
-                std.debug.print("Checking collision within map coords from {d}/{d} to {d}/{d}.\n", .{ map_min[0], map_min[1], map_max[0], map_max[1] });
-
-                const found = World.grid.collidesWith(map_min[0], map_min[1], width, height, null) catch null;
+                const found = World.grid.biggestInArea(map_min[0], map_min[1], map_max[0], map_max[1]) catch null;
 
                 // Set selection to first found entity
                 Player.selected = found;
@@ -750,6 +741,7 @@ fn drawEntities(profile_frame: bool) void {
 /// Draws user interface
 pub fn drawInterface() void {
     if (Player.build_guide != null) drawGuide(Player.build_guide.?);
+    if (Player.selection_origin != null) drawSelection(Player.selection_origin.?);
 
     // Dashboard
     rl.drawRectangle(0, rl.getScreenHeight() - Config.DB_SIZE_Y, rl.getScreenWidth(), Config.DB_SIZE_Y, rl.Color.white);
@@ -1053,4 +1045,16 @@ pub fn drawGuide(class: u8) void {
     } else {
         u.drawGuide(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));
     }
+}
+
+pub fn drawSelection(origin: rl.Vector2) void {
+    if (Player.self == null) return;
+    const col = u.idToColor(Player.id orelse 0, 0.5);
+    const mouse_pos = rl.getMousePosition();
+    const min_x = @min(origin.x, mouse_pos.x);
+    const max_x = @max(origin.x, mouse_pos.x);
+    const min_y = @min(origin.y, mouse_pos.y);
+    const max_y = @max(origin.y, mouse_pos.y);
+    const rect = rl.Rectangle.init(min_x, min_y, max_x - min_x, max_y - min_y);
+    rl.drawRectangleLinesEx(rect, 1, col);
 }

@@ -1639,4 +1639,27 @@ pub const Grid = struct {
         }
         return null;
     }
+
+    pub fn biggestInArea(self: *Grid, min_x: u16, min_y: u16, max_x: u16, max_y: u16) !?*Entity {
+        const nearby_entities = try self.sectionSearch((min_x + max_x) / 2, // Search at center of selection box
+            (min_y + max_y) / 2, main.Config.PLAYER_SEARCH_LIMIT);
+
+        var biggest_entity: ?*Entity = null;
+
+        for (nearby_entities) |entity| {
+            const entity_left = entity.x();
+            const entity_right = entity.x() + entity.width();
+            const entity_top = entity.y();
+            const entity_bottom = entity.y() + entity.height();
+
+            if ((min_x < entity_right) and (max_x > entity_left) and
+                (min_y < entity_bottom) and (max_y > entity_top))
+            {
+                if (biggest_entity == null or u.bigger(entity.width(), entity.height(), biggest_entity.?.width(), biggest_entity.?.height()) == 0) {
+                    biggest_entity = entity;
+                }
+            }
+        }
+        return biggest_entity;
+    }
 };
