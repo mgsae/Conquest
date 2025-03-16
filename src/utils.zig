@@ -1564,6 +1564,13 @@ pub fn screenToPlayerVector(screen_position: rl.Vector2) rl.Vector2 {
     return rl.Vector2.init(screen_position.x - @as(f32, @floatFromInt(player_x)), screen_position.y - @as(f32, @floatFromInt(player_y)));
 }
 
+/// Returns zoom level scaled to `0-1`, where `0` is fully zoomed out and `1` is fully zoomed in.
+pub fn zoomNormalized(zoom: f32) f32 {
+    const zoom_range = main.Camera.ZOOM_MAX - main.Camera.canvas_max;
+    const clamped_zoom = std.math.clamp(zoom, main.Camera.canvas_max, main.Camera.ZOOM_MAX);
+    return (clamped_zoom - main.Camera.canvas_max) / zoom_range;
+}
+
 // Animation
 //----------------------------------------------------------------------------------
 pub const Interpolation = struct {

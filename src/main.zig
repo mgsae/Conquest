@@ -55,6 +55,7 @@ pub const Player = struct {
     pub var self: ?*e.Player = null;
     pub var id: ?u8 = null;
     pub var selected: ?*e.Entity = null;
+    pub var selection_origin: ?rl.Vector2 = null;
     pub var changed_x: ?u16 = null;
     pub var changed_y: ?u16 = null;
     pub var build_guide: ?u8 = null;
@@ -112,33 +113,13 @@ pub const World = struct {
         defer allocator.free(resource_coords);
         // Class 0 resources (capacity)
         for (resource_coords) |coord| {
-            if (u.randomU16(100) > 50) {
-                resource = try e.Resource.create(coord.x, coord.y, 0);
-                try e.resources.append(resource);
-            }
+            resource = try e.Resource.create(coord.x, coord.y, 0);
+            try e.resources.append(resource);
         }
         // Class 1 resource (dividers)
-        for (0..grid.columns) |col| {
-            if (col % 3 == 0) {
-                const x = col * u.Grid.cell_size;
-                for (0..height) |y| {
-                    if (y % (u.Subcell.size / 2) == 0 and y % 1000 != 0) {
-                        resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
-                        try e.resources.append(resource);
-                    }
-                }
-            }
-        }
-        for (0..grid.rows) |row| {
-            if (row % 3 == 0) {
-                const y = row * u.Grid.cell_size;
-                for (0..width) |x| {
-                    if (x % (u.Subcell.size / 2) == 0 and x % 1000 != 0) {
-                        resource = try e.Resource.create(u.asU16(usize, x), u.asU16(usize, y), 1);
-                        try e.resources.append(resource);
-                    }
-                }
-            }
+        for (0..100) |_| {
+            resource = try e.Resource.create(u.randomU16(World.width), u.randomU16(World.height), 1);
+            try e.resources.append(resource);
         }
     }
 
@@ -298,12 +279,13 @@ pub fn main() anyerror!void {
         // Controls
         //----------------------------------------------------------------------------------
         if (profile_frame) u.startTimer(0, "CONTROLS PHASE.\n");
+
         updateControls(stored_mouse_input[0], stored_mouse_input[1], stored_mousewheel, stored_key_input, &Player.changed_x, &Player.changed_y, profile_frame);
         stored_mousewheel = 0.0;
         stored_key_input = 0;
         stored_mouse_input = [2]rl.Vector2{ rl.Vector2.zero(), rl.Vector2.zero() };
-        if (profile_frame) u.endTimer(0, "Controls phase took {} seconds in total.\n");
 
+        if (profile_frame) u.endTimer(0, "Controls phase took {} seconds in total.\n");
         // Drawing
         //----------------------------------------------------------------------------------
         if (profile_frame) u.startTimer(0, "DRAWING PHASE.\n");
@@ -366,25 +348,63 @@ fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vec
 //----------------------------------------------------------------------------------
 fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vector2, mousewheel_delta: f32, key_input: u32, changed_x: *?u16, changed_y: *?u16, profile_frame: bool) void {
     if (profile_frame) u.startTimer(1, "- Updating controls.");
-    // While build guide is active
+
+    // Build guide is active, i.e. player is placing a structure
     if (Player.build_guide != null) {
-        Player.selected = null; // No selection
+        Player.selected = null; // Clear selection
         if (stored_mouse_input_r.equals(rl.Vector2.zero()) == 0) Player.build_guide = null; // If mouse right is pressed, cancels build guide
         if (Config.keys.actionActive(key_input, u.Key.Action.BuildConfirm)) {
             std.debug.print("Set player order!\n", .{});
             Player.build_order = Player.build_guide.?;
         }
-    } else { // Whenever build guide is inactive
-        if (stored_mouse_input_l.equals(rl.Vector2.zero()) == 0) { // If mouse left is clicked, checks/stores selection
+    } else { // Build guide is inactive
+        std.debug.print("Scaled zoom: {d}\n", .{u.zoomNormalized(Camera.canvas_zoom)});
+        if (stored_mouse_input_l.equals(rl.Vector2.zero()) == 0) { // Mouse left pressed, checks/stores selection
             const map_coords = u.screenToMap(stored_mouse_input_l);
             const at_mouse = World.grid.collidesWith(map_coords[0], map_coords[1], 1, 1, null) catch null;
-            // Sets variable directly to entity or null
-            if (at_mouse) |entity| {
+
+            if (at_mouse) |entity| { // Direct click selection
                 Player.selected = if (entity != Player.selected) entity else null;
                 std.debug.print("Selected entity {}.\n", .{@intFromPtr(entity)});
+            } else if (Player.selection_origin == null) { // Start selection box
+                Player.selection_origin = stored_mouse_input_l; // Saves mouse position as box origin
+                std.debug.print("Mouse pressed not on entity, starting selection box.\n", .{});
+            }
+            // Making area selection, mouse left released
+        } else if (Player.selection_origin != null and !(rl.isMouseButtonDown(rl.MouseButton.mouse_button_left))) {
+            std.debug.print("Mouse released while selection started, finding selection.\n", .{});
+            const start = Player.selection_origin.?;
+            const end = rl.getMousePosition();
+            Player.selection_origin = null; // Reset selection box
+
+            const min_x = @min(start.x, end.x);
+            const max_x = @max(start.x, end.x);
+            const min_y = @min(start.y, end.y);
+            const max_y = @max(start.y, end.y);
+
+            std.debug.print("Selection box start {d}/{d}, end {d}/{d}.\n", .{ start.x, start.y, end.x, end.y });
+            std.debug.print("Selection box bounds, min {d}/{d}, max {d}/{d}.\n", .{ min_x, min_y, max_x, max_y });
+
+            if (max_x > min_x and max_y > min_y) {
+                const map_min = u.screenToMap(rl.Vector2.init(min_x, min_y));
+                const map_max = u.screenToMap(rl.Vector2.init(max_x, max_y));
+                const zoom = u.zoomNormalized(Camera.canvas_zoom);
+                const width = u.asU16(f32, @max(1, u.asF32(u16, (map_max[0] - map_min[0] + 1)) * zoom));
+                const height = u.asU16(f32, @max(1, u.asF32(u16, (map_max[1] - map_min[1] + 1)) * zoom));
+
+                std.debug.print("Checking collision within map coords from {d}/{d} to {d}/{d}.\n", .{ map_min[0], map_min[1], map_max[0], map_max[1] });
+
+                const found = World.grid.collidesWith(map_min[0], map_min[1], width, height, null) catch null;
+
+                // Set selection to first found entity
+                Player.selected = found;
+                if (found != null) {
+                    std.debug.print("Selected entity {} via area selection.\n", .{@intFromPtr(found.?)});
+                } else {
+                    std.debug.print("Deselected entity (no entity found in selection box).\n", .{});
+                }
             } else {
-                Player.selected = null;
-                std.debug.print("Deselected entity.\n", .{});
+                Player.selected = null; // Clears selection
             }
         }
     }
@@ -677,7 +697,7 @@ pub fn drawMap() void {
         }
     }
 
-    // Draw subgrid lines
+    // Draw subgrid lines (maybe while building??? i.e. build_guide is non null)
     //var rowIndex: i32 = 1;
     //while (rowIndex * u.Subcell.size < World.height) : (rowIndex += 1) {
     //    u.drawRect(0, @as(i32, @intCast(u.Subcell.size * rowIndex)), World.width, 2, rl.Color.light_gray);
@@ -809,13 +829,11 @@ const Map = struct { // Encapsulates map properties; see World for currently act
             u.Point{ .x = offset, .y = height - offset },
         };
 
-        // Allocate memory for the slice
         const slice = try allocator.alloc(u.Point, player_count);
         for (slice, 0..) |*coord, i| {
             coord.* = coordinates[i];
         }
 
-        // Debug prints to verify slice before returning
         std.debug.print("Returning coordinates for {} players\n", .{player_count});
         for (slice) |coord| {
             std.debug.print("({}, {})\n", .{ coord.x, coord.y });
@@ -830,6 +848,7 @@ const Map = struct { // Encapsulates map properties; see World for currently act
         const total = (cols * rows) * 2;
         var slice = try allocator.alloc(u.Point, total);
         var index: usize = 0;
+        var local_index: usize = 0;
 
         // Base subcell positions (unrotated base pattern)
         const subcell_positions = [_]u.Point{
@@ -837,9 +856,13 @@ const Map = struct { // Encapsulates map properties; see World for currently act
             u.Point{ .x = 9, .y = 5 },
         };
 
-        for (0..cols) |col| {
+        for (0..cols) |col| { // Places resources on each col/row
             const base_x = u.asU16(usize, col * u.Grid.cell_size);
             for (0..rows) |row| {
+                local_index += 1;
+                if (local_index % 5 == 0) {
+                    continue;
+                }
                 const base_y = u.asU16(usize, row * u.Grid.cell_size);
 
                 // Determine the rotation based on the cell position
