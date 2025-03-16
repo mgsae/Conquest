@@ -387,6 +387,7 @@ pub const Unit = struct {
     model: *u.Model,
     state: State,
     resources: [4]u16,
+    elapsed: i16 = 0,
     projectiles: *std.ArrayList(*Projectile),
 
     pub const State = enum {
@@ -399,24 +400,14 @@ pub const Unit = struct {
 
     pub fn draw(self: *Unit, alpha: f32) void {
         if (self.state == State.Dead) return;
-        // Draws model
+        // Draws model (adjust with state etc.)
         u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
-
-        //if (self.class == 0) { // Testing model for class 0, but expand to all
-        //    if (self.state == State.Carrying) {
-        //        u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
-        //    } else { // change model if carrying
-        //        u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
-        //    }
-        //} else { // Fallback to the previous method for other classes
-        //    u.drawEntityInterpolated(self.x, self.y, self.width(), self.height(), self.entity.color(alpha), self.last_step, self.life);
-        //}
         // If selected by player, draws target circumference with half alpha
         if (main.Player.selected == self.entity) {
             u.drawCircumference(self.target, self.entity.color(alpha / 2));
         }
 
-        u.drawLifeInterpolated(self.x, self.y, preset(self.class).width, self.life, preset(self.class).life, self.last_step, self.life);
+        u.drawLifeInterpolated(self.x, self.y, preset(self.class).width, self.life, preset(self.class).life, self.last_step, self.elapsed);
 
         // Draws projectiles with same alpha
         for (self.projectiles.items) |projectile| {
@@ -425,21 +416,18 @@ pub const Unit = struct {
     }
 
     pub fn update(self: *Unit) !void {
+        if (main.moveDivMultiple(self.elapsed, 6)) self.life -= 1; // Ticks 1 life per 60 ticks
         if (self.life <= 0) { // If dead, sets HP to min to flag for removal, and skips update
             try self.die(null);
             return;
         }
 
-        // Updating model
-        const factor = u.Interpolation.getFactor(self.life, main.World.MOVEMENT_DIVISIONS);
-        self.model.updateRigidBodyInterpolated(0, u.Vector.fromPoint(self.last_step), u.Vector.fromCoords(self.x, self.y), factor);
-
         // Updating movement/action (every 10 ticks)
-        if (main.moveDivision(self.life)) {
+        if (main.moveDivision(self.elapsed)) {
             self.last_step = u.Point.at(self.x, self.y); // Sets last_step to current position
 
             // Every attackrate * 10 ticks (unless carrying)
-            if (main.moveDivMultiple(self.life, preset(self.class).attackrate) and self.state != State.Carrying) {
+            if (main.moveDivMultiple(self.elapsed, preset(self.class).attackrate) and self.state != State.Carrying) {
                 if (self.state == State.Attacking) self.state = State.Default; // Clears attacking state
                 if (self.getAttackTarget()) |target| {
                     if (try self.attack(target)) {
@@ -449,12 +437,16 @@ pub const Unit = struct {
                 }
             }
 
-            if (self.state != State.Attacking) { // If attacked, no move
+            if (self.state != State.Attacking) { // When not attacking, moves
                 const step = self.getStep(); // Generates the next movement step
                 try self.move(step.x, step.y); // Tries to execute the step, may fail/adjust due to collision
             }
             if (self.state == State.Incapacitated) self.state = State.Default; // If incapacitated, resets state
         }
+
+        // Updating model
+        const factor = u.Interpolation.getFactor(self.elapsed, main.World.MOVEMENT_DIVISIONS);
+        self.model.updateRigidBodyInterpolated(0, u.Vector.fromPoint(self.last_step), u.Vector.fromCoords(self.x, self.y), factor);
 
         // Updating projectiles, from last to first, after all other logic
         var i: usize = self.projectiles.items.len;
@@ -471,7 +463,7 @@ pub const Unit = struct {
 
         // If incapacitated, resets last_step every frame to keep interpolation updated
         if (self.state == State.Incapacitated) self.last_step = u.Point.at(self.x, self.y);
-        self.life -= 1;
+        self.elapsed += 1;
     }
 
     /// Searches for collision at new_x,new_y. If no obstacle is found, sets position to x, y. If obstacle is found, tries moving along edge.
@@ -499,7 +491,7 @@ pub const Unit = struct {
         }
 
         if (old_x == self.x and old_y == self.y) { // If no change after moving, retargets
-            if (main.moveDivMultiple(self.life, 2)) { // Alternating between random point and trying to head towards player again
+            if (main.moveDivMultiple(self.elapsed, 2)) { // Alternating between random point and trying to head towards player again
                 self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size); // Random nearby offset
 
             } else { // Tries heading towards player/resource again
@@ -684,22 +676,15 @@ pub const Unit = struct {
 
     /// Calculates and returns the unit's immediate move based on its current `target` and `class`.
     fn getStep(self: *Unit) u.Point {
-
-        // Get the current position of unit and overall distance to target
         const current = u.Point.at(self.x, self.y);
-
-        // If incapacitated, remain in place for tick
         if (self.state == State.Incapacitated) {
-            return current;
+            return current; // If incapacitated, remain in place for tick
         }
-
-        var distance_squared = u.distanceSquared(current, self.target.center);
+        const distance_squared = u.distanceSquared(current, self.target.center);
 
         // Check if within a cell's distance of target
         if (distance_squared <= u.Grid.cell_size_squared) {
             // std.debug.print("Within target cell at {},{}. Target is at {},{}.\n", .{ self.x, self.y, self.target.x, self.target.y });
-            const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(self.target.center.x));
-            const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(self.target.center.y));
 
             // If within perimeter of the target point, retarget
             if (self.target.contains(u.Point.at(self.x, self.y))) {
@@ -737,29 +722,44 @@ pub const Unit = struct {
                         self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
                     }
                 }
-                distance_squared = u.distanceSquared(current, self.target.center); // Recalculates
             }
-
-            // Otherwise go directly towards the target
-            const distance = u.fastSqrt(u.asF32(u32, distance_squared)); // Computes actual distance to ensure arrival
-            const angle = u.deltaToAngle(dx, dy);
-            const magnitude = @min(self.speed(), distance);
-            const vector = u.vectorToDelta(angle, magnitude);
-            return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
-            //
+            return self.getDisplacement(current, self.target.center);
         } else { // If farther than a subcell away, move by waypoints towards the target
-
             const waypoint = u.Waypoint.closestTowards(current, self.target.center, distance_squared, self.last_step);
-            const magnitude = u.adjustToDistance(current, waypoint, self.speed(), self.speed());
-            // Get the offset from the upcoming waypoint
-            const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(waypoint.x));
-            const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(waypoint.y));
-
-            // Translates it into vector to get the new step
-            const angle = u.deltaToAngle(dx, dy);
-            const vector = u.vectorToDelta(angle, magnitude);
-            return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
+            return self.getDisplacement(current, waypoint);
         }
+    }
+
+    /// Returns a point offset by self's `speed` towards `target` from self's `current` position.
+    fn getDisplacement(self: *Unit, current: u.Point, target: u.Point) u.Point {
+        const magnitude = u.adjustToDistance(current, target, self.speed(), self.speed());
+        const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(target.x));
+        const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(target.y));
+
+        const angle = u.deltaToAngle(dx, dy);
+        const vector = u.vectorToDelta(angle, magnitude);
+        var next_point = u.deltaPoint(self.x, self.y, vector[0], vector[1]);
+
+        // Checks point at 5 steps ahead, deviates displacement if collision
+        const lookahead_vector = u.vectorToDelta(angle, magnitude * 5);
+        const lookahead_point = u.deltaPoint(self.x, self.y, lookahead_vector[0], lookahead_vector[1]);
+        if (self.checkCollision(lookahead_point.x, lookahead_point.y) != null) next_point = self.deviateStep(next_point);
+
+        return next_point;
+    }
+
+    fn deviateStep(self: *Unit, step: u.Point) u.Point {
+        const dx = @as(i32, @intCast(self.target.center.x)) - @as(i32, @intCast(step.x));
+        const dy = @as(i32, @intCast(self.target.center.y)) - @as(i32, @intCast(step.y));
+        const base_angle = u.deltaToAngle(dx, dy);
+
+        // Pick a deviation direction based on proximity to target
+        const deviation_angle: f32 = if (dx * dy >= 0) 45.0 else -45.0;
+        const new_angle = base_angle + deviation_angle;
+
+        // Compute new step at the same speed but with the adjusted angle
+        const vector = u.vectorToDelta(new_angle, self.speed());
+        return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
     }
 
     /// Does a concentric search for an enemy.
@@ -868,10 +868,10 @@ pub const Unit = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties { // Would set model here as well
         return switch (class) {
-            0 => Properties{ .speed = 1.5, .width = 20, .height = 20, .life = 2000, .range = 150, .attackrate = 6 },
-            1 => Properties{ .speed = 1.75, .width = 25, .height = 25, .life = 8000, .range = 300, .attackrate = 5 },
-            2 => Properties{ .speed = 1, .width = 45, .height = 45, .life = 10000, .range = 500, .attackrate = 12 },
-            3 => Properties{ .speed = 2, .width = 35, .height = 35, .life = 7000, .range = 250, .attackrate = 8 },
+            0 => Properties{ .speed = 1.5, .width = 20, .height = 20, .life = 50, .range = 150, .attackrate = 6 },
+            1 => Properties{ .speed = 1.75, .width = 25, .height = 25, .life = 200, .range = 300, .attackrate = 5 },
+            2 => Properties{ .speed = 1, .width = 45, .height = 45, .life = 400, .range = 500, .attackrate = 12 },
+            3 => Properties{ .speed = 2, .width = 35, .height = 35, .life = 300, .range = 250, .attackrate = 8 },
             else => @panic("Invalid unit class"),
         };
     }
@@ -1231,10 +1231,10 @@ pub const Projectile = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .life = 40, .speed = 8, .width = 4, .height = 4, .damage = 250 },
-            1 => Properties{ .life = 56, .speed = 14, .width = 4, .height = 4, .damage = 750 },
-            2 => Properties{ .life = 128, .speed = 6, .width = 8, .height = 8, .damage = 2000 },
-            3 => Properties{ .life = 72, .speed = 12, .width = 6, .height = 6, .damage = 1250 },
+            0 => Properties{ .life = 40, .speed = 8, .width = 4, .height = 4, .damage = 12 },
+            1 => Properties{ .life = 56, .speed = 14, .width = 4, .height = 4, .damage = 38 },
+            2 => Properties{ .life = 128, .speed = 6, .width = 8, .height = 8, .damage = 100 },
+            3 => Properties{ .life = 72, .speed = 12, .width = 6, .height = 6, .damage = 70 },
             else => @panic("Invalid projectile class"),
         };
     }
@@ -1289,7 +1289,7 @@ pub const Projectile = struct {
 
     pub fn impact(self: *Projectile, target: *Entity) void {
         const damage = preset(self.class).damage;
-        target.setLife(if (target.life() >= damage) target.life() - damage else 0);
+        target.setLife(if (target.life() > damage) target.life() - damage else 0);
         self.life -= 100; // Should be enough to kill projectile unless multi targets are wanted
         //std.debug.print("Projectile (class {}) hit target {}!\n", .{ self.class, target });
     }

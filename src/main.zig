@@ -116,9 +116,10 @@ pub const World = struct {
             resource = try e.Resource.create(coord.x, coord.y, 0);
             try e.resources.append(resource);
         }
-        // Class 1 resource (dividers)
+        // Class 1 resource (wood)
         for (0..100) |_| {
-            resource = try e.Resource.create(u.randomU16(World.width), u.randomU16(World.height), 1);
+            const xy = u.Subcell.snapToNode(u.randomU16(World.width), u.randomU16(World.height), e.Resource.preset(1).width, e.Resource.preset(1).height);
+            resource = try e.Resource.create(xy[0], xy[1], 1);
             try e.resources.append(resource);
         }
     }
@@ -419,8 +420,9 @@ pub fn updateCanvasZoom(mousewheel_delta: f32) void {
     Camera.canvas_max = u.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), World.width, World.height); // For window resizing
     Camera.canvas_zoom_target = std.math.clamp(Camera.canvas_zoom_target, Camera.canvas_max, Camera.ZOOM_MAX); // Re-sizes canvas to current window size
     if (mousewheel_delta != 0) {
-        const zoom_change: f32 = 1 + u.clamp(u.limitToTickRate(Camera.ZOOM_RATE * mousewheel_delta), -0.25, 0.25); // Zoom rate
-        Camera.canvas_zoom_target = @min(@max(Camera.canvas_max, Camera.canvas_zoom * zoom_change), Camera.ZOOM_MAX); // From <1 (full map) to 10 (zoomed in)
+        const zoom_input: f32 = u.clamp(u.limitToTickRate(Camera.ZOOM_RATE * mousewheel_delta), -0.25, 0.25);
+        const new_target: f32 = @min(@max(Camera.canvas_max, Camera.canvas_zoom_target * (1 + zoom_input)), Camera.ZOOM_MAX);
+        Camera.canvas_zoom_target = Camera.canvas_zoom_target + 0.2 * (new_target - Camera.canvas_zoom_target);
     }
     if (Camera.canvas_zoom != Camera.canvas_zoom_target) {
         const old_zoom: f32 = Camera.canvas_zoom;
@@ -440,9 +442,8 @@ pub fn updateCanvasZoom(mousewheel_delta: f32) void {
         // Adjust offsets to keep the mouse position consistent
         Camera.setX(Camera.canvas_offset_x_target + (canvas_mouse_x_new_zoom - canvas_mouse_x_old_zoom) * Camera.canvas_zoom);
         Camera.setY(Camera.canvas_offset_y_target + (canvas_mouse_y_new_zoom - canvas_mouse_y_old_zoom) * Camera.canvas_zoom);
-
-        // std.debug.print("Updated zoom: {d} -- drawing texture zoom: {d}. \n", .{ Camera.canvas_zoom, @max(1, @ceil(Camera.canvas_zoom)) });
     }
+    // std.debug.print("Zoom: {d}. Target: {d}.\n", .{ Camera.canvas_zoom, Camera.canvas_zoom_target });
 }
 
 pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
@@ -689,31 +690,26 @@ pub fn drawMap() void {
     }
 
     // Draw subgrid lines (maybe while building??? i.e. build_guide is non null)
-    //var rowIndex: i32 = 1;
-    //while (rowIndex * u.Subcell.size < World.height) : (rowIndex += 1) {
-    //    u.drawRect(0, @as(i32, @intCast(u.Subcell.size * rowIndex)), World.width, 2, rl.Color.light_gray);
-    //}
-    //var colIndex: i32 = 1;
-    //while (colIndex * u.Subcell.size < World.width) : (colIndex += 1) {
-    //    u.drawRect(@as(i32, @intCast(u.Subcell.size * colIndex)), 0, 2, World.height, rl.Color.light_gray);
-    //}
-    //
-    // Draw grid lines
-    //rowIndex = 1;
-    //while (rowIndex * u.Grid.cell_size < World.height) : (rowIndex += 1) {
-    //    u.drawRect(0, @as(i32, @intCast(u.Grid.cell_size * rowIndex)), World.width, 5, rl.Color.light_gray);
-    //}
-    //colIndex = 1;
-    //while (colIndex * u.Grid.cell_size < World.width) : (colIndex += 1) {
-    //    u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 5, World.height, rl.Color.light_gray);
-    //}
+    if (Player.build_guide != null) {
+        var rowIndex: i32 = 1;
+        while (rowIndex * u.Subcell.size < World.height) : (rowIndex += 1) {
+            u.drawRect(0, @as(i32, @intCast(u.Subcell.size * rowIndex)), World.width, 2, rl.Color.light_gray);
+        }
+        var colIndex: i32 = 1;
+        while (colIndex * u.Subcell.size < World.width) : (colIndex += 1) {
+            u.drawRect(@as(i32, @intCast(u.Subcell.size * colIndex)), 0, 2, World.height, rl.Color.light_gray);
+        }
 
-    // Draw the edges of the map
-    //u.drawRect(0, -10, World.width, 20, rl.Color.dark_gray); // Top edge
-    //u.drawRect(0, World.height - 10, World.width, 20, rl.Color.dark_gray); // Bottom edge
-    //u.drawRect(-10, 0, 20, World.height, rl.Color.dark_gray); // Left edge
-    //u.drawRect(World.width - 10, 0, 20, World.height, rl.Color.dark_gray); // Right edge
-
+        // Draw grid lines
+        rowIndex = 1;
+        while (rowIndex * u.Grid.cell_size < World.height) : (rowIndex += 1) {
+            u.drawRect(0, @as(i32, @intCast(u.Grid.cell_size * rowIndex)), World.width, 5, rl.Color.light_gray);
+        }
+        colIndex = 1;
+        while (colIndex * u.Grid.cell_size < World.width) : (colIndex += 1) {
+            u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 5, World.height, rl.Color.light_gray);
+        }
+    }
 }
 
 fn drawEntities(profile_frame: bool) void {

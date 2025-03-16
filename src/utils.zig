@@ -828,7 +828,10 @@ pub fn moveDeviationCheck(current: Point, previous: Point, speed: f16) bool {
 }
 
 pub fn interpolateStep(last_x: u16, last_y: u16, x: i32, y: i32, frame: i16, interval: comptime_int) [2]i32 {
-    const steps_since_last_move = interval - @rem(frame, interval); // Number of steps since the last move
+    var steps_since_last_move = @rem(frame, interval);
+
+    // Ensure the last frame of a movement step smoothly reaches the new position
+    if (steps_since_last_move == 0) steps_since_last_move = interval;
     const interpolation_factor = @as(f32, @floatFromInt(steps_since_last_move)) / @as(f32, @floatFromInt(interval));
 
     const interp_x = @as(i32, last_x) + @as(i32, @intFromFloat(interpolation_factor * @as(f32, @floatFromInt(x - @as(i32, last_x)))));
@@ -1129,7 +1132,7 @@ pub const Subcell = struct {
         return Point.at(xy[0], xy[1]);
     }
 
-    /// Aligns the top left of the rectangle centered on `x`,`y` with the top left of its closest subcell.
+    /// Aligns the top left of the rectangle centered on `x`,`y` with the top left of its closest subcell. Returns the rectangle's center.
     pub fn snapToNode(x: u16, y: u16, width: u16, height: u16) [2]u16 {
         const snapped_center = Subcell.nodeFromCoordinates(if (x > width / 2) x - width / 2 else 0, if (y > height / 2) y - height / 2 else 0);
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
@@ -1735,8 +1738,8 @@ pub const Model = struct {
         const previous_position = previous_anchor_position;
 
         // Interpolates anchor position based on the provided interpolation factor
-        anchor_joint.position.x = previous_position.x + ((1 - interpolation_factor) * (new_anchor_position.x - previous_position.x));
-        anchor_joint.position.y = previous_position.y + ((1 - interpolation_factor) * (new_anchor_position.y - previous_position.y));
+        anchor_joint.position.x = previous_position.x + (interpolation_factor * (new_anchor_position.x - previous_position.x));
+        anchor_joint.position.y = previous_position.y + (interpolation_factor * (new_anchor_position.y - previous_position.y));
 
         // Update the rest of the model
         updateRigidBody(self, anchor_index, anchor_joint.position);
