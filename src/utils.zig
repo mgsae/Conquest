@@ -1452,30 +1452,30 @@ pub fn kindToString(kind: e.Kind) []const u8 {
 
 pub fn unitTypeFromClass(class: u8) []const u8 {
     return switch (class) {
-        0 => "Gatherer",
-        1 => "Dude",
-        2 => "Megadude",
-        3 => "Other Guy",
+        0 => "Peasant",
+        1 => "Soldier",
+        2 => "Trebuchet",
+        3 => "Knight",
         else => "Huh..? Unknown unit?",
     };
 }
 
 pub fn structureTypeFromClass(class: u8) []const u8 {
     return switch (class) {
-        0 => "Gatherer Spawner",
-        1 => "Dude Spawner",
-        2 => "Megadude Spawner",
-        3 => "Other Guy Spawner",
+        0 => "Farm",
+        1 => "Home",
+        2 => "Yard",
+        3 => "Keep",
         else => "Huh..? Unknown building?",
     };
 }
 
 pub fn resourceTypeFromClass(class: u8) []const u8 {
     return switch (class) {
-        0 => "Some Nice Shit",
-        1 => "Some Other Nice Stuff",
-        2 => "Ehh....?",
-        3 => "Is there more?",
+        0 => "Food",
+        1 => "Wood",
+        2 => "Iron",
+        3 => "Grail",
         else => "Huh..? Unknown resource?",
     };
 }

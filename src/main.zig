@@ -759,17 +759,31 @@ pub fn drawInterface() void {
     }
 
     if (Player.selected != null) {
-        text = std.fmt.bufPrintZ(&buffer, "Player: {}", .{Player.selected.?.owner()}) catch "Error";
+        const selected = Player.selected.?;
+        text = std.fmt.bufPrintZ(&buffer, "Player: {}", .{selected.owner()}) catch "Error";
         rl.drawText(text, 300, rl.getScreenHeight() - 180, 28, rl.Color.black);
-        text = switch (Player.selected.?.kind) {
+        text = switch (selected.kind) {
             e.Kind.Player => "Creator",
-            e.Kind.Unit => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(Player.selected.?.ref.Unit.class), u.kindToString(e.Kind.Unit) }) catch "Error",
-            e.Kind.Structure => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(Player.selected.?.ref.Structure.class), u.kindToString(e.Kind.Structure) }) catch "Error",
-            e.Kind.Resource => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(Player.selected.?.ref.Resource.class), u.kindToString(e.Kind.Resource) }) catch "Error",
+            e.Kind.Unit => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(selected.ref.Unit.class), u.kindToString(e.Kind.Unit) }) catch "Error",
+            e.Kind.Structure => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(selected.ref.Structure.class), u.kindToString(e.Kind.Structure) }) catch "Error",
+            e.Kind.Resource => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(selected.ref.Resource.class), u.kindToString(e.Kind.Resource) }) catch "Error",
         };
         rl.drawText(text, 300, rl.getScreenHeight() - 140, 28, rl.Color.black);
-        text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{Player.selected.?.life()}) catch "Error";
+        text = if (selected.kind == e.Kind.Resource)
+            std.fmt.bufPrintZ(&buffer, "Remaining: {}", .{selected.life()}) catch "Error"
+        else
+            std.fmt.bufPrintZ(&buffer, "Life: {}", .{selected.life()}) catch "Error";
         rl.drawText(text, 300, rl.getScreenHeight() - 100, 28, rl.Color.black);
+        if (selected.kind == e.Kind.Unit) {
+            if (selected.ref.Unit.class == 0) { // Carrying resources?
+                const carry = selected.ref.Unit.resources;
+                text = std.fmt.bufPrintZ(&buffer, "{s}: {d}, {s}: {d}, {s}: {d}, {s}: {d}", .{ u.resourceTypeFromClass(0), carry[0], u.resourceTypeFromClass(1), carry[1], u.resourceTypeFromClass(2), carry[2], u.resourceTypeFromClass(3), carry[3] }) catch "Error";
+            }
+            rl.drawText(text, 300, rl.getScreenHeight() - 60, 28, rl.Color.black);
+        } else if (selected.kind == e.Kind.Structure) {
+            text = std.fmt.bufPrintZ(&buffer, "Capacity: {}/{}", .{ selected.ref.Structure.capacity, e.Structure.preset(selected.ref.Structure.class).capacity }) catch "Error";
+            rl.drawText(text, 300, rl.getScreenHeight() - 60, 28, rl.Color.black);
+        }
     }
 
     // Development tools

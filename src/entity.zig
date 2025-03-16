@@ -386,6 +386,7 @@ pub const Unit = struct {
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
     model: *u.Model,
     state: State,
+    resources: [4]u16,
     projectiles: *std.ArrayList(*Projectile),
 
     pub const State = enum {
@@ -706,28 +707,26 @@ pub const Unit = struct {
 
                 // Gatherers, check whether pick up or deliver
                 if (self.state != State.Carrying) { // Gatherers not carrying
-                    //std.debug.print("Not carrying, will check for resource to target.\n", .{});
                     const resource = u.concentricSearch(&main.World.grid, self.last_step, Entity.isAvailableResource);
                     if (resource) |r| {
                         if (self.entity.isTouching(r)) { // Is at resource, drain it and set carry state
-                            //std.debug.print("Is touching resource, will decrease its capacity and set own state to Carrying.\n", .{});
                             r.ref.Resource.capacity -= 1;
                             self.state = State.Carrying;
+                            self.resources[r.ref.Resource.class] += 1; // Increments carried resource-class
                         } else {
                             //std.debug.print("Is not touching resource, will set it to target.\n", .{});
                             self.target = u.Circle.aroundEntity(r, self.entity.reach()); // Not at resource, sets to target
                         }
                     } else { // Found no resource, so targets random nearby position
-                        //std.debug.print("Found no resource,  so will target random nearby position.\n", .{});
                         self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
                     }
                 } else { // Gatherers already carrying
                     //std.debug.print("Am carrying, will check for own building nearby.\n", .{});
                     const own_building = u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure);
                     if (own_building) |b| {
-                        if (self.entity.isTouching(b)) { // Is at building, increases its capacity by 1
-                            //std.debug.print("Is touching building, will increase its capacity and set own state to Default.\n", .{});
-                            b.ref.Structure.capacity += 1;
+                        if (self.entity.isTouching(b)) { // Is at building, adds carried food to its capacity
+                            b.ref.Structure.capacity = @min(Structure.preset(b.ref.Structure.class).capacity, b.ref.Structure.capacity + u.asI16(u16, self.resources[0]));
+                            self.resources[0] = 0; // Removes carried food
                             self.state = State.Default;
                         } else {
                             //std.debug.print("Is not touching building, will set it to target.\n", .{});
@@ -818,6 +817,7 @@ pub const Unit = struct {
             .cached_cellsigns = [_]u32{0} ** 9,
             .projectiles = projectiles,
             .state = State.Default,
+            .resources = [_]u16{ 0, 0, 0, 0 },
         };
 
         entity.* = Entity{
@@ -931,15 +931,16 @@ pub const Structure = struct {
         life: i16,
         restitution: f16,
         capacity: i16,
+        start_capacity: i16,
     };
 
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = 150, .height = 150, .life = 12000, .restitution = 8.6, .capacity = 3 },
-            1 => Properties{ .width = 100, .height = 100, .life = 8000, .restitution = 4.0, .capacity = 1 },
-            2 => Properties{ .width = 200, .height = 200, .life = 14000, .restitution = 14.0, .capacity = 6 },
-            3 => Properties{ .width = 150, .height = 150, .life = 9000, .restitution = 11.0, .capacity = 4 },
+            0 => Properties{ .width = 150, .height = 150, .life = 12000, .restitution = 8.6, .capacity = 3, .start_capacity = 3 },
+            1 => Properties{ .width = 100, .height = 100, .life = 8000, .restitution = 4.0, .capacity = 1, .start_capacity = 0 },
+            2 => Properties{ .width = 200, .height = 200, .life = 14000, .restitution = 14.0, .capacity = 6, .start_capacity = 0 },
+            3 => Properties{ .width = 150, .height = 150, .life = 9000, .restitution = 11.0, .capacity = 4, .start_capacity = 0 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -961,7 +962,7 @@ pub const Structure = struct {
                     if (connected) |buildings| {
                         for (buildings) |building| {
                             if (self.capacity > building.capacity) {
-                                building.capacity += 1;
+                                building.capacity = @min(building.capacity + 1, Structure.preset(building.class).capacity);
                                 self.capacity -= 1;
                             }
                             if (self.capacity <= 0) break;
@@ -996,7 +997,7 @@ pub const Structure = struct {
             .life = from_class.life,
             .state = State.Default,
             .restitution = from_class.restitution,
-            .capacity = from_class.capacity,
+            .capacity = from_class.start_capacity,
             .x = x,
             .y = y,
         };
@@ -1103,6 +1104,8 @@ pub const Resource = struct {
     x: u16,
     y: u16,
     capacity: i16,
+    restitution: f16,
+    rest: u16 = 0,
 
     pub const State = enum {
         Default,
@@ -1116,6 +1119,14 @@ pub const Resource = struct {
     }
 
     pub fn update(self: *Resource) void {
+        if (self.capacity < preset(self.class).capacity and self.restitution > 0) {
+            self.rest += 1;
+            const rest_ticks = u.ticksFromSecs(self.restitution);
+            if (self.rest >= rest_ticks) {
+                self.capacity = @min(preset(self.class).capacity, self.capacity + 1);
+                self.rest = rest_ticks / 2; // Continues next tick
+            }
+        } else if (self.rest > 0) self.rest = 0;
         if (self.capacity <= 0) self.state = State.Depleted;
     }
 
@@ -1124,15 +1135,16 @@ pub const Resource = struct {
         width: u16,
         height: u16,
         capacity: i16,
+        restitution: f16,
     };
 
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100 },
-            1 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 50 },
-            2 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 800 },
-            3 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 20 },
+            0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100, .restitution = 10.0 },
+            1 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 50, .restitution = 60.0 },
+            2 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 800, .restitution = 0 },
+            3 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 20, .restitution = 0 },
             else => @panic("Invalid structure class"),
         };
     }
@@ -1147,6 +1159,7 @@ pub const Resource = struct {
             .class = class,
             .state = State.Default,
             .capacity = from_class.capacity,
+            .restitution = from_class.restitution,
             .x = x,
             .y = y,
         };
