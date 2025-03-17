@@ -389,6 +389,7 @@ pub const Unit = struct {
     resources: [4]u16,
     elapsed: i16 = 0,
     projectiles: *std.ArrayList(*Projectile),
+    experience: i16 = 0,
 
     pub const State = enum {
         Default,
@@ -723,15 +724,15 @@ pub const Unit = struct {
                     }
                 }
             }
-            return self.getDisplacement(current, self.target.center);
+            return self.stepTowardsTarget(current, self.target.center);
         } else { // If farther than a subcell away, move by waypoints towards the target
             const waypoint = u.Waypoint.closestTowards(current, self.target.center, distance_squared, self.last_step);
-            return self.getDisplacement(current, waypoint);
+            return self.stepTowardsTarget(current, waypoint);
         }
     }
 
     /// Returns a point offset by self's `speed` towards `target` from self's `current` position.
-    fn getDisplacement(self: *Unit, current: u.Point, target: u.Point) u.Point {
+    fn stepTowardsTarget(self: *Unit, current: u.Point, target: u.Point) u.Point {
         const magnitude = u.adjustToDistance(current, target, self.speed(), self.speed());
         const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(target.x));
         const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(target.y));
@@ -740,26 +741,31 @@ pub const Unit = struct {
         const vector = u.vectorToDelta(angle, magnitude);
         var next_point = u.deltaPoint(self.x, self.y, vector[0], vector[1]);
 
-        // Checks point at 3 steps ahead, deviates displacement if collision
+        // Checks point at 3 steps ahead for collision
         const lookahead_vector = u.vectorToDelta(angle, magnitude * 3);
         const lookahead_point = u.deltaPoint(self.x, self.y, lookahead_vector[0], lookahead_vector[1]);
-        // If lookahead point is outside of target circle, and is a collision, deviate the step
-        if (!self.target.contains(lookahead_point) and self.checkCollision(lookahead_point.x, lookahead_point.y) != null) {
-            next_point = self.deviateStep(next_point, angle);
+        // If lookahead point is outside of target circle, and is a collision, offsets the step
+        if (!self.target.contains(lookahead_point)) {
+            const obstacle = self.checkCollision(lookahead_point.x, lookahead_point.y);
+            if (obstacle != null) next_point = self.lookaheadDisplacement(next_point, angle);
         }
 
         return next_point;
     }
 
-    fn deviateStep(self: *Unit, step: u.Point, base_angle: f32) u.Point {
+    fn lookaheadDisplacement(self: *Unit, step: u.Point, base_angle: f32) u.Point {
         // Picks deviation direction based on proximity to target
         const dx = @as(i32, @intCast(self.target.center.x)) - @as(i32, @intCast(step.x));
         const dy = @as(i32, @intCast(self.target.center.y)) - @as(i32, @intCast(step.y));
-        const deviation_angle: f32 = if (dx * dy >= 0) -45.0 else 45.0;
+        const deviation_angle: f32 = if (dx * dy > 0) -45.0 else 45.0;
         const new_angle = base_angle + deviation_angle;
-
         // Compute new step at the same speed but with the adjusted angle
         const vector = u.vectorToDelta(new_angle, self.speed());
+        //var new_step = u.deltaPoint(self.x, self.y, vector[0], vector[1]);
+        //if (!self.target.contains(new_step) and self.checkCollision(new_step.x, new_step.y) != null) {
+        //    new_step = self.lookaheadDisplacement(step, deviation_angle);
+        //}
+        // return new_step;
         return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
     }
 
@@ -1232,10 +1238,10 @@ pub const Projectile = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .life = 40, .speed = 8, .width = 4, .height = 4, .damage = 12 },
-            1 => Properties{ .life = 56, .speed = 14, .width = 4, .height = 4, .damage = 38 },
-            2 => Properties{ .life = 128, .speed = 6, .width = 8, .height = 8, .damage = 100 },
-            3 => Properties{ .life = 72, .speed = 12, .width = 6, .height = 6, .damage = 70 },
+            0 => Properties{ .life = 40, .speed = 8, .width = 4, .height = 4, .damage = 6 },
+            1 => Properties{ .life = 56, .speed = 14, .width = 4, .height = 4, .damage = 16 },
+            2 => Properties{ .life = 128, .speed = 6, .width = 8, .height = 8, .damage = 50 },
+            3 => Properties{ .life = 72, .speed = 12, .width = 6, .height = 6, .damage = 32 },
             else => @panic("Invalid projectile class"),
         };
     }
@@ -1292,7 +1298,6 @@ pub const Projectile = struct {
         const damage = preset(self.class).damage;
         target.setLife(if (target.life() > damage) target.life() - damage else 0);
         self.life -= 100; // Should be enough to kill projectile unless multi targets are wanted
-        //std.debug.print("Projectile (class {}) hit target {}!\n", .{ self.class, target });
     }
 
     fn width(self: *Projectile) u16 {

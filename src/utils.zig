@@ -777,6 +777,17 @@ pub fn angleToSquareOffset(angle: f32, width: u16, height: u16) Vector {
     };
 }
 
+/// Returns the difference between two angles, normalized to the range [-180, 180].
+pub fn angleDifference(angle1: f32, angle2: f32) f32 {
+    var diff = angle1 - angle2;
+    if (diff > 180.0) {
+        diff -= 360.0;
+    } else if (diff < -180.0) {
+        diff += 360.0;
+    }
+    return diff;
+}
+
 pub fn isHorz(dir: u8) bool {
     return dir == 4 or dir == 6;
 }

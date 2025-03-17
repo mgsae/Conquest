@@ -752,6 +752,9 @@ pub fn drawInterface() void {
     if (Player.build_guide != null) {
         text = std.fmt.bufPrintZ(&buffer, "Creating: {s}", .{u.structureTypeFromClass(Player.build_guide.?)}) catch "Error";
         rl.drawText(text, 50, rl.getScreenHeight() - 60, 28, rl.Color.black);
+    } else {
+        text = std.fmt.bufPrintZ(&buffer, "X/Y: {}/{}", .{ Player.self.?.x, Player.self.?.y }) catch "Error";
+        rl.drawText(text, 50, rl.getScreenHeight() - 60, 28, rl.Color.black);
     }
 
     if (Player.selected != null) {
@@ -774,6 +777,8 @@ pub fn drawInterface() void {
             if (selected.ref.Unit.class == 0) { // Carrying resources?
                 const carry = selected.ref.Unit.resources;
                 text = std.fmt.bufPrintZ(&buffer, "{s}: {d}, {s}: {d}, {s}: {d}, {s}: {d}", .{ u.resourceTypeFromClass(0), carry[0], u.resourceTypeFromClass(1), carry[1], u.resourceTypeFromClass(2), carry[2], u.resourceTypeFromClass(3), carry[3] }) catch "Error";
+            } else {
+                text = std.fmt.bufPrintZ(&buffer, "Experience: {}", .{selected.ref.Unit.experience}) catch "Error";
             }
             rl.drawText(text, 300, rl.getScreenHeight() - 60, 28, rl.Color.black);
         } else if (selected.kind == e.Kind.Structure) {
