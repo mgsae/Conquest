@@ -205,40 +205,43 @@ pub const Player = struct {
     pub fn executeMovement(self: *Player, changed_x: ?u16, changed_y: ?u16, speed: f32) !void {
         const old_x = self.x;
         const old_y = self.y;
-        var obstacleX: ?*Entity = null;
-        var obstacleY: ?*Entity = null;
+        var obstacle_x: ?*Entity = null;
+        var obstacle_y: ?*Entity = null;
         const delta = u.deltaXy(self.x, self.y, changed_x orelse self.x, changed_y orelse self.y);
         const angle = u.deltaToAngle(delta[0], delta[1]);
         // const deltaXy = u.deltaXy(old_x, old_y, new_x orelse old_x, new_y orelse old_y);
         // std.debug.print("Player movement direction: {}. Delta to angle: {}. Angle from dir: {}. Vector to delta: {any}.\n", .{ self.direction, @as(i64, @intFromFloat(u.deltaToAngle(deltaXy[0], deltaXy[1]))), u.angleFromDir(self.direction), u.vectorToDelta(u.deltaToAngle(deltaXy[0], deltaXy[1]), speed) });
 
         // Gets potential obstacle entities on both axes
-        if (changed_x != null) obstacleX = main.World.grid.collidesWith(changed_x.?, self.y, self.width, self.height, self.entity) catch null;
-        if (changed_y != null) obstacleY = main.World.grid.collidesWith(self.x, changed_y.?, self.width, self.height, self.entity) catch null;
+        if (changed_x != null) obstacle_x = main.World.grid.collidesWith(changed_x.?, self.y, self.width, self.height, self.entity) catch null;
+        if (changed_y != null) obstacle_y = main.World.grid.collidesWith(self.x, changed_y.?, self.width, self.height, self.entity) catch null;
 
         if (changed_x != null and changed_y != null) { // Executes diagonal movement
             const diagonal_obstacle = main.World.grid.collidesWith(changed_x.?, changed_y.?, self.width, self.height, self.entity) catch null;
             if (diagonal_obstacle == null) {
                 self.x = changed_x.?;
                 self.y = changed_y.?;
-            } else {
-                if (obstacleX == null) self.x = changed_x.?;
-                if (obstacleY == null) self.y = changed_y.?;
-
-                if (obstacleX != null and obstacleX.?.kind == Kind.Unit) handleHorizontalCollision(self, old_x, changed_x.?, speed, angle, obstacleX.?);
-                if (obstacleY != null and obstacleY.?.kind == Kind.Unit) handleVerticalCollision(self, old_y, changed_y.?, speed, angle, obstacleY.?);
+            } else { // Blocked diagonal movement
+                if (obstacle_x == null) self.x = changed_x.?;
+                if (obstacle_y == null) self.y = changed_y.?;
+                if (obstacle_x != null and obstacle_x.?.kind == Kind.Unit) handleHorizontalCollision(self, old_x, changed_x.?, speed, angle, obstacle_x.?);
+                if (obstacle_y != null and obstacle_y.?.kind == Kind.Unit) handleVerticalCollision(self, old_y, changed_y.?, speed, angle, obstacle_y.?);
             }
         } else if (changed_x != null) { // Executes horizontal movement
-            if (obstacleX == null) {
+            if (obstacle_x == null) {
                 self.x = changed_x.?;
-            } else if (obstacleX.?.kind == Kind.Unit) { // If unit obstacle, try horizontal push
-                handleHorizontalCollision(self, old_x, changed_x.?, speed, angle, obstacleX.?);
+            } else if (obstacle_x.?.kind == Kind.Unit) { // If unit obstacle, try horizontal push
+                handleHorizontalCollision(self, old_x, changed_x.?, speed, angle, obstacle_x.?);
+            } else { // If non-unit obstacle, move up to
+                self.x = if (delta[0] < 0) obstacle_x.?.x() - (self.width / 2 + obstacle_x.?.width() / 2) else obstacle_x.?.x() + (self.width / 2 + obstacle_x.?.width() / 2);
             }
         } else if (changed_y != null) { // Executes vertical movement
-            if (obstacleY == null) {
+            if (obstacle_y == null) {
                 self.y = changed_y.?;
-            } else if (obstacleY.?.kind == Kind.Unit) { // If unit collider, try vertical push
-                handleVerticalCollision(self, old_y, changed_y.?, speed, angle, obstacleY.?);
+            } else if (obstacle_y.?.kind == Kind.Unit) { // If unit obstacle, try vertical push
+                handleVerticalCollision(self, old_y, changed_y.?, speed, angle, obstacle_y.?);
+            } else { // If non-unit obstacle, move up to
+                self.y = if (delta[1] < 0) obstacle_y.?.y() - (self.height / 2 + obstacle_y.?.height() / 2) else obstacle_y.?.y() + (self.height / 2 + obstacle_y.?.height() / 2);
             }
         }
 
