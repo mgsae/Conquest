@@ -431,9 +431,9 @@ pub const Unit = struct {
             if (main.moveDivMultiple(self.elapsed, preset(self.class).attackrate) and self.state != State.Carrying) {
                 if (self.state == State.Attacking) self.state = State.Default; // Clears attacking state
                 if (self.getAttackTarget()) |target| {
-                    if (try self.attack(target)) {
-                        // Successfully launched projectile
+                    if (try self.attack(target)) { // Successfully launched projectile
                         self.state = State.Attacking; // Sets attacking state, pausing movement
+                        self.experience += 1;
                     }
                 }
             }
@@ -747,25 +747,30 @@ pub const Unit = struct {
         // If lookahead point is outside of target circle, and is a collision, offsets the step
         if (!self.target.contains(lookahead_point)) {
             const obstacle = self.checkCollision(lookahead_point.x, lookahead_point.y);
-            if (obstacle != null) next_point = self.lookaheadDisplacement(next_point, angle);
+            if (obstacle != null) next_point = self.lookaheadDisplacement(angle, obstacle.?);
         }
 
         return next_point;
     }
 
-    fn lookaheadDisplacement(self: *Unit, step: u.Point, base_angle: f32) u.Point {
-        // Picks deviation direction based on proximity to target
-        const dx = @as(i32, @intCast(self.target.center.x)) - @as(i32, @intCast(step.x));
-        const dy = @as(i32, @intCast(self.target.center.y)) - @as(i32, @intCast(step.y));
-        const deviation_angle: f32 = if (dx * dy > 0) -45.0 else 45.0;
+    fn lookaheadDisplacement(self: *Unit, base_angle: f32, collider: *Entity) u.Point {
+        const obstacle = u.Point.atEntity(collider);
+        // Vector from unit to obstacle center
+        const obs_dx = @as(i32, @intCast(obstacle.x)) - @as(i32, @intCast(self.x));
+        const obs_dy = @as(i32, @intCast(obstacle.y)) - @as(i32, @intCast(self.y));
+        const angle_to_obstacle = u.deltaToAngle(obs_dx, obs_dy);
+
+        // Vector from unit to target
+        const targ_dx = @as(i32, @intCast(self.target.center.x)) - @as(i32, @intCast(self.x));
+        const targ_dy = @as(i32, @intCast(self.target.center.y)) - @as(i32, @intCast(self.y));
+        const angle_to_target = u.deltaToAngle(targ_dx, targ_dy);
+
+        // Determine which side of the obstacle is closer to the target
+        const angle_diff = angle_to_target - angle_to_obstacle;
+        const deviation_angle: f32 = if (angle_diff > 0) 45.0 else -45.0; // Positive = clockwise, negative = counterclockwise
+
         const new_angle = base_angle + deviation_angle;
-        // Compute new step at the same speed but with the adjusted angle
         const vector = u.vectorToDelta(new_angle, self.speed());
-        //var new_step = u.deltaPoint(self.x, self.y, vector[0], vector[1]);
-        //if (!self.target.contains(new_step) and self.checkCollision(new_step.x, new_step.y) != null) {
-        //    new_step = self.lookaheadDisplacement(step, deviation_angle);
-        //}
-        // return new_step;
         return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
     }
 
@@ -1251,8 +1256,19 @@ pub const Projectile = struct {
         const projectile = try main.World.grid.allocator.create(Projectile); // Memory for projectile
         const angle = u.angleFromTo(source.x(), source.y(), target.x(), target.y());
         const from_class = preset(class);
-        // Launching from correct side of the source
+        // Launching from correct side of the source and get valid targets
         const delta = u.angleToSquareOffset(angle, source.width() + from_class.width, source.height() + from_class.height);
+        var nearby = Grid.sectionEntities(&main.World.grid, u.Grid.x(source.x()), u.Grid.x(source.y()));
+        if (nearby != null) {
+            var i: usize = nearby.?.items.len;
+            while (i > 0) {
+                i -= 1; // Move backwards
+                const e = nearby.?.items[i];
+                if (!source.isEnemy(e)) {
+                    _ = nearby.?.swapRemove(i); // Remove if not an enemy
+                }
+            }
+        }
 
         projectile.* = Projectile{
             .class = class,
@@ -1261,7 +1277,7 @@ pub const Projectile = struct {
             .life = from_class.life,
             .angle = angle,
             .color = source.color(1),
-            .targets = Grid.sectionEntities(&main.World.grid, u.Grid.x(source.x()), u.Grid.x(source.y())),
+            .targets = nearby,
         };
         return projectile;
     }

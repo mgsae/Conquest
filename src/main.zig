@@ -897,14 +897,14 @@ const Map = struct { // Encapsulates map properties; see World for currently act
     }
 };
 
-/// Returns true when `life` is an exact divisor of the world's `MOVEMENT_DIVISIONS`.
-pub fn moveDivision(life: i16) bool {
-    return @rem(life, World.MOVEMENT_DIVISIONS) == 0;
+/// Returns true when `tick` is an exact divisor of the world's `MOVEMENT_DIVISIONS`.
+pub fn moveDivision(tick: i16) bool {
+    return @rem(tick, World.MOVEMENT_DIVISIONS) == 0;
 }
 
-/// Returns true if `life` is an exact divisor of the specified `multiple` of the world's `MOVEMENT_DIVISIONS`.
-pub fn moveDivMultiple(life: i16, multiple: i16) bool {
-    return @rem(life, World.MOVEMENT_DIVISIONS * multiple) == 0;
+/// Returns true if `tick` is an exact divisor of the specified `multiple` of the world's `MOVEMENT_DIVISIONS`.
+pub fn moveDivMultiple(tick: i16, multiple: i16) bool {
+    return @rem(tick, World.MOVEMENT_DIVISIONS * multiple) == 0;
 }
 
 // AI Player
