@@ -740,21 +740,22 @@ pub const Unit = struct {
         const vector = u.vectorToDelta(angle, magnitude);
         var next_point = u.deltaPoint(self.x, self.y, vector[0], vector[1]);
 
-        // Checks point at 5 steps ahead, deviates displacement if collision
-        const lookahead_vector = u.vectorToDelta(angle, magnitude * 5);
+        // Checks point at 3 steps ahead, deviates displacement if collision
+        const lookahead_vector = u.vectorToDelta(angle, magnitude * 3);
         const lookahead_point = u.deltaPoint(self.x, self.y, lookahead_vector[0], lookahead_vector[1]);
-        if (self.checkCollision(lookahead_point.x, lookahead_point.y) != null) next_point = self.deviateStep(next_point);
+        // If lookahead point is outside of target circle, and is a collision, deviate the step
+        if (!self.target.contains(lookahead_point) and self.checkCollision(lookahead_point.x, lookahead_point.y) != null) {
+            next_point = self.deviateStep(next_point, angle);
+        }
 
         return next_point;
     }
 
-    fn deviateStep(self: *Unit, step: u.Point) u.Point {
+    fn deviateStep(self: *Unit, step: u.Point, base_angle: f32) u.Point {
+        // Picks deviation direction based on proximity to target
         const dx = @as(i32, @intCast(self.target.center.x)) - @as(i32, @intCast(step.x));
         const dy = @as(i32, @intCast(self.target.center.y)) - @as(i32, @intCast(step.y));
-        const base_angle = u.deltaToAngle(dx, dy);
-
-        // Pick a deviation direction based on proximity to target
-        const deviation_angle: f32 = if (dx * dy >= 0) 45.0 else -45.0;
+        const deviation_angle: f32 = if (dx * dy >= 0) -45.0 else 45.0;
         const new_angle = base_angle + deviation_angle;
 
         // Compute new step at the same speed but with the adjusted angle
@@ -1660,10 +1661,13 @@ pub const Grid = struct {
         var biggest_entity: ?*Entity = null;
 
         for (nearby_entities) |entity| {
-            const entity_left = entity.x();
-            const entity_right = entity.x() + entity.width();
-            const entity_top = entity.y();
-            const entity_bottom = entity.y() + entity.height();
+            const entity_half_width = @divTrunc(entity.width(), 2);
+            const entity_half_height = @divTrunc(entity.height(), 2);
+
+            const entity_left = @max(entity_half_width, entity.x()) - entity_half_width;
+            const entity_right = entity.x() + entity_half_width;
+            const entity_top = @max(entity_half_height, entity.y()) - entity_half_height;
+            const entity_bottom = entity.y() + entity_half_height;
 
             if ((min_x < entity_right) and (max_x > entity_left) and
                 (min_y < entity_bottom) and (max_y > entity_top))
