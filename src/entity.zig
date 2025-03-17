@@ -455,6 +455,10 @@ pub const Unit = struct {
             i -= 1;
             const projectile = self.projectiles.items[i];
             if (projectile.life <= 0) { // Clears up dead projectiles
+                if (projectile.targets) |targets| {
+                    targets.deinit(); // Free the list memory
+                    main.World.grid.allocator.destroy(targets); // Free the list itself
+                }
                 _ = self.projectiles.swapRemove(i);
                 main.World.grid.allocator.destroy(projectile);
                 continue;
@@ -486,9 +490,7 @@ pub const Unit = struct {
         }
 
         if (!self.tryMove(new_x, new_y, old_x, old_y)) { // Tries executing regular move
-            if (self.moveAlongAxis(new_x, new_y, old_x, old_y)) { // If collided, tries moving along either axis
-                _ = self.moveAlongAxis(new_x, new_y, old_x, old_y);
-            }
+            _ = self.moveAlongAxis(new_x, new_y, old_x, old_y); // If collided, tries moving along either axis
         }
 
         if (old_x == self.x and old_y == self.y) { // If no change after moving, retargets
@@ -725,7 +727,7 @@ pub const Unit = struct {
                 }
             }
             return self.stepTowardsTarget(current, self.target.center);
-        } else { // If farther than a subcell away, move by waypoints towards the target
+        } else { // If farther than a cell away, move by waypoints towards the target
             const waypoint = u.Waypoint.closestTowards(current, self.target.center, distance_squared, self.last_step);
             return self.stepTowardsTarget(current, waypoint);
         }
@@ -759,16 +761,13 @@ pub const Unit = struct {
         const obs_dx = @as(i32, @intCast(obstacle.x)) - @as(i32, @intCast(self.x));
         const obs_dy = @as(i32, @intCast(obstacle.y)) - @as(i32, @intCast(self.y));
         const angle_to_obstacle = u.deltaToAngle(obs_dx, obs_dy);
-
         // Vector from unit to target
         const targ_dx = @as(i32, @intCast(self.target.center.x)) - @as(i32, @intCast(self.x));
         const targ_dy = @as(i32, @intCast(self.target.center.y)) - @as(i32, @intCast(self.y));
         const angle_to_target = u.deltaToAngle(targ_dx, targ_dy);
-
         // Determine which side of the obstacle is closer to the target
         const angle_diff = angle_to_target - angle_to_obstacle;
         const deviation_angle: f32 = if (angle_diff > 0) 45.0 else -45.0; // Positive = clockwise, negative = counterclockwise
-
         const new_angle = base_angle + deviation_angle;
         const vector = u.vectorToDelta(new_angle, self.speed());
         return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
@@ -1228,7 +1227,7 @@ pub const Projectile = struct {
         const delta = u.vectorToDelta(self.angle, self.speed());
         self.x = u.mapClampFloatX(u.asF32(u16, self.x) + delta[0], self.width());
         self.y = u.mapClampFloatY(u.asF32(u16, self.y) + delta[1], self.height());
-        self.life -= 1;
+        self.life -= 1; // Gets killed in unit update
     }
 
     /// `Projectile` property fields determined by `class`.
@@ -1256,18 +1255,20 @@ pub const Projectile = struct {
         const projectile = try main.World.grid.allocator.create(Projectile); // Memory for projectile
         const angle = u.angleFromTo(source.x(), source.y(), target.x(), target.y());
         const from_class = preset(class);
-        // Launching from correct side of the source and get valid targets
+        // Launching from correct side of the source
         const delta = u.angleToSquareOffset(angle, source.width() + from_class.width, source.height() + from_class.height);
-        var nearby = Grid.sectionEntities(&main.World.grid, u.Grid.x(source.x()), u.Grid.x(source.y()));
-        if (nearby != null) {
-            var i: usize = nearby.?.items.len;
-            while (i > 0) {
-                i -= 1; // Move backwards
-                const e = nearby.?.items[i];
-                if (!source.isEnemy(e)) {
-                    _ = nearby.?.swapRemove(i); // Remove if not an enemy
+        // Gets valid targets
+        const near = Grid.sectionEntities(&main.World.grid, u.Grid.x(source.x()), u.Grid.x(source.y()));
+        var filtered_near: ?*std.ArrayList(*Entity) = null;
+        if (near != null) {
+            const list_ptr = try main.World.grid.allocator.create(std.ArrayList(*Entity));
+            list_ptr.* = std.ArrayList(*Entity).init(main.World.grid.allocator.*);
+            for (near.?.items) |e| {
+                if (source.isEnemy(e)) {
+                    try list_ptr.append(e);
                 }
             }
+            filtered_near = list_ptr;
         }
 
         projectile.* = Projectile{
@@ -1277,7 +1278,7 @@ pub const Projectile = struct {
             .life = from_class.life,
             .angle = angle,
             .color = source.color(1),
-            .targets = nearby,
+            .targets = filtered_near,
         };
         return projectile;
     }
@@ -1291,8 +1292,13 @@ pub const Projectile = struct {
         const bottom = self.y + @divTrunc(self.height(), 2);
 
         if (self.targets) |target_list| {
-            for (target_list.items) |target| {
-                if (target.kind == Kind.Resource) continue; // Don't impact resources
+            var i: usize = 0;
+            while (i < target_list.items.len) {
+                const target = target_list.items[i];
+                if (target.life() <= 0) {
+                    _ = target_list.swapRemove(i); // Remove dead from list
+                    continue;
+                }
                 const target_half_width = @divTrunc(target.width(), 2);
                 const target_half_height = @divTrunc(target.height(), 2);
                 const target_left = if (target.x() > target_half_width) target.x() - target_half_width else 0;
@@ -1305,6 +1311,7 @@ pub const Projectile = struct {
                     //std.debug.print("Projectile (class {}) impacted with target at position ({}, {})\n", .{ self.class, target.x(), target.y() });
                     return target;
                 }
+                i += 1;
             }
         }
         return null;
