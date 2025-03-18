@@ -8,10 +8,11 @@ pub const Config = struct {
     pub const TICKRATE = 60; // Target logical fps
     pub const TICK_DURATION: f64 = 1.0 / @as(f64, @floatFromInt(TICKRATE));
     pub const MAX_TICKS_PER_FRAME = 1;
+    pub const MAX_PLAYERS = 8;
     pub const PLAYER_SEARCH_LIMIT = 2056; // Player collision search limit, must exceed #entities in 3x3 cells
     pub const UNIT_SEARCH_LIMIT = 1028; // Unit collision search limit
     pub const BUFFERSIZE = 65536; // Limit to number of entities updated via sectionSearch per tick
-    pub const DB_SIZE_Y = 200;
+    pub const DASHBOARD_HEIGHT = 200;
     pub var last_tick_time: f64 = 0.0;
     pub var profile_mode = false;
     pub var profile_timer = [4]f64{ 0, 0, 0, 0 };
@@ -61,8 +62,9 @@ pub const Player = struct {
     pub var build_guide: ?u8 = null;
     pub var build_index: ?u8 = null;
     pub var build_order: ?u8 = null;
-    pub var unit_count: u16 = 0;
-    pub var structure_count: u16 = 0;
+    pub var id_unit_count: [Config.MAX_PLAYERS]u16 = [_]u16{0} ** Config.MAX_PLAYERS;
+    pub var id_structure_count: [Config.MAX_PLAYERS]u16 = [_]u16{0} ** Config.MAX_PLAYERS;
+    pub var id_creator: [Config.MAX_PLAYERS]?*e.Entity = [_]?*e.Entity{null} ** Config.MAX_PLAYERS;
 };
 
 /// World properties, shared state initialized by initializeMap.
@@ -71,7 +73,7 @@ pub const World = struct {
     const DEFAULT_HEIGHT = 9000; // 1080 * 8; // Limit for u16 coordinates: 65535
     pub const GRID_CELL_SIZE = 1000;
     pub const MOVEMENT_DIVISIONS = 10; // Modulus base for unit movement updates
-    pub var tick_number: u64 = undefined; // Set upon map initialization
+    pub var tick_number: u64 = 0; // Set on map initialization
     pub var width: u16 = 0;
     pub var height: u16 = 0;
     pub var grid: e.Grid = undefined;
@@ -482,7 +484,7 @@ pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
 
     // Restrict target canvas to map bounds
     const min_offset_x: f32 = screen_width_float - @as(f32, @floatFromInt(World.width)) * Camera.canvas_zoom;
-    const min_offset_y: f32 = (screen_height_float - Config.DB_SIZE_Y) - @as(f32, @floatFromInt(World.height)) * Camera.canvas_zoom;
+    const min_offset_y: f32 = (screen_height_float - Config.DASHBOARD_HEIGHT) - @as(f32, @floatFromInt(World.height)) * Camera.canvas_zoom;
     if (Camera.canvas_offset_x_target > 0) Camera.canvas_offset_x_target = 0;
     if (Camera.canvas_offset_y_target > 0) Camera.canvas_offset_y_target = 0;
     if (Camera.canvas_offset_x_target < min_offset_x) Camera.canvas_offset_x_target = min_offset_x;
@@ -521,41 +523,40 @@ pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
 fn updateEntities(profile_frame: bool) !void {
     // Players
     if (profile_frame) u.startTimer(1, "- Updating players.");
+    @memset(&Player.id_creator, null); // Resets creator trackers
     for (e.players.items) |p| {
         if (p.state == e.Player.State.Dead) {
             try World.dead_players.append(p); // To be destroyed in removeEntities
+            Player.id_creator[p.id] = null;
         } else {
             try p.update();
+            Player.id_creator[p.id] = p.entity; // Adds to creator tracker
         }
     }
     if (profile_frame) u.endTimer(1, "Updating players took {} seconds.");
 
     // Structures
     if (profile_frame) u.startTimer(1, "- Updating structures.");
-    Player.structure_count = 0;
+    @memset(&Player.id_structure_count, 0); // Resets structure counters
     for (e.structures.items) |structure| {
         if (structure.state == e.Structure.State.Destroyed) {
             try World.dead_structures.append(structure); // To be destroyed in removeEntities
         } else {
             structure.update();
-            if (structure.owner == Player.id) {
-                Player.structure_count += 1;
-            }
+            Player.id_structure_count[structure.owner] += 1; // Adds to structure counter
         }
     }
     if (profile_frame) u.endTimer(1, "Updating structures took {} seconds.");
 
     // Units (and projectiles)
     if (profile_frame) u.startTimer(1, "- Updating units.");
-    Player.unit_count = 0;
+    @memset(&Player.id_unit_count, 0); // Resets unit counters
     for (e.units.items) |unit| {
         if (unit.state == e.Unit.State.Dead) {
             try World.dead_units.append(unit); // To be destroyed in removeEntities
         } else {
             try unit.update();
-            if (unit.owner == Player.id) {
-                Player.unit_count += 1;
-            }
+            Player.id_unit_count[unit.owner] += 1; // Adds to unit counter
         }
     }
     if (profile_frame) u.endTimer(1, "Updating units took {} seconds.");
@@ -741,37 +742,45 @@ pub fn drawInterface() void {
     if (Player.selection_origin != null) drawSelection(Player.selection_origin.?);
 
     // Dashboard
-    rl.drawRectangle(0, rl.getScreenHeight() - Config.DB_SIZE_Y, rl.getScreenWidth(), Config.DB_SIZE_Y, rl.Color.white);
-    var buffer: [64]u8 = undefined;
+    rl.drawRectangle(0, rl.getScreenHeight() - Config.DASHBOARD_HEIGHT, rl.getScreenWidth(), Config.DASHBOARD_HEIGHT, rl.Color.white);
 
-    var text = std.fmt.bufPrintZ(&buffer, "Player: {?}", .{Player.id}) catch "Error";
-    rl.drawText(text, 50, rl.getScreenHeight() - 180, 28, rl.Color.black);
-    text = std.fmt.bufPrintZ(&buffer, "Units: {}", .{Player.unit_count}) catch "Error";
-    rl.drawText(text, 50, rl.getScreenHeight() - 140, 28, rl.Color.black);
-    text = std.fmt.bufPrintZ(&buffer, "Structures: {}", .{Player.structure_count}) catch "Error";
-    rl.drawText(text, 50, rl.getScreenHeight() - 100, 28, rl.Color.black);
+    // Sets id to selected's owner, otherwise client's player id
+    const id = if (Player.selected != null) Player.selected.?.owner() else Player.id orelse 0;
+
+    // Writes column 1
+    var x: u16 = 50;
+    const fsize = 28;
+    var buffer: [64]u8 = undefined;
+    var text = std.fmt.bufPrintZ(&buffer, "Player: {?}", .{id}) catch "Error";
+    rl.drawText(text, x, rl.getScreenHeight() - 180, fsize, rl.Color.black);
+    text = std.fmt.bufPrintZ(&buffer, "Units: {}", .{Player.id_unit_count[id]}) catch "Error";
+    rl.drawText(text, x, rl.getScreenHeight() - 140, fsize, rl.Color.black);
+    text = std.fmt.bufPrintZ(&buffer, "Structures: {}", .{Player.id_structure_count[id]}) catch "Error";
+    rl.drawText(text, x, rl.getScreenHeight() - 100, fsize, rl.Color.black);
     if (Player.build_guide != null) {
         text = std.fmt.bufPrintZ(&buffer, "Creating: {s}", .{u.structureTypeFromClass(Player.build_guide.?)}) catch "Error";
-        rl.drawText(text, 50, rl.getScreenHeight() - 60, 28, rl.Color.black);
-    } else {
-        text = std.fmt.bufPrintZ(&buffer, "X/Y: {}/{}", .{ Player.self.?.x, Player.self.?.y }) catch "Error";
-        rl.drawText(text, 50, rl.getScreenHeight() - 60, 28, rl.Color.black);
+        rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
+    } else if (Player.id_creator[id]) |creator| {
+        text = std.fmt.bufPrintZ(&buffer, "Creator: {}/{}", .{ creator.x(), creator.y() }) catch "Error";
+        rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
     }
 
+    // Writes column 2
+    x = 400;
     if (Player.selected != null) {
         const selected = Player.selected.?;
         text = switch (selected.kind) {
-            e.Kind.Player => std.fmt.bufPrintZ(&buffer, "Creator (P{d})", .{selected.owner()}) catch "Error",
-            e.Kind.Unit => std.fmt.bufPrintZ(&buffer, "{s} (P{d} {s})", .{ u.unitTypeFromClass(selected.ref.Unit.class), selected.owner(), u.kindToString(e.Kind.Unit) }) catch "Error",
-            e.Kind.Structure => std.fmt.bufPrintZ(&buffer, "{s} (P{d} {s})", .{ u.structureTypeFromClass(selected.ref.Structure.class), selected.owner(), u.kindToString(e.Kind.Structure) }) catch "Error",
+            e.Kind.Player => std.fmt.bufPrintZ(&buffer, "Creator", .{}) catch "Error",
+            e.Kind.Unit => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(selected.ref.Unit.class), u.kindToString(e.Kind.Unit) }) catch "Error",
+            e.Kind.Structure => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(selected.ref.Structure.class), u.kindToString(e.Kind.Structure) }) catch "Error",
             e.Kind.Resource => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(selected.ref.Resource.class), u.kindToString(e.Kind.Resource) }) catch "Error",
         };
-        rl.drawText(text, 300, rl.getScreenHeight() - 180, 28, rl.Color.black);
+        rl.drawText(text, x, rl.getScreenHeight() - 180, fsize, rl.Color.black);
         text = if (selected.kind == e.Kind.Resource)
             std.fmt.bufPrintZ(&buffer, "Remaining: {}", .{selected.life()}) catch "Error"
         else
             std.fmt.bufPrintZ(&buffer, "Life: {}", .{selected.life()}) catch "Error";
-        rl.drawText(text, 300, rl.getScreenHeight() - 140, 28, rl.Color.black);
+        rl.drawText(text, x, rl.getScreenHeight() - 140, fsize, rl.Color.black);
         if (selected.kind == e.Kind.Unit) {
             if (selected.ref.Unit.class == 0) { // Carrying resources?
                 const carry = selected.ref.Unit.resources;
@@ -779,12 +788,12 @@ pub fn drawInterface() void {
             } else {
                 text = std.fmt.bufPrintZ(&buffer, "Experience: {}", .{selected.ref.Unit.experience}) catch "Error";
             }
-            rl.drawText(text, 300, rl.getScreenHeight() - 100, 28, rl.Color.black);
+            rl.drawText(text, x, rl.getScreenHeight() - 100, fsize, rl.Color.black);
         } else if (selected.kind == e.Kind.Structure) {
             text = std.fmt.bufPrintZ(&buffer, "Capacity: {}/{}", .{ selected.ref.Structure.capacity, e.Structure.preset(selected.ref.Structure.class).capacity }) catch "Error";
-            rl.drawText(text, 300, rl.getScreenHeight() - 100, 28, rl.Color.black);
+            rl.drawText(text, x, rl.getScreenHeight() - 100, fsize, rl.Color.black);
             text = std.fmt.bufPrintZ(&buffer, "Materials: {}", .{selected.ref.Structure.materials}) catch "Error";
-            rl.drawText(text, 300, rl.getScreenHeight() - 60, 28, rl.Color.black);
+            rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
         }
     }
 
