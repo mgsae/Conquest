@@ -927,6 +927,7 @@ pub const Structure = struct {
     capacity: u16,
     materials: u16 = 0,
     elapsed: u16 = 0,
+    connected: ?[]*Structure,
 
     pub const State = enum {
         Default,
@@ -968,28 +969,27 @@ pub const Structure = struct {
         if (self.elapsed >= rest_ticks) {
             self.elapsed -= rest_ticks; // Subtracting interval accounts for possible overshoot
             if (self.capacity > 0) {
-
-                // Propagates capacity transfer to connected buildings
-                const connected = u.findConnectedStructures(&main.World.grid, self) catch null;
-                if (connected) |buildings| {
-                    for (buildings) |building| {
-                        if (self.capacity > building.capacity) {
-                            building.capacity = @min(building.capacity + 1, Structure.preset(building.class).capacity);
-                            self.capacity -= 1;
-                        }
-                        if (self.capacity <= 0) break;
-                    }
+                if (self.spawnUnit()) |unit| { // Spawns unit
+                    _ = unit;
+                    self.capacity = self.capacity - 1;
+                } else |err| {
+                    std.debug.print("Failed to spawn unit: {}. May want some sort of indication.\n", .{err});
                 }
-                if (self.capacity > 0) {
-                    if (self.spawnUnit()) |unit| { // Spawns unit
-                        _ = unit;
-                        self.capacity = self.capacity - 1;
-                    } else |err| {
-                        std.debug.print("Failed to spawn unit: {}. May want some sort of indication.\n", .{err});
+            }
+            self.connected = u.findConnectedStructures(&main.World.grid, self) catch null; // Updates array
+        }
+        if (self.capacity > 0) { // Propagates capacity to connected buildings with lower capacity
+            if (self.connected) |buildings| {
+                for (buildings) |building| {
+                    if (self.capacity > building.capacity and building.capacity < Structure.preset(building.class).capacity) {
+                        building.capacity = @min(building.capacity + 1, Structure.preset(building.class).capacity);
+                        self.capacity -= 1;
                     }
+                    if (self.capacity <= 0) break;
                 }
             }
         }
+
         if (self.life <= 0) self.destroy();
     }
 
@@ -1019,6 +1019,7 @@ pub const Structure = struct {
             .capacity = from_class.start_capacity,
             .x = x,
             .y = y,
+            .connected = null,
         };
         entity.* = Entity{
             .kind = Kind.Structure,

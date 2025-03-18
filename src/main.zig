@@ -64,7 +64,7 @@ pub const Player = struct {
     pub var build_order: ?u8 = null;
     pub var id_unit_count: [Config.MAX_PLAYERS]u16 = [_]u16{0} ** Config.MAX_PLAYERS;
     pub var id_structure_count: [Config.MAX_PLAYERS]u16 = [_]u16{0} ** Config.MAX_PLAYERS;
-    pub var id_creator: [Config.MAX_PLAYERS]?*e.Entity = [_]?*e.Entity{null} ** Config.MAX_PLAYERS;
+    pub var id_player: [Config.MAX_PLAYERS]?*e.Player = [_]?*e.Player{null} ** Config.MAX_PLAYERS;
 };
 
 /// World properties, shared state initialized by initializeMap.
@@ -523,14 +523,14 @@ pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
 fn updateEntities(profile_frame: bool) !void {
     // Players
     if (profile_frame) u.startTimer(1, "- Updating players.");
-    @memset(&Player.id_creator, null); // Resets creator trackers
+    @memset(&Player.id_player, null); // Resets player trackers
     for (e.players.items) |p| {
         if (p.state == e.Player.State.Dead) {
             try World.dead_players.append(p); // To be destroyed in removeEntities
-            Player.id_creator[p.id] = null;
+            Player.id_player[p.id] = null;
         } else {
             try p.update();
-            Player.id_creator[p.id] = p.entity; // Adds to creator tracker
+            Player.id_player[p.id] = p; // Adds to player tracker
         }
     }
     if (profile_frame) u.endTimer(1, "Updating players took {} seconds.");
@@ -760,8 +760,8 @@ pub fn drawInterface() void {
     if (Player.build_guide != null) {
         text = std.fmt.bufPrintZ(&buffer, "Creating: {s}", .{u.structureTypeFromClass(Player.build_guide.?)}) catch "Error";
         rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
-    } else if (Player.id_creator[id]) |creator| {
-        text = std.fmt.bufPrintZ(&buffer, "Creator: {}/{}", .{ creator.x(), creator.y() }) catch "Error";
+    } else if (Player.id_player[id]) |player| {
+        text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{player.life}) catch "Error";
         rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
     }
 
@@ -770,7 +770,7 @@ pub fn drawInterface() void {
     if (Player.selected != null) {
         const selected = Player.selected.?;
         text = switch (selected.kind) {
-            e.Kind.Player => std.fmt.bufPrintZ(&buffer, "Creator", .{}) catch "Error",
+            e.Kind.Player => std.fmt.bufPrintZ(&buffer, "Player", .{}) catch "Error",
             e.Kind.Unit => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(selected.ref.Unit.class), u.kindToString(e.Kind.Unit) }) catch "Error",
             e.Kind.Structure => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(selected.ref.Structure.class), u.kindToString(e.Kind.Structure) }) catch "Error",
             e.Kind.Resource => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(selected.ref.Resource.class), u.kindToString(e.Kind.Resource) }) catch "Error",
