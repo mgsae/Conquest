@@ -353,8 +353,9 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
     // Build guide is active, i.e. player is placing a structure
     if (Player.build_guide != null) {
         Player.selected = null; // Clear selection
-        if (stored_mouse_input_r.equals(rl.Vector2.zero()) == 0) Player.build_guide = null; // If mouse right is pressed, cancels build guide
-        if (Config.keys.actionActive(key_input, u.Key.Action.BuildConfirm)) {
+        if (stored_mouse_input_r.equals(rl.Vector2.zero()) == 0) {
+            Player.build_guide = null; // If mouse right is pressed, cancels build guide
+        } else if (Config.keys.actionActive(key_input, u.Key.Action.BuildConfirm)) {
             std.debug.print("Set player order!\n", .{});
             Player.build_order = Player.build_guide.?;
         }
@@ -759,20 +760,18 @@ pub fn drawInterface() void {
 
     if (Player.selected != null) {
         const selected = Player.selected.?;
-        text = std.fmt.bufPrintZ(&buffer, "Player: {}", .{selected.owner()}) catch "Error";
-        rl.drawText(text, 300, rl.getScreenHeight() - 180, 28, rl.Color.black);
         text = switch (selected.kind) {
-            e.Kind.Player => "Creator",
-            e.Kind.Unit => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(selected.ref.Unit.class), u.kindToString(e.Kind.Unit) }) catch "Error",
-            e.Kind.Structure => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(selected.ref.Structure.class), u.kindToString(e.Kind.Structure) }) catch "Error",
+            e.Kind.Player => std.fmt.bufPrintZ(&buffer, "Creator (P{d})", .{selected.owner()}) catch "Error",
+            e.Kind.Unit => std.fmt.bufPrintZ(&buffer, "{s} (P{d} {s})", .{ u.unitTypeFromClass(selected.ref.Unit.class), selected.owner(), u.kindToString(e.Kind.Unit) }) catch "Error",
+            e.Kind.Structure => std.fmt.bufPrintZ(&buffer, "{s} (P{d} {s})", .{ u.structureTypeFromClass(selected.ref.Structure.class), selected.owner(), u.kindToString(e.Kind.Structure) }) catch "Error",
             e.Kind.Resource => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(selected.ref.Resource.class), u.kindToString(e.Kind.Resource) }) catch "Error",
         };
-        rl.drawText(text, 300, rl.getScreenHeight() - 140, 28, rl.Color.black);
+        rl.drawText(text, 300, rl.getScreenHeight() - 180, 28, rl.Color.black);
         text = if (selected.kind == e.Kind.Resource)
             std.fmt.bufPrintZ(&buffer, "Remaining: {}", .{selected.life()}) catch "Error"
         else
             std.fmt.bufPrintZ(&buffer, "Life: {}", .{selected.life()}) catch "Error";
-        rl.drawText(text, 300, rl.getScreenHeight() - 100, 28, rl.Color.black);
+        rl.drawText(text, 300, rl.getScreenHeight() - 140, 28, rl.Color.black);
         if (selected.kind == e.Kind.Unit) {
             if (selected.ref.Unit.class == 0) { // Carrying resources?
                 const carry = selected.ref.Unit.resources;
@@ -780,9 +779,11 @@ pub fn drawInterface() void {
             } else {
                 text = std.fmt.bufPrintZ(&buffer, "Experience: {}", .{selected.ref.Unit.experience}) catch "Error";
             }
-            rl.drawText(text, 300, rl.getScreenHeight() - 60, 28, rl.Color.black);
+            rl.drawText(text, 300, rl.getScreenHeight() - 100, 28, rl.Color.black);
         } else if (selected.kind == e.Kind.Structure) {
             text = std.fmt.bufPrintZ(&buffer, "Capacity: {}/{}", .{ selected.ref.Structure.capacity, e.Structure.preset(selected.ref.Structure.class).capacity }) catch "Error";
+            rl.drawText(text, 300, rl.getScreenHeight() - 100, 28, rl.Color.black);
+            text = std.fmt.bufPrintZ(&buffer, "Materials: {}", .{selected.ref.Structure.materials}) catch "Error";
             rl.drawText(text, 300, rl.getScreenHeight() - 60, 28, rl.Color.black);
         }
     }

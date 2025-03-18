@@ -66,7 +66,7 @@ pub const Entity = struct {
             Kind.Player => self.ref.Player.life,
             Kind.Unit => self.ref.Unit.life,
             Kind.Structure => self.ref.Structure.life,
-            Kind.Resource => self.ref.Resource.capacity, // Counting capacity as life for resource
+            Kind.Resource => @intCast(self.ref.Resource.capacity), // Counting capacity as life for resource
         };
     }
 
@@ -75,7 +75,7 @@ pub const Entity = struct {
             Kind.Player => self.ref.Player.life = new_life,
             Kind.Unit => self.ref.Unit.life = new_life,
             Kind.Structure => self.ref.Structure.life = new_life,
-            Kind.Resource => self.ref.Resource.capacity = new_life, // Counting capacity as life for resource
+            Kind.Resource => self.ref.Resource.capacity = u.asU16(i16, new_life), // Counting capacity as life for resource
         }
     }
 
@@ -715,9 +715,11 @@ pub const Unit = struct {
                     //std.debug.print("Am carrying, will check for own building nearby.\n", .{});
                     const own_building = u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure);
                     if (own_building) |b| {
-                        if (self.entity.isTouching(b)) { // Is at building, adds carried food to its capacity
-                            b.ref.Structure.capacity = @min(Structure.preset(b.ref.Structure.class).capacity, b.ref.Structure.capacity + u.asI16(u16, self.resources[0]));
+                        if (self.entity.isTouching(b)) { // Is at building, adds carried food/wood to its capacity/materials
+                            b.ref.Structure.capacity = @min(Structure.preset(b.ref.Structure.class).capacity, b.ref.Structure.capacity + self.resources[0]);
+                            b.ref.Structure.materials = b.ref.Structure.materials + self.resources[1];
                             self.resources[0] = 0; // Removes carried food
+                            self.resources[1] = 0; // Removes carried wood
                             self.state = State.Default;
                         } else {
                             //std.debug.print("Is not touching building, will set it to target.\n", .{});
@@ -915,14 +917,15 @@ pub const Unit = struct {
 //----------------------------------------------------------------------------------
 pub const Structure = struct {
     entity: *Entity,
+    state: State,
     owner: u8,
+    class: u8,
     x: u16,
     y: u16,
-    class: u8,
     life: i16,
-    state: State,
     restitution: f16,
-    capacity: i16,
+    capacity: u16,
+    materials: u16 = 0,
     elapsed: u16 = 0,
 
     pub const State = enum {
@@ -944,8 +947,8 @@ pub const Structure = struct {
         height: u16,
         life: i16,
         restitution: f16,
-        capacity: i16,
-        start_capacity: i16,
+        capacity: u16,
+        start_capacity: u16,
     };
 
     /// Returns a `Properties` template determined by `class`.
@@ -1117,9 +1120,9 @@ pub const Resource = struct {
     state: State,
     x: u16,
     y: u16,
-    capacity: i16,
-    restitution: f16,
+    capacity: u16,
     rest: u16 = 0,
+    restitution: f16,
 
     pub const State = enum {
         Default,
@@ -1138,7 +1141,7 @@ pub const Resource = struct {
             const rest_ticks = u.ticksFromSecs(self.restitution);
             if (self.rest >= rest_ticks) {
                 self.capacity = @min(preset(self.class).capacity, self.capacity + 1);
-                self.rest = rest_ticks / 2; // Continues next tick
+                self.rest = rest_ticks / 2; // Once reached restitution secs once, halves it (e.g. wait 8 secs, then 4 per)
             }
         } else if (self.rest > 0) self.rest = 0;
         if (self.capacity <= 0) self.state = State.Depleted;
@@ -1148,14 +1151,14 @@ pub const Resource = struct {
     pub const Properties = struct {
         width: u16,
         height: u16,
-        capacity: i16,
+        capacity: u16,
         restitution: f16,
     };
 
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100, .restitution = 10.0 },
+            0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100, .restitution = 6.0 },
             1 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 50, .restitution = 60.0 },
             2 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 800, .restitution = 0 },
             3 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 20, .restitution = 0 },
