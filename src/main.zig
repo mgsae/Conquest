@@ -82,6 +82,10 @@ pub const World = struct {
     var dead_structures: std.ArrayList(*e.Structure) = undefined;
     var dead_units: std.ArrayList(*e.Unit) = undefined;
     var dead_resources: std.ArrayList(*e.Resource) = undefined;
+    pub var new_players: std.ArrayList(*e.Player) = undefined;
+    pub var new_structures: std.ArrayList(*e.Structure) = undefined;
+    pub var new_units: std.ArrayList(*e.Unit) = undefined;
+    pub var new_resources: std.ArrayList(*e.Resource) = undefined;
 
     fn initializeMap(allocator: *std.mem.Allocator, map: Map) !void {
         width = map.width;
@@ -109,6 +113,10 @@ pub const World = struct {
         World.dead_structures = std.ArrayList(*e.Structure).init(allocator);
         World.dead_units = std.ArrayList(*e.Unit).init(allocator);
         World.dead_resources = std.ArrayList(*e.Resource).init(allocator);
+        World.new_players = std.ArrayList(*e.Player).init(allocator);
+        World.new_structures = std.ArrayList(*e.Structure).init(allocator);
+        World.new_units = std.ArrayList(*e.Unit).init(allocator);
+        World.new_resources = std.ArrayList(*e.Resource).init(allocator);
 
         const resource_coords = map.resource_locations;
         var resource: *e.Resource = undefined;
@@ -165,7 +173,7 @@ pub fn main() anyerror!void {
     Camera.width = rl.getMonitorWidth(0);
     Camera.height = rl.getMonitorHeight(0);
     rl.initWindow(Camera.width, Camera.height, "Conquest");
-    //rl.setTargetFPS(120);
+    rl.setTargetFPS(120);
     defer rl.closeWindow(); // Close window and OpenGL context
 
     //--------------------------------------------------------------------------------------
@@ -184,7 +192,7 @@ pub fn main() anyerror!void {
     // Initialize map
     //--------------------------------------------------------------------------------------
     const map = try Map.open(&allocator, 0); // Opens default map and initializes world
-    const cellsigns_cache = try allocator.alloc(u32, World.grid.columns * World.grid.rows);
+    const cellsigns_cache = try allocator.alloc(u32, World.grid.cols * World.grid.rows);
     defer allocator.free(cellsigns_cache);
     defer World.grid.deinit(&allocator);
     try World.initializeEntities(allocator, map);
@@ -221,6 +229,10 @@ pub fn main() anyerror!void {
     defer World.dead_structures.deinit();
     defer World.dead_players.deinit();
     defer World.dead_resources.deinit();
+    defer World.new_units.deinit();
+    defer World.new_structures.deinit();
+    defer World.new_players.deinit();
+    defer World.new_resources.deinit();
 
     // Initialize user interface
     //--------------------------------------------------------------------------------------
@@ -296,7 +308,7 @@ pub fn main() anyerror!void {
         rl.beginDrawing();
         defer rl.endDrawing();
 
-        rl.clearBackground(rl.Color.black);
+        rl.clearBackground(rl.Color.dark_gray);
         draw(profile_frame);
         if (profile_frame) u.endTimer(0, "Drawing phase took {} seconds in total.\n");
 
@@ -349,6 +361,7 @@ fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vec
 
 // Game loop: Controls
 //----------------------------------------------------------------------------------
+/// Updates responding to registered player input.
 fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vector2, mousewheel_delta: f32, key_input: u32, changed_x: *?u16, changed_y: *?u16, profile_frame: bool) void {
     if (profile_frame) u.startTimer(1, "- Updating controls.");
 
@@ -403,13 +416,14 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
             }
         }
     }
+
     updateCanvasZoom(mousewheel_delta);
     updateCanvasPosition(stored_mouse_input_r, key_input);
 
     if (key_input != 0) { // Sets player build/movement orders from key input
         try processMoveInput(key_input, changed_x, changed_y);
         if (Config.keys.actionActive(key_input, u.Key.Action.BuildOne) or Config.keys.actionActive(key_input, u.Key.Action.BuildTwo) or
-            Config.keys.actionActive(key_input, u.Key.Action.BuildThree) or Config.keys.actionActive(key_input, u.Key.Action.BuildFour))
+            Config.keys.actionActive(key_input, u.Key.Action.BuildThree) or Config.keys.actionActive(key_input, u.Key.Action.BuildFour) or Config.keys.actionActive(key_input, u.Key.Action.BuildRemove))
         {
             processActionInput(key_input);
         }
@@ -570,6 +584,24 @@ fn updateEntities(profile_frame: bool) !void {
             resource.update();
         }
     }
+    // Adding freshly added to main lists, then clearing new lists
+    for (World.new_players.items) |fresh| { // Not sure this will every be used
+        try e.players.append(fresh);
+    }
+    for (World.new_structures.items) |fresh| {
+        try e.structures.append(fresh);
+    }
+    for (World.new_units.items) |fresh| {
+        try e.units.append(fresh);
+    }
+    for (World.new_resources.items) |fresh| {
+        try e.resources.append(fresh);
+    }
+    World.new_players.clearRetainingCapacity();
+    World.new_structures.clearRetainingCapacity();
+    World.new_units.clearRetainingCapacity();
+    World.new_resources.clearRetainingCapacity();
+
     if (profile_frame) u.endTimer(1, "Updating resources took {} seconds.");
 }
 
@@ -635,12 +667,9 @@ pub const TextureManager = struct {
         if (loaded_texture.id == 0) {
             return error.FailedToLoadTexture;
         }
-
-        // Copy the loaded texture into the allocated memory
-        texture.* = loaded_texture;
-
-        // Store the pointer to the texture in the hashmap
-        try self.textures.put(name, texture);
+        texture.* = loaded_texture; // Copy the loaded texture into the allocated memory
+        rl.setTextureFilter(texture.*, rl.TextureFilter.texture_filter_point);
+        try self.textures.put(name, texture); // Store the pointer to the texture in the hashmap
     }
 
     pub fn get(self: *TextureManager, name: []const u8) !*rl.Texture2D {
@@ -674,42 +703,46 @@ fn draw(profile_frame: bool) void {
 pub fn drawMap() void {
     // Retrieve the texture, handle the potential null case
     const landTexture = Config.textureManager.get("land") catch null;
-
     if (landTexture == null) {
         std.debug.print("Warning: 'land' texture not found!\n", .{});
         return;
     }
-    rl.setTextureFilter(landTexture.?.*, rl.TextureFilter.texture_filter_point);
-    // Draw the map area using the texture
-    for (0..World.height) |y| {
-        if (y % (u.Subcell.size) == 0) {
-            for (0..World.width) |x| {
-                if (x % (u.Subcell.size) == 0) {
-                    u.drawTexture(landTexture.?.*, @as(i32, @intCast(x)), @as(i32, @intCast(y)), rl.Color.white);
+
+    if (Player.build_guide != null and Player.self != null) {
+        for (u.u16Sub(Player.self.?.x, u.Grid.cell_half)..u.u16Add(Player.self.?.x, u.Grid.cell_half)) |x| {
+            if (x % (u.Subcell.size) == 0) {
+                for (u.u16Sub(Player.self.?.y, u.Grid.cell_half)..u.u16Add(Player.self.?.y, u.Grid.cell_half)) |y| {
+                    if (y % (u.Subcell.size) == 0) {
+                        // Draw land textures
+                        //u.drawTexture(landTexture.?.*, @as(i32, @intCast(x)), @as(i32, @intCast(y)), rl.Color.white);
+
+                        if (isInBuildDistance(@intCast(x + u.Subcell.size / 2), @intCast(y + u.Subcell.size / 2))) {
+                            const color = if (World.grid.blocked_subcells.contains(u.Point.at(@intCast(x), @intCast(y)))) u.opacity(rl.Color.red, 0.25) else u.opacity(rl.Color.green, 0.25);
+                            u.drawRect(@as(i32, @intCast(x)), @as(i32, @intCast(y)), u.Subcell.size, u.Subcell.size, color);
+                        }
+                    }
                 }
             }
         }
     }
 
-    // Draw subgrid lines (maybe while building??? i.e. build_guide is non null)
-    if (Player.build_guide != null) {
-        var rowIndex: i32 = 1;
+    // Draw subgrid lines while building i.e. build_guide is non-null
+    if (Player.build_guide != null and Player.self != null) {
+        var colIndex: usize = 1;
+        var rowIndex: usize = 1;
         while (rowIndex * u.Subcell.size < World.height) : (rowIndex += 1) {
             u.drawRect(0, @as(i32, @intCast(u.Subcell.size * rowIndex)), World.width, 2, rl.Color.light_gray);
         }
-        var colIndex: i32 = 1;
         while (colIndex * u.Subcell.size < World.width) : (colIndex += 1) {
             u.drawRect(@as(i32, @intCast(u.Subcell.size * colIndex)), 0, 2, World.height, rl.Color.light_gray);
         }
-
-        // Draw grid lines
         rowIndex = 1;
         while (rowIndex * u.Grid.cell_size < World.height) : (rowIndex += 1) {
-            u.drawRect(0, @as(i32, @intCast(u.Grid.cell_size * rowIndex)), World.width, 5, rl.Color.light_gray);
+            u.drawRect(0, @as(i32, @intCast(u.Grid.cell_size * rowIndex)), World.width, 4, rl.Color.light_gray);
         }
         colIndex = 1;
         while (colIndex * u.Grid.cell_size < World.width) : (colIndex += 1) {
-            u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 5, World.height, rl.Color.light_gray);
+            u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 4, World.height, rl.Color.light_gray);
         }
     }
 }
@@ -793,6 +826,11 @@ pub fn drawInterface() void {
             text = std.fmt.bufPrintZ(&buffer, "Capacity: {}/{}", .{ selected.ref.Structure.capacity, e.Structure.preset(selected.ref.Structure.class).capacity }) catch "Error";
             rl.drawText(text, x, rl.getScreenHeight() - 100, fsize, rl.Color.black);
             text = std.fmt.bufPrintZ(&buffer, "Materials: {}", .{selected.ref.Structure.materials}) catch "Error";
+            rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
+        } else if (selected.kind == e.Kind.Resource) {
+            text = std.fmt.bufPrintZ(&buffer, "Yield: {d}", .{selected.ref.Resource.yield / Config.TICKRATE}) catch "Error";
+            rl.drawText(text, x, rl.getScreenHeight() - 100, fsize, rl.Color.black);
+            text = std.fmt.bufPrintZ(&buffer, "Growth: {d}", .{selected.ref.Resource.growth}) catch "Error";
             rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
         }
     }
@@ -1003,6 +1041,17 @@ fn processActionInput(key_input: u32) void { // Called in processInput
         Player.build_index = 2;
     } else if (Config.keys.actionActive(key_input, u.Key.Action.BuildFour)) {
         Player.build_index = 3;
+    } else if (Config.keys.actionActive(key_input, u.Key.Action.BuildRemove)) {
+        Player.build_index = null;
+        Player.build_guide = null;
+        std.debug.print("noting the backspace action", .{});
+        if (Player.selected) |selected| {
+            std.debug.print("finding selected", .{});
+            if (Player.id != null and selected.owner() == Player.id.? and selected.kind == e.Kind.Structure) {
+                std.debug.print("trying to destroy", .{});
+                selected.ref.Structure.destroy();
+            }
+        }
     }
 
     if (Player.build_index != null) { // Sets build guide
@@ -1017,8 +1066,10 @@ fn processActionInput(key_input: u32) void { // Called in processInput
 }
 
 pub fn executeBuild(class: u8) void {
-    if (!isInBuildDistance() or Player.id == null) return;
-    const xy = findBuildPosition(class);
+    const mouse_position = rl.getMousePosition();
+    const mouse_closest_center = u.screenToSubcell(mouse_position).center();
+    if (!isInBuildDistance(mouse_closest_center[0], mouse_closest_center[1]) or Player.id == null) return;
+    const xy = findBuildPosition(class, mouse_position);
     const built = e.Structure.construct(Player.id.?, xy[0], xy[1], class);
     if (built) |building| {
         std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
@@ -1030,11 +1081,10 @@ pub fn executeBuild(class: u8) void {
     Player.build_guide = null;
 }
 
-fn findBuildPosition(class: u8) [2]u16 {
+fn findBuildPosition(class: u8, mouse_position: rl.Vector2) [2]u16 {
     const building = e.Structure.preset(class);
     const x_offset = u.asF32(u16, u.Subcell.size) * Camera.canvas_zoom;
     const y_offset = u.asF32(u16, u.Subcell.size) * Camera.canvas_zoom;
-    const mouse_position = rl.getMousePosition();
 
     const adjusted_position = mouse_position.add(rl.Vector2.init(x_offset, y_offset));
     const subcell = u.screenToSubcell(adjusted_position);
@@ -1050,11 +1100,10 @@ fn findBuildPosition(class: u8) [2]u16 {
     return [2]u16{ snapped[0], snapped[1] };
 }
 
-fn isInBuildDistance() bool {
+fn isInBuildDistance(x: u16, y: u16) bool {
     if (Player.self == null) return false;
-    const subcell_center = u.screenToSubcell(rl.getMousePosition()).center();
     const distance_max = u.Grid.cell_half; //u.asU32(u16, e.Structure.preset(class).width + e.Structure.preset(class).height);
-    const distance = std.math.sqrt(u.distanceSquared(u.Point.at(Player.self.?.x, Player.self.?.y), u.Point.at(subcell_center[0], subcell_center[1])));
+    const distance = std.math.sqrt(u.distanceSquared(u.Point.at(Player.self.?.x, Player.self.?.y), u.Point.at(x, y)));
     return distance <= distance_max;
 }
 
@@ -1062,10 +1111,12 @@ fn isInBuildDistance() bool {
 //----------------------------------------------------------------------------------
 pub fn drawGuide(class: u8) void {
     if (Player.self == null) return;
-    const xy = findBuildPosition(class);
+    const mouse_position = rl.getMousePosition();
+    const xy = findBuildPosition(class, mouse_position);
     const building = e.Structure.preset(class);
     const collides = World.grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;
-    if (collides != null or !isInBuildDistance() or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
+    const mouse_closest_center = u.screenToSubcell(mouse_position).center();
+    if (collides != null or !isInBuildDistance(mouse_closest_center[0], mouse_closest_center[1]) or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
         u.drawGuideFail(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));
     } else {
         u.drawGuide(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));

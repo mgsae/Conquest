@@ -47,7 +47,7 @@ pub fn printGridEntities(grid: *e.Grid) void {
 /// Prints the number of cells currently stored in the hashmap, corresponding to the
 /// number of distinct cells that contain one or more entities.
 pub fn printGridCells(grid: *e.Grid) void {
-    std.debug.print("Currently active cells on the grid: {} (out of {} cells, {} rows, {} columns).\n", .{ grid.cells.count(), grid.rows * grid.columns, grid.rows, grid.columns });
+    std.debug.print("Currently active cells on the grid: {} (out of {} cells, {} rows, {} cols).\n", .{ grid.cells.count(), grid.rows * grid.cols, grid.rows, grid.cols });
 }
 
 pub fn perFrame(frequency: u64) bool {
@@ -271,6 +271,7 @@ pub const Key = struct {
         Ctrl = 1 << 10,
         Enter = 1 << 11,
         Z = 1 << 12,
+        Backspace = 1 << 13,
     };
 
     pub const Action = enum {
@@ -279,6 +280,7 @@ pub const Key = struct {
         BuildThree,
         BuildFour,
         BuildConfirm,
+        BuildRemove,
         MoveUp,
         MoveLeft,
         MoveDown,
@@ -312,6 +314,7 @@ pub const Key = struct {
         try self.bindings.put(Action.BuildThree, InputValue.Three);
         try self.bindings.put(Action.BuildFour, InputValue.Four);
         try self.bindings.put(Action.BuildConfirm, InputValue.Z);
+        try self.bindings.put(Action.BuildRemove, InputValue.Backspace);
         try self.bindings.put(Action.MoveUp, InputValue.Up);
         try self.bindings.put(Action.MoveLeft, InputValue.Left);
         try self.bindings.put(Action.MoveDown, InputValue.Down);
@@ -416,6 +419,16 @@ pub fn u16SubFloat(comptime T: type, int: u16, floatValue: T) u16 {
 
 pub fn u16TimesFloat(comptime T: type, int: u16, floatValue: T) u16 {
     return @as(u16, @intFromFloat(@as(T, @floatFromInt(int)) * floatValue));
+}
+
+/// Returns `a` minus `b`, clamped to minimum 0.
+pub fn u16Sub(a: u16, b: u16) u16 {
+    return if (a < b) 0 else a - b;
+}
+
+/// Returns `a` plus `b`, clamped to maximum u16max.
+pub fn u16Add(a: u16, b: u16) u16 {
+    return if (u16max - a < b) u16max else a + b;
 }
 
 pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
@@ -779,10 +792,11 @@ pub fn angleToSquareOffset(angle: f32, width: u16, height: u16) Vector {
 
 /// Returns the difference between two angles, normalized to the range [-180, 180].
 pub fn angleDifference(angle1: f32, angle2: f32) f32 {
-    var diff = angle1 - angle2;
-    while (diff > 180.0) diff -= 360.0;
-    while (diff <= -180.0) diff += 360.0;
-    return diff;
+    const diff = angle1 - angle2;
+    var normalized = @mod(diff, 360.0);
+    while (normalized > 180.0) normalized -= 360.0;
+    while (normalized <= -180.0) normalized += 360.0;
+    return normalized;
 }
 
 pub fn isHorz(dir: u8) bool {
@@ -1034,13 +1048,42 @@ pub const Grid = struct {
         return closestNode(offset_xy[0], offset_xy[1]);
     }
 
-    pub fn entityCount(self: *e.Grid) usize {
-        var total_entities: usize = 0;
-        var it = self.cells.iterator();
-        while (it.next()) |entry| {
-            total_entities += entry.value_ptr.items.len;
+    /// Shuffles and returns spawn position on one of the four sides of rectangular spawner, or error if all blocked.
+    pub fn findSpawnLocation(spawner_x: u16, spawner_y: u16, spawner_width: u16, spawner_height: u16, spawn_width: u16, spawn_height: u16) ![2]u16 {
+        var side_indices = [_]usize{ 0, 1, 2, 3 };
+        shuffleArray(usize, &side_indices); // Shuffle order
+        const offset_x = @divTrunc(spawner_width, 2) + @divTrunc(spawn_width, 2);
+        const offset_y = @divTrunc(spawner_height, 2) + @divTrunc(spawn_height, 2);
+        for (side_indices) |side_index| {
+            var spawn_x: u16 = 0;
+            var spawn_y: u16 = 0;
+
+            switch (side_index) {
+                0 => { // Bottom
+                    spawn_x = spawner_x;
+                    spawn_y = if (spawner_y + offset_y < main.World.height) spawner_y + offset_y else spawner_y - offset_y;
+                },
+                1 => { // Left
+                    spawn_x = if (spawner_x >= offset_x) spawner_x - offset_x else spawner_x + offset_x;
+                    spawn_y = spawner_y;
+                },
+                2 => { // Right
+                    spawn_x = if (spawner_x + offset_x < main.World.width) spawner_x + offset_x else spawner_x - offset_x;
+                    spawn_y = spawner_y;
+                },
+                3 => { // Top
+                    spawn_x = spawner_x;
+                    spawn_y = if (spawner_y >= offset_y) spawner_y - offset_y else spawner_y + offset_y;
+                },
+                else => @panic("Unrecognized side"),
+            }
+
+            if (try main.World.grid.collidesWith(spawn_x, spawn_y, spawn_width, spawn_height, null) == null and isInMap(spawn_x, spawn_y, spawn_width, spawn_height)) {
+                return [2]u16{ spawn_x, spawn_y };
+            }
         }
-        return total_entities;
+
+        return error.NoValidSpawnPoint;
     }
 };
 
@@ -1109,7 +1152,7 @@ pub const Subcell = struct {
 
     pub const size = Grid.cell_size / 10;
 
-    /// Returns the subcell corresponding to the `x`,`y` coordinates.
+    /// Returns the subcell corresponding to the `x`,`y` world coordinates, with node to its top-left.
     pub fn at(x: u16, y: u16) Subcell {
         return Subcell{
             .node = nodePoint(x, y),
@@ -1146,6 +1189,16 @@ pub const Subcell = struct {
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
     }
 
+    /// Returns the x-coordinate of the node (top-left corner) of the subcell at the given world `x` coordinate.
+    pub fn toNodeX(x: u16) u16 {
+        return @divTrunc(x, Subcell.size) * Subcell.size;
+    }
+
+    /// Returns the y-coordinate of the node (top-left corner) of the subcell at the given world `y` coordinate.
+    pub fn toNodeY(y: u16) u16 {
+        return @divTrunc(y, Subcell.size) * Subcell.size;
+    }
+
     /// Takes a world `x` coordinate and converts it to the corresponding subcell column number.
     pub fn subGridX(x: u16) usize {
         return @divTrunc(x, Subcell.size);
@@ -1154,6 +1207,26 @@ pub const Subcell = struct {
     /// Takes a world `x` coordinate and converts it to the corresponding subcell row number.
     pub fn subGridY(y: u16) usize {
         return @divTrunc(y, Subcell.size);
+    }
+
+    /// Takes world `x`,`y` center and `width`,`height` of rectangle, returning the list of subcells touching the area.
+    pub fn findBlockedSubcells(x: u16, y: u16, width: u16, height: u16, allocator: *std.mem.Allocator) ![]Subcell {
+        // Finds "subcell grid coordinates" of rectangle corners
+        const top_left_x = Subcell.subGridX(x - width / 2);
+        const top_left_y = Subcell.subGridY(y - height / 2);
+        const bottom_right_x = Subcell.subGridX(x + width / 2 + Subcell.size / 2);
+        const bottom_right_y = Subcell.subGridY(y + height / 2 + Subcell.size / 2);
+        var subcells = std.ArrayList(Subcell).init(allocator.*);
+        defer subcells.deinit();
+        for (top_left_x..bottom_right_x) |col| {
+            for (top_left_y..bottom_right_y) |row| {
+                const subcell_world_x = @as(u16, @intCast(col * Subcell.size));
+                const subcell_world_y = @as(u16, @intCast(row * Subcell.size));
+                const subcell = Subcell.at(subcell_world_x, subcell_world_y);
+                try subcells.append(subcell);
+            }
+        }
+        return subcells.toOwnedSlice();
     }
 };
 
@@ -1353,7 +1426,7 @@ pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.
             };
 
             for (&offsets) |offset| {
-                if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.columns and offset.y < grid.rows) {
+                if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.cols and offset.y < grid.rows) {
                     const entities: ?*std.ArrayList(*e.Entity) = grid.sectionEntities(offset.x, offset.y);
                     if (entities != null) {
                         found_any_entity = true;
@@ -1401,7 +1474,7 @@ pub fn concentricRelationalSearch(grid: *e.Grid, origin: *e.Entity, relation: Re
             };
 
             for (&offsets) |offset| {
-                if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.columns and offset.y < grid.rows) {
+                if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.cols and offset.y < grid.rows) {
                     const entities: ?*std.ArrayList(*e.Entity) = grid.sectionEntities(offset.x, offset.y);
                     if (entities != null) {
                         found_any_entity = true;
@@ -1466,7 +1539,7 @@ pub fn unitTypeFromClass(class: u8) []const u8 {
         0 => "Peasant",
         1 => "Soldier",
         2 => "Trebuchet",
-        3 => "Knight",
+        3 => "Cavalry",
         else => "Huh..? Unknown unit?",
     };
 }

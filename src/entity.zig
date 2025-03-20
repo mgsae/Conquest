@@ -701,9 +701,9 @@ pub const Unit = struct {
                     const resource = u.concentricSearch(&main.World.grid, self.last_step, Entity.isAvailableResource);
                     if (resource) |r| {
                         if (self.entity.isTouching(r)) { // Is at resource, drain it and set carry state
-                            r.ref.Resource.capacity -= 1;
+                            r.ref.Resource.capacity = u.u16Sub(r.ref.Resource.capacity, 1);
                             self.state = State.Carrying;
-                            self.resources[r.ref.Resource.class] += 1; // Increments carried resource-class
+                            self.resources[r.ref.Resource.class] += 1; // Increments resource-class carried
                         } else {
                             //std.debug.print("Is not touching resource, will set it to target.\n", .{});
                             self.target = u.Circle.aroundEntity(r, self.entity.reach()); // Not at resource, sets to target
@@ -884,10 +884,10 @@ pub const Unit = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties { // Would set model here as well
         return switch (class) {
-            0 => Properties{ .speed = 1.5, .width = 20, .height = 20, .life = 50, .range = 150, .attackrate = 6 },
-            1 => Properties{ .speed = 1.75, .width = 25, .height = 25, .life = 200, .range = 300, .attackrate = 5 },
-            2 => Properties{ .speed = 1, .width = 45, .height = 45, .life = 400, .range = 500, .attackrate = 12 },
-            3 => Properties{ .speed = 2, .width = 35, .height = 35, .life = 300, .range = 250, .attackrate = 8 },
+            0 => Properties{ .speed = 1.5, .width = 20, .height = 20, .life = 50, .range = 125, .attackrate = 6 }, // Gatherer
+            1 => Properties{ .speed = 1.5, .width = 25, .height = 25, .life = 225, .range = 150, .attackrate = 4 }, // Soldier
+            2 => Properties{ .speed = 1, .width = 45, .height = 45, .life = 400, .range = 500, .attackrate = 12 }, // Trebuchet
+            3 => Properties{ .speed = 2.5, .width = 35, .height = 35, .life = 200, .range = 225, .attackrate = 8 }, // Cavalry
             else => @panic("Invalid unit class"),
         };
     }
@@ -998,7 +998,7 @@ pub const Structure = struct {
         const spawn_point = self.spawnPoint(Unit.preset(spawn_class).width, Unit.preset(spawn_class).height) catch null;
         if (spawn_point) |sp| { // If spawn_point is not null, unwrap it
             const unit = try Unit.create(self.owner, sp[0], sp[1], spawn_class);
-            try units.append(unit);
+            try main.World.new_units.append(unit);
             return unit;
         }
         return error.NoAvailableSpawnPoint;
@@ -1026,6 +1026,11 @@ pub const Structure = struct {
             .ref = .{ .Structure = structure },
         };
 
+        const subcells_blocked = try u.Subcell.findBlockedSubcells(x, y, from_class.width, from_class.height, main.World.grid.allocator);
+        for (subcells_blocked) |subcell| { // Insert into blocked_subcells (subcell as the key, and empty value)
+            _ = try main.World.grid.blocked_subcells.put(subcell.node, {}); // Stores its node
+        }
+
         try main.World.grid.addToCell(entity, null, null);
         return structure;
     }
@@ -1036,7 +1041,7 @@ pub const Structure = struct {
             return null;
         }
         const structure = Structure.create(owner, x, y, class) catch return null;
-        structures.append(structure) catch return null;
+        main.World.new_structures.append(structure) catch return null;
         return structure;
     }
 
@@ -1048,9 +1053,13 @@ pub const Structure = struct {
     pub fn remove(self: *Structure) !void {
         try main.World.grid.removeFromCell(self.entity, null, null); // Removes entity from grid
         try main.World.grid.removeFromAllSections(self.entity);
-        try u.findAndSwapRemove(Structure, &structures, self); // Removes unit from the units collection
+        try u.findAndSwapRemove(Structure, &structures, self); // Removes structure from the structures collection
         for (structures.items) |structure| {
             std.debug.assert(structure != self); // For debugging, structure must be removed at this point
+        }
+        const subcells_blocked = try u.Subcell.findBlockedSubcells(self.x, self.y, self.width(), self.height(), main.World.grid.allocator);
+        for (subcells_blocked) |subcell| { // Insert into blocked_subcells (subcell as the key, and empty value)
+            _ = main.World.grid.blocked_subcells.remove(subcell.node); // Removes its node
         }
         //self.model.destroy(main.World.grid.allocator); // Deallocates memory for the model
         main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
@@ -1068,42 +1077,7 @@ pub const Structure = struct {
     }
 
     pub fn spawnPoint(self: *Structure, unit_width: u16, unit_height: u16) ![2]u16 {
-        var side_indices = [_]usize{ 0, 1, 2, 3 }; // Indices representing the 4 sides
-        u.shuffleArray(usize, &side_indices); // Shuffles indices to randomize check order
-
-        const offset_x = @divTrunc(self.width(), 2) + @divTrunc(unit_width, 2);
-        const offset_y = @divTrunc(self.height(), 2) + @divTrunc(unit_height, 2);
-
-        // Checking side availability
-        for (side_indices) |side_index| {
-            var spawn_x: u16 = 0;
-            var spawn_y: u16 = 0;
-
-            switch (side_index) {
-                0 => { // Bottom side
-                    spawn_x = self.x;
-                    spawn_y = if (self.y + offset_y < main.World.height) self.y + offset_y else self.y - offset_y;
-                },
-                1 => { // Left side
-                    spawn_x = if (self.x >= offset_x) self.x - offset_x else self.x + offset_x;
-                    spawn_y = self.y;
-                },
-                2 => { // Right side
-                    spawn_x = if (self.x + offset_x < main.World.width) self.x + offset_x else self.x - offset_x;
-                    spawn_y = self.y;
-                },
-                3 => { // Top side
-                    spawn_x = self.x;
-                    spawn_y = if (self.y >= offset_y) self.y - offset_y else self.y + offset_y;
-                },
-                else => @panic("Unrecognized side"),
-            }
-            // Check if the calculated spawn point is valid
-            if (try main.World.grid.collidesWith(spawn_x, spawn_y, unit_width, unit_height, null) == null and u.isInMap(spawn_x, spawn_y, unit_width, unit_height)) {
-                return [2]u16{ spawn_x, spawn_y };
-            }
-        }
-        return error.NoValidSpawnPoint;
+        return try u.Grid.findSpawnLocation(self.x, self.y, self.width(), self.height(), unit_width, unit_height);
     }
 
     fn width(self: *Structure) u16 {
@@ -1124,8 +1098,8 @@ pub const Resource = struct {
     x: u16,
     y: u16,
     capacity: u16,
-    rest: u16 = 0,
-    restitution: f16,
+    yield: u16 = 0,
+    growth: f16,
 
     pub const State = enum {
         Default,
@@ -1139,33 +1113,44 @@ pub const Resource = struct {
     }
 
     pub fn update(self: *Resource) void {
-        if (self.capacity < preset(self.class).capacity and self.restitution > 0) {
-            self.rest += 1;
-            const rest_ticks = u.ticksFromSecs(self.restitution);
-            if (self.rest >= rest_ticks) {
-                self.capacity = @min(preset(self.class).capacity, self.capacity + 1);
-                self.rest = rest_ticks / 2; // Once reached restitution secs once, halves it (e.g. wait 8 secs, then 4 per)
+        self.yield += 1;
+        if (self.capacity < preset(self.class).capacity and self.growth > 0) {
+            const max_yield = u.ticksFromSecs(self.growth);
+            if (self.yield >= max_yield) {
+                var copy: ?*Resource = null;
+                if (u.randomU16(100) < @as(u16, @intFromFloat(@round(self.growth)))) {
+                    if (self.spawnResource()) |result| {
+                        copy = result;
+                        std.debug.print("Spawned resource: {s} at {}/{}.\n", .{ u.resourceTypeFromClass(result.class), result.x, result.y });
+                    } else |err| {
+                        std.debug.print("Failed to spawn resource {s}: {}.\n", .{ u.resourceTypeFromClass(self.class), err });
+                    }
+                }
+                if (copy == null) {
+                    self.capacity = @min(preset(self.class).capacity, self.capacity + 1);
+                }
+                self.yield -= max_yield;
             }
-        } else if (self.rest > 0) self.rest = 0;
+        }
         if (self.capacity <= 0) self.state = State.Depleted;
     }
 
-    /// `Structure` property fields determined by `class`.
+    /// `Resource` property fields determined by `class`.
     pub const Properties = struct {
         width: u16,
         height: u16,
         capacity: u16,
-        restitution: f16,
+        growth: f16,
     };
 
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100, .restitution = 6.0 },
-            1 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 50, .restitution = 60.0 },
-            2 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 800, .restitution = 0 },
-            3 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 20, .restitution = 0 },
-            else => @panic("Invalid structure class"),
+            0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100, .growth = 8.0 },
+            1 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 50, .growth = 60.0 },
+            2 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 800, .growth = 0 },
+            3 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 20, .growth = 0 },
+            else => @panic("Invalid resource class"),
         };
     }
 
@@ -1179,7 +1164,7 @@ pub const Resource = struct {
             .class = class,
             .state = State.Default,
             .capacity = from_class.capacity,
-            .restitution = from_class.restitution,
+            .growth = from_class.growth,
             .x = x,
             .y = y,
         };
@@ -1201,6 +1186,41 @@ pub const Resource = struct {
         }
         main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
         main.World.grid.allocator.destroy(self); // Deallocates memory for the Resource
+    }
+
+    /// Returns carried resource index (i.e. food/wood/iron/gold) from resource entity's class.
+    fn typeFromClass(self: *Resource) usize {
+        return switch (self.class) {
+            0 => 0,
+            1 => 1,
+            2 => 2,
+            3 => 3,
+        };
+    }
+
+    pub fn spawnClass(self: *Resource) u8 {
+        return switch (self.class) {
+            0 => 0, // Not very useful now, but may want to change values here
+            1 => 1, // To change what resources get spawned from what
+            2 => 2,
+            3 => 3,
+            else => @panic("Invalid resource class"),
+        };
+    }
+
+    pub fn spawnResource(self: *Resource) !*Resource {
+        const spawn_class = self.spawnClass();
+        const spawn_point = self.spawnPoint(Resource.preset(spawn_class).width, Resource.preset(spawn_class).height) catch null;
+        if (spawn_point) |sp| { // If spawn_point is not null, unwrap it
+            const resource = try Resource.create(sp[0], sp[1], spawn_class);
+            try main.World.new_resources.append(resource);
+            return resource;
+        }
+        return error.NoAvailableSpawnPoint;
+    }
+
+    pub fn spawnPoint(self: *Resource, resource_width: u16, resource_height: u16) ![2]u16 {
+        return try u.Grid.findSpawnLocation(self.x, self.y, self.width(), self.height(), resource_width, resource_height);
     }
 
     fn width(self: *Resource) u16 {
@@ -1251,10 +1271,10 @@ pub const Projectile = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .life = 40, .speed = 8, .width = 4, .height = 4, .damage = 6 },
-            1 => Properties{ .life = 56, .speed = 14, .width = 4, .height = 4, .damage = 16 },
-            2 => Properties{ .life = 128, .speed = 6, .width = 8, .height = 8, .damage = 50 },
-            3 => Properties{ .life = 72, .speed = 12, .width = 6, .height = 6, .damage = 32 },
+            0 => Properties{ .life = 32, .speed = 8, .width = 4, .height = 4, .damage = 6 },
+            1 => Properties{ .life = 32, .speed = 14, .width = 4, .height = 4, .damage = 16 },
+            2 => Properties{ .life = 128, .speed = 6, .width = 8, .height = 8, .damage = 56 },
+            3 => Properties{ .life = 36, .speed = 12, .width = 6, .height = 6, .damage = 32 },
             else => @panic("Invalid projectile class"),
         };
     }
@@ -1351,20 +1371,22 @@ pub const Projectile = struct {
 pub const Grid = struct {
     allocator: *std.mem.Allocator,
     cells: std.hash_map.HashMap(u64, std.ArrayList(*Entity), u.SpatialHash.Context, 80) = undefined,
-    cellsigns: []u32, // A slice into a contiguous block of memory
+    cellsigns: []u32,
     entity_buffer: []*Entity, // Allocated once, rewritten each tick
     buffer_offset: usize, // Tracks the current usage of the buffer
     sections: []std.ArrayList(*Entity), // Array of dynamic lists of pointers to entities (each section is 3x3 around a given cell)
-    columns: usize,
+    cols: usize,
     rows: usize,
+    blocked_subcells: std.AutoHashMap(u.Point, void) = undefined, // Stores nodes of blocked subcells
 
     const Cellsign = u32;
 
     pub fn init(self: *Grid, allocator: *std.mem.Allocator, columns: usize, rows: usize, buffer_size: usize) !void {
         self.allocator = allocator;
         self.cells = std.hash_map.HashMap(u64, std.ArrayList(*Entity), u.SpatialHash.Context, 80).init(allocator.*);
+        self.blocked_subcells = std.AutoHashMap(u.Point, void).init(allocator.*);
 
-        self.columns = columns;
+        self.cols = columns;
         self.rows = rows;
         self.cellsigns = try allocator.alloc(u32, columns * rows);
         self.entity_buffer = try allocator.alloc(*Entity, buffer_size);
@@ -1383,6 +1405,7 @@ pub const Grid = struct {
             entry.value_ptr.*.deinit(); // Dereference value_ptr to access and deinitialize the value
         }
         self.cells.deinit();
+        self.blocked_subcells.deinit();
 
         allocator.free(self.cellsigns);
 
@@ -1395,23 +1418,23 @@ pub const Grid = struct {
 
     /// Takes a grid cell `x`,`y` and returns the list of entities stored in `sections` for that cell.
     pub fn sectionEntities(self: *Grid, x: usize, y: usize) ?*std.ArrayList(*Entity) {
-        if (x >= self.columns or y >= self.rows) {
+        if (x >= self.cols or y >= self.rows) {
             return null;
         }
-        const index = y * self.columns + x;
+        const index = y * self.cols + x;
         return &self.sections[index];
     }
 
     fn addToSection(self: *Grid, x: usize, y: usize, entity: *Entity) !void {
-        if (x < self.columns and y < self.rows) {
-            const index = y * self.columns + x;
+        if (x < self.cols and y < self.rows) {
+            const index = y * self.cols + x;
             try self.sections[index].append(entity);
         }
     }
 
     fn removeFromSection(self: *Grid, x: usize, y: usize, entity: *Entity) !void {
-        if (x < self.columns and y < self.rows) {
-            const index = y * self.columns + x;
+        if (x < self.cols and y < self.rows) {
+            const index = y * self.cols + x;
             var section = &self.sections[index];
             var found_index: ?usize = null;
             for (section.items, 0..) |e, i| {
@@ -1434,7 +1457,7 @@ pub const Grid = struct {
             const nx = @as(isize, @intCast(x)) + offset[0];
             const ny = @as(isize, @intCast(y)) + offset[1];
 
-            if (nx >= 0 and nx < self.columns and ny >= 0 and ny < self.rows) {
+            if (nx >= 0 and nx < self.cols and ny >= 0 and ny < self.rows) {
                 try self.removeFromSection(@as(usize, @intCast(nx)), @as(usize, @intCast(ny)), entity);
             }
         }
@@ -1462,11 +1485,11 @@ pub const Grid = struct {
 
     pub fn updateSections(self: *Grid, cellsigns_cache: []u32) void {
         self.buffer_offset = 0; // Resets at the start of each frame
-        for (0..self.columns) |x| {
+        for (0..self.cols) |x| {
             for (0..self.rows) |y| {
-                const sign = cellsigns_cache[y * self.columns + x];
+                const sign = cellsigns_cache[y * self.cols + x];
                 if (self.getCellsign(x, y) != sign) { // Cellsign changed from previous tick
-                    cellsigns_cache[y * self.columns + x] = self.getCellsign(x, y); // Cache is changed in place
+                    cellsigns_cache[y * self.cols + x] = self.getCellsign(x, y); // Cache is changed in place
                     self.updateSection(x, y) catch |err| {
                         std.log.err("Failed to update section at ({}, {}): {}\n", .{ x, y, err });
                     };
@@ -1476,7 +1499,7 @@ pub const Grid = struct {
     }
 
     fn updateSection(self: *Grid, x: usize, y: usize) !void {
-        const index = y * self.columns + x;
+        const index = y * self.cols + x;
         const entities = try self.sectionSearch(@as(u16, @intCast(x * u.Grid.cell_size)), @as(u16, @intCast(y * u.Grid.cell_size)), main.Config.UNIT_SEARCH_LIMIT);
         self.sections[index].clearAndFree();
 
@@ -1487,12 +1510,12 @@ pub const Grid = struct {
 
     /// Retrieves current `Cellsign` of cell. Expects `x`,`y` grid coordinates, not world coordinates.
     pub fn getCellsign(self: *Grid, x: usize, y: usize) u32 {
-        return self.cellsigns[y * self.columns + x];
+        return self.cellsigns[y * self.cols + x];
     }
 
     /// Sets `Cellsign` of cell to `value`. Expects `x`,`y` grid coordinates, not world coordinates.
     pub fn setCellsign(self: *Grid, x: usize, y: usize, value: u32) void {
-        self.cellsigns[y * self.columns + x] = value;
+        self.cellsigns[y * self.cols + x] = value;
     }
 
     pub fn addToCell(self: *Grid, entity: *Entity, new_x: ?u16, new_y: ?u16) !void {
@@ -1586,16 +1609,16 @@ pub const Grid = struct {
         return null;
     }
 
-    /// Iterates over the entire grid and generates a fresh `Cellsign` for each cell. Each sign is stored at `[y * self.columns + x]` in the `cellsigns` array.
+    /// Iterates over the entire grid and generates a fresh `Cellsign` for each cell. Each sign is stored at `[y * self.cols + x]` in the `cellsigns` array.
     pub fn updateCellsigns(self: *Grid) void {
         for (0..self.rows) |y| {
-            for (0..self.columns) |x| {
+            for (0..self.cols) |x| {
                 const key = u.SpatialHash.hash(@truncate(x * u.Grid.cell_size), @truncate(y * u.Grid.cell_size));
                 if (self.cells.get(key)) |entity_list| {
                     const sign = generateCellsign(@constCast(&entity_list));
-                    self.cellsigns[y * self.columns + x] = sign;
+                    self.cellsigns[y * self.cols + x] = sign;
                 } else {
-                    self.cellsigns[y * self.columns + x] = 0; // Clears the cellsign if the cell is empty
+                    self.cellsigns[y * self.cols + x] = 0; // Clears the cellsign if the cell is empty
                 }
             }
         }
@@ -1716,4 +1739,27 @@ pub const Grid = struct {
         }
         return biggest_entity;
     }
+
+    pub fn entityCount(self: *Grid) usize {
+        var total_entities: usize = 0;
+        var it = self.cells.iterator();
+        while (it.next()) |entry| {
+            total_entities += entry.value_ptr.items.len;
+        }
+        return total_entities;
+    }
+
+    //pub fn getSubcellPathStep(self: *Grid, start_point: u.Point, end_point: u.Point) void {
+    //    const cur = u.Subcell.pointNode(start_point);
+    //    const end = u.Subcell.pointNode(end_point);
+    //    const diameter = u.Grid.cell_size / u.Subcell.size;
+    //    const radius = diameter/2;
+    //    var node_scores: [diameter]u16 = [_]u16{0} ** diameter;
+    //    for (-radius..radius) |x| {
+    //        for (-radius..radius) |y| {
+    //            const node = u.Subcell.nodeFromCoordinates(cur[0] + (radius * x), cur[1] + (radius * y));
+    //            test
+    //        }
+    //    }
+    //}
 };
