@@ -57,6 +57,8 @@ pub const Player = struct {
     pub var id: ?u8 = null;
     pub var selected: ?*e.Entity = null;
     pub var selection_origin: ?rl.Vector2 = null;
+    pub var selection_nodes: [2]?u.Point = [_]?u.Point{ null, null }; // Selection node x,y, target node x,y
+    pub var selection_path: ?std.ArrayList(u.Point) = null;
     pub var changed_x: ?u16 = null;
     pub var changed_y: ?u16 = null;
     pub var build_guide: ?u8 = null;
@@ -727,7 +729,7 @@ pub fn drawMap() void {
     }
 
     // Draw subgrid lines while building i.e. build_guide is non-null
-    if (Player.build_guide != null and Player.self != null) {
+    if ((Player.build_guide != null and Player.self != null) or Player.selected != null) {
         var colIndex: usize = 1;
         var rowIndex: usize = 1;
         while (rowIndex * u.Subcell.size < World.height) : (rowIndex += 1) {
@@ -743,6 +745,32 @@ pub fn drawMap() void {
         colIndex = 1;
         while (colIndex * u.Grid.cell_size < World.width) : (colIndex += 1) {
             u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 4, World.height, rl.Color.light_gray);
+        }
+        if (Player.selected) |selected| {
+            if (selected.kind == e.Kind.Unit) {
+                const unit = selected.ref.Unit;
+                const start_node = u.Subcell.closestNodePoint(unit.x, unit.y);
+                const end_node = u.Subcell.closestNodePoint(unit.target.center.x, unit.target.center.y);
+                if (start_node.equals(end_node)) return;
+                // Updates selection path if necessary
+                if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or !Player.selection_nodes[0].?.equals(start_node) or !Player.selection_nodes[1].?.equals(end_node)) {
+                    Player.selection_nodes[0] = start_node;
+                    Player.selection_nodes[1] = end_node;
+                    const new_path = World.grid.findPath(start_node, end_node);
+                    if (new_path) |path| {
+                        Player.selection_path = path;
+                    } else |err| {
+                        std.debug.print("Invalid path: {}.\n", .{err});
+                    }
+                }
+                // Draws selection path
+                if (Player.selection_path) |path| {
+                    var i: usize = 0;
+                    while (i < path.items.len) : (i += 1) {
+                        u.drawCircle(path.items[i].x, path.items[i].y, 6, rl.Color.white);
+                    }
+                }
+            }
         }
     }
 }

@@ -1749,17 +1749,99 @@ pub const Grid = struct {
         return total_entities;
     }
 
-    //pub fn getSubcellPathStep(self: *Grid, start_point: u.Point, end_point: u.Point) void {
-    //    const cur = u.Subcell.pointNode(start_point);
-    //    const end = u.Subcell.pointNode(end_point);
-    //    const diameter = u.Grid.cell_size / u.Subcell.size;
-    //    const radius = diameter/2;
-    //    var node_scores: [diameter]u16 = [_]u16{0} ** diameter;
-    //    for (-radius..radius) |x| {
-    //        for (-radius..radius) |y| {
-    //            const node = u.Subcell.nodeFromCoordinates(cur[0] + (radius * x), cur[1] + (radius * y));
-    //            test
-    //        }
-    //    }
-    //}
+    pub fn findPath(self: *Grid, start_point: u.Point, end_point: u.Point) !std.ArrayList(u.Point) {
+        const allocator = self.allocator.*;
+        var open_set = std.ArrayList(u.Point).init(allocator); // Nodes yet to be evaluated
+        var g_score = std.AutoHashMap(u.Point, u16).init(allocator); // Cost of reaching node from start
+        var f_score = std.AutoHashMap(u.Point, u16).init(allocator); // Cost of reaching end via node
+        var came_from = std.AutoHashMap(u.Point, u.Point).init(allocator); // Previous node of node
+        std.debug.print("findPath: set up arraylist and hashmaps.\n", .{});
+        defer open_set.deinit();
+        defer g_score.deinit();
+        defer f_score.deinit();
+        defer came_from.deinit();
+
+        // Initialize start node
+        try g_score.put(start_point, 0);
+        try f_score.put(start_point, u.manhattanDistance(start_point, end_point));
+        try open_set.append(start_point);
+        std.debug.print("findPath: initialized start node at {}/{}, end node at {}/{}.\n", .{ start_point.x, start_point.y, end_point.x, end_point.y });
+        while (open_set.items.len > 0) {
+            // Find node with lowest f_score
+            var current_index: usize = 0;
+            var current_node = open_set.items[0];
+            var min_f_score = f_score.get(current_node) orelse u.u16max;
+            std.debug.print("findPath: index {}, current {}/{}, looking for node with lowest f_score, at {} now.\n", .{ current_index, current_node.x, current_node.y, min_f_score });
+            for (open_set.items, 0..) |node, i| {
+                const score = f_score.get(node) orelse u.u16max;
+                if (score < min_f_score) {
+                    min_f_score = score;
+                    current_index = i;
+                    current_node = node;
+                }
+            }
+            std.debug.print("findPath: index {}, current {}/{}, done looking for node with lowest f_score, at {} now.\n", .{ current_index, current_node.x, current_node.y, min_f_score });
+            _ = open_set.swapRemove(current_index);
+            // If we reached the goal, reconstruct the path
+            if (current_node.equals(end_point)) {
+                std.debug.print("findPath: current equals end, reconstructing path.\n", .{});
+                return self.reconstructPath(came_from, end_point);
+            }
+
+            std.debug.print("findPath: Checking if end_point {}/{} has neighbors...\n", .{ end_point.x, end_point.y });
+            const test_neighbors = [_]u.Point{
+                u.Point.at(u.u16Add(end_point.x, u.Subcell.size), end_point.y),
+                u.Point.at(u.u16Sub(end_point.x, u.Subcell.size), end_point.y),
+                u.Point.at(end_point.x, u.u16Add(end_point.y, u.Subcell.size)),
+                u.Point.at(end_point.x, u.u16Sub(end_point.y, u.Subcell.size)),
+            };
+            for (test_neighbors) |n| {
+                std.debug.print("Neighbor {}/{} is {s}.\n", .{ n.x, n.y, if (self.blocked_subcells.contains(n)) "BLOCKED" else "OPEN" });
+            }
+
+            std.debug.print("findPath: index {}, current {}/{}, starting check of neighbors.\n", .{ current_index, current_node.x, current_node.y });
+            // Check neighbors (up, down, left, right)
+            const neighbors = [_]u.Point{
+                u.Point.at(u.u16Add(current_node.x, u.Subcell.size), current_node.y),
+                u.Point.at(u.u16Sub(current_node.x, u.Subcell.size), current_node.y),
+                u.Point.at(current_node.x, u.u16Add(current_node.y, u.Subcell.size)),
+                u.Point.at(current_node.x, u.u16Sub(current_node.y, u.Subcell.size)),
+            };
+            for (neighbors) |neighbor| {
+                if (self.blocked_subcells.contains(neighbor) and !neighbor.equals(end_point)) continue; // Skip if blocked
+
+                const tentative_g_score = u.u16Add((g_score.get(current_node) orelse u.u16max), u.Subcell.size);
+                if (tentative_g_score < (g_score.get(neighbor) orelse u.u16max)) {
+                    try g_score.put(neighbor, tentative_g_score);
+                    try f_score.put(neighbor, u.u16Add(tentative_g_score, u.manhattanDistance(neighbor, end_point)));
+                    try came_from.put(neighbor, current_node); // Track where we came from
+
+                    if (!u.Point.inList(neighbor, &open_set)) {
+                        try open_set.append(neighbor);
+                    }
+                }
+            }
+            std.debug.print("findPath: Neighbors checked for {}/{}. End point still reachable? {}\n", .{ current_node.x, current_node.y, f_score.get(end_point) != null });
+        }
+
+        return error.NoPath; // If no path was found
+    }
+
+    // Reconstructs the path from end to start
+    fn reconstructPath(self: *Grid, came_from: std.AutoHashMap(u.Point, u.Point), end_point: u.Point) !std.ArrayList(u.Point) {
+        const allocator = self.allocator.*;
+        var path = std.ArrayList(u.Point).init(allocator);
+        var current = end_point;
+        //std.debug.print("reconstructPath: set up path arraylist, starting appending loop.\n", .{});
+
+        while (came_from.get(current)) |prev| {
+            try path.append(current);
+            current = prev;
+        }
+        try path.append(current); // Add start node
+        //std.debug.print("reconstructPath: reversing items in memory.\n", .{});
+        std.mem.reverse(u.Point, path.items); // Reverse to get correct order
+
+        return path;
+    }
 };

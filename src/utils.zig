@@ -563,6 +563,13 @@ pub const Point = struct {
         };
     }
 
+    pub fn atArray(xy: [2]u16) Point {
+        return Point{
+            .x = xy[0],
+            .y = xy[1],
+        };
+    }
+
     pub fn equals(self: Point, other: Point) bool {
         return self.x == other.x and self.y == other.y;
     }
@@ -608,6 +615,20 @@ pub const Point = struct {
     /// Returns the Subcell in which the point is located.
     pub fn getSubcell(self: *Point) Subcell {
         return Subcell.at(self.x, self.y);
+    }
+
+    /// Checks whether the point's `x` and `y` are those of a subcell node.
+    pub fn isNode(self: *Point) bool {
+        return self.x == Subcell.toNodeX(self.x) and self.y == Subcell.toNodeY(self.y);
+    }
+
+    pub fn inList(point: Point, list: *std.ArrayList(Point)) bool {
+        for (list.items) |item| {
+            if (item.equals(point)) {
+                return true;
+            }
+        }
+        return false;
     }
 };
 
@@ -881,6 +902,10 @@ pub fn distanceSquared(a: Point, b: Point) u32 {
     return @as(u32, @intCast(dx * dx)) + @as(u32, @intCast(dy * dy));
 }
 
+pub fn manhattanDistance(a: Point, b: Point) u16 {
+    return u16Sub(a.x, b.x) + u16Sub(a.y, b.y);
+}
+
 /// Compares `a` and `b` coordinates and checks whether both differences are lower than `distance`.
 pub fn withinSquare(a: Point, b: Point, distance: f16) bool {
     const dx = asF32(u16, a.x) - asF32(u16, b.x);
@@ -1152,7 +1177,7 @@ pub const Subcell = struct {
 
     pub const size = Grid.cell_size / 10;
 
-    /// Returns the subcell corresponding to the `x`,`y` world coordinates, with node to its top-left.
+    /// Returns the subcell corresponding to the `x`,`y` world coordinates, with node at its top-left.
     pub fn at(x: u16, y: u16) Subcell {
         return Subcell{
             .node = nodePoint(x, y),
@@ -1167,15 +1192,15 @@ pub const Subcell = struct {
         return [2]u16{ self.node.x + (size / 2), self.node.y + (size / 2) };
     }
 
-    /// Returns the top left `x`,`y` of the closest 10th part of a cell to `x`,`y`.
+    /// Returns node (top left) of the 10th part of a cell that `x`,`y` is in. Not necessarily the closest node. Use `closestNode` to get the closest node instead.
     pub fn nodeFromCoordinates(x: u16, y: u16) [2]u16 {
-        const closest_x = @divTrunc(x, Subcell.size) * Subcell.size;
-        const closest_y = @divTrunc(y, Subcell.size) * Subcell.size;
-        return [2]u16{ closest_x, closest_y };
+        const node_x = @divTrunc(x, Subcell.size) * Subcell.size;
+        const node_y = @divTrunc(y, Subcell.size) * Subcell.size;
+        return [2]u16{ node_x, node_y };
     }
 
     pub fn pointNode(point: Point) [2]u16 {
-        return nodeFromCoordinates(point.x, point.y)[0];
+        return nodeFromCoordinates(point.x, point.y);
     }
 
     pub fn nodePoint(x: u16, y: u16) Point {
@@ -1187,6 +1212,21 @@ pub const Subcell = struct {
     pub fn snapToNode(x: u16, y: u16, width: u16, height: u16) [2]u16 {
         const snapped_center = Subcell.nodeFromCoordinates(if (x > width / 2) x - width / 2 else 0, if (y > height / 2) y - height / 2 else 0);
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
+    }
+
+    /// Returns the subcell node closest to `x,y`. Not necessarily the node of the subcell that `x,y` is in; use `nodeFromCoordinates` for that.
+    pub fn closestNode(x: u16, y: u16) [2]u16 {
+        const remainder_x = x % Subcell.size;
+        const remainder_y = y % Subcell.size;
+        const round_x: u16 = if (remainder_x >= (Subcell.size / 2)) Subcell.size else 0;
+        const round_y: u16 = if (remainder_y >= (Subcell.size / 2)) Subcell.size else 0;
+        return [2]u16{ x - remainder_x + round_x, y - remainder_y + round_y };
+    }
+
+    /// Returns the subcell node closest to `x,y`. Not necessarily the node of the subcell that `x,y` is in; use `nodeFromCoordinates` for that.
+    pub fn closestNodePoint(x: u16, y: u16) Point {
+        const xy = closestNode(x, y);
+        return Point.at(xy[0], xy[1]);
     }
 
     /// Returns the x-coordinate of the node (top-left corner) of the subcell at the given world `x` coordinate.
