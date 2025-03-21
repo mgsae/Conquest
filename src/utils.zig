@@ -437,6 +437,11 @@ pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
     return if (remainder != 0) divResult + 1 else divResult;
 }
 
+pub fn lessThan(context: u16, a: PriorityNode, b: PriorityNode) std.math.Order {
+    _ = context;
+    return std.math.order(a.priority, b.priority);
+}
+
 // Geometry
 //----------------------------------------------------------------------------------
 pub const Vector = struct {
@@ -903,7 +908,9 @@ pub fn distanceSquared(a: Point, b: Point) u32 {
 }
 
 pub fn manhattanDistance(a: Point, b: Point) u16 {
-    return u16Sub(a.x, b.x) + u16Sub(a.y, b.y);
+    const x = @abs(@as(i32, @intCast(a.x)) - @as(i32, @intCast(b.x)));
+    const y = @abs(@as(i32, @intCast(a.y)) - @as(i32, @intCast(b.y)));
+    return asU16(u32, x + y);
 }
 
 /// Compares `a` and `b` coordinates and checks whether both differences are lower than `distance`.
@@ -1175,7 +1182,9 @@ pub fn testHashFunction() void {
 pub const Subcell = struct {
     node: Point,
 
-    pub const size = Grid.cell_size / 10;
+    pub const size: comptime_int = main.World.GRID_CELL_SIZE / main.World.GRID_SUBCELL_DIVISIONS;
+    pub const half: comptime_int = size / 2;
+    pub const quarter: comptime_int = size / 4;
 
     /// Returns the subcell corresponding to the `x`,`y` world coordinates, with node at its top-left.
     pub fn at(x: u16, y: u16) Subcell {
@@ -1267,6 +1276,15 @@ pub const Subcell = struct {
             }
         }
         return subcells.toOwnedSlice();
+    }
+};
+
+pub const PriorityNode = struct {
+    point: Point,
+    priority: u16,
+    /// Used in std.PriorityQueue(u.PriorityNode, u16, u.lessThan).init(allocator, 0).
+    pub fn init(point: Point, priority: u16) PriorityNode {
+        return PriorityNode{ .point = point, .priority = priority };
     }
 };
 

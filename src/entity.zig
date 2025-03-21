@@ -301,8 +301,8 @@ pub const Player = struct {
             .life = 10000,
             .x = x,
             .y = y,
-            .width = 100,
-            .height = 100,
+            .width = u.Subcell.half * 3,
+            .height = u.Subcell.half * 3,
             .speed = 5,
             .state = State.Default,
             .local = true,
@@ -327,8 +327,8 @@ pub const Player = struct {
             .life = 10000,
             .x = x,
             .y = y,
-            .width = 100,
-            .height = 100,
+            .width = u.Subcell.half * 3,
+            .height = u.Subcell.half * 3,
             .speed = 5,
             .state = State.Default,
             .local = false,
@@ -936,7 +936,7 @@ pub const Structure = struct {
 
     pub fn draw(self: *Structure, alpha: f32) void {
         if (self.state == State.Destroyed) return;
-        u.drawEntity(self.x, self.y, self.width(), self.height(), self.entity.color(alpha));
+        u.drawEntity(self.x, self.y, preset(self.class).width, preset(self.class).height, self.entity.color(alpha));
 
         u.drawLife(self.x, self.y, preset(self.class).width, self.life, preset(self.class).life);
         u.drawCapacity(self.x, self.y, preset(self.class).width, preset(self.class).height, self.capacity, preset(self.class).capacity);
@@ -955,10 +955,10 @@ pub const Structure = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = 150, .height = 150, .life = 12000, .restitution = 8.6, .capacity = 3, .start_capacity = 3 },
-            1 => Properties{ .width = 100, .height = 100, .life = 8000, .restitution = 4.0, .capacity = 1, .start_capacity = 0 },
-            2 => Properties{ .width = 200, .height = 200, .life = 14000, .restitution = 14.0, .capacity = 6, .start_capacity = 0 },
-            3 => Properties{ .width = 150, .height = 150, .life = 9000, .restitution = 11.0, .capacity = 4, .start_capacity = 0 },
+            0 => Properties{ .width = u.Subcell.half * 5, .height = u.Subcell.half * 5, .life = 12000, .restitution = 8.6, .capacity = 3, .start_capacity = 3 }, // Farm
+            1 => Properties{ .width = u.Subcell.half * 3, .height = u.Subcell.half * 3, .life = 8000, .restitution = 4.0, .capacity = 1, .start_capacity = 0 }, // Home
+            2 => Properties{ .width = u.Subcell.half * 6, .height = u.Subcell.half * 4, .life = 14000, .restitution = 14.0, .capacity = 6, .start_capacity = 0 }, // Yard
+            3 => Properties{ .width = u.Subcell.half * 3, .height = u.Subcell.half * 5, .life = 9000, .restitution = 11.0, .capacity = 4, .start_capacity = 0 }, // Keep
             else => @panic("Invalid structure class"),
         };
     }
@@ -1081,7 +1081,7 @@ pub const Structure = struct {
     }
 
     fn width(self: *Structure) u16 {
-        return preset(self.class).height;
+        return preset(self.class).width;
     }
 
     fn height(self: *Structure) u16 {
@@ -1749,13 +1749,15 @@ pub const Grid = struct {
         return total_entities;
     }
 
-    pub fn findPath(self: *Grid, start_point: u.Point, end_point: u.Point) !std.ArrayList(u.Point) {
+    pub fn findNodePath(self: *Grid, start_point: u.Point, end_point: u.Point) !std.ArrayList(u.Point) {
         const allocator = self.allocator.*;
-        var open_set = std.ArrayList(u.Point).init(allocator); // Nodes yet to be evaluated
+
+        var open_set = std.PriorityQueue(u.PriorityNode, u16, u.lessThan).init(allocator, 0);
+
         var g_score = std.AutoHashMap(u.Point, u16).init(allocator); // Cost of reaching node from start
         var f_score = std.AutoHashMap(u.Point, u16).init(allocator); // Cost of reaching end via node
         var came_from = std.AutoHashMap(u.Point, u.Point).init(allocator); // Previous node of node
-        std.debug.print("findPath: set up arraylist and hashmaps.\n", .{});
+        //std.debug.print("findNodePath: set up prio queue and hashmaps.\n", .{});
         defer open_set.deinit();
         defer g_score.deinit();
         defer f_score.deinit();
@@ -1764,42 +1766,36 @@ pub const Grid = struct {
         // Initialize start node
         try g_score.put(start_point, 0);
         try f_score.put(start_point, u.manhattanDistance(start_point, end_point));
-        try open_set.append(start_point);
-        std.debug.print("findPath: initialized start node at {}/{}, end node at {}/{}.\n", .{ start_point.x, start_point.y, end_point.x, end_point.y });
-        while (open_set.items.len > 0) {
-            // Find node with lowest f_score
-            var current_index: usize = 0;
-            var current_node = open_set.items[0];
-            var min_f_score = f_score.get(current_node) orelse u.u16max;
-            std.debug.print("findPath: index {}, current {}/{}, looking for node with lowest f_score, at {} now.\n", .{ current_index, current_node.x, current_node.y, min_f_score });
-            for (open_set.items, 0..) |node, i| {
-                const score = f_score.get(node) orelse u.u16max;
-                if (score < min_f_score) {
-                    min_f_score = score;
-                    current_index = i;
-                    current_node = node;
-                }
+        try open_set.add(u.PriorityNode.init(start_point, u.manhattanDistance(start_point, end_point)));
+
+        //std.debug.print("findNodePath: initialized start node at {}/{}, end node at {}/{}.\n", .{ start_point.x, start_point.y, end_point.x, end_point.y });
+
+        // First, checks if the end_point is completely blocked
+        var has_open_neighbor = false;
+        const end_neighbors = [_]u.Point{
+            u.Point.at(u.u16Add(end_point.x, u.Subcell.size), end_point.y),
+            u.Point.at(u.u16Sub(end_point.x, u.Subcell.size), end_point.y),
+            u.Point.at(end_point.x, u.u16Add(end_point.y, u.Subcell.size)),
+            u.Point.at(end_point.x, u.u16Sub(end_point.y, u.Subcell.size)),
+        };
+        for (end_neighbors) |n| {
+            if (!self.blocked_subcells.contains(n)) {
+                has_open_neighbor = true;
+                break;
             }
-            std.debug.print("findPath: index {}, current {}/{}, done looking for node with lowest f_score, at {} now.\n", .{ current_index, current_node.x, current_node.y, min_f_score });
-            _ = open_set.swapRemove(current_index);
-            // If we reached the goal, reconstruct the path
-            if (current_node.equals(end_point)) {
-                std.debug.print("findPath: current equals end, reconstructing path.\n", .{});
+        }
+        if (!has_open_neighbor) {
+            //std.debug.print("findNodePath: End point has no open neighbor.\n", .{});
+            return error.Inacessible;
+        }
+
+        while (open_set.count() > 0) { // Find node with lowest f_score
+            //std.debug.print("open_set count: {d}.\n", .{open_set.count()});
+            const current_node = open_set.remove().point; // Gets node with the lowest f_score
+            if (current_node.equals(end_point)) { // Success, reached end
                 return self.reconstructPath(came_from, end_point);
             }
 
-            std.debug.print("findPath: Checking if end_point {}/{} has neighbors...\n", .{ end_point.x, end_point.y });
-            const test_neighbors = [_]u.Point{
-                u.Point.at(u.u16Add(end_point.x, u.Subcell.size), end_point.y),
-                u.Point.at(u.u16Sub(end_point.x, u.Subcell.size), end_point.y),
-                u.Point.at(end_point.x, u.u16Add(end_point.y, u.Subcell.size)),
-                u.Point.at(end_point.x, u.u16Sub(end_point.y, u.Subcell.size)),
-            };
-            for (test_neighbors) |n| {
-                std.debug.print("Neighbor {}/{} is {s}.\n", .{ n.x, n.y, if (self.blocked_subcells.contains(n)) "BLOCKED" else "OPEN" });
-            }
-
-            std.debug.print("findPath: index {}, current {}/{}, starting check of neighbors.\n", .{ current_index, current_node.x, current_node.y });
             // Check neighbors (up, down, left, right)
             const neighbors = [_]u.Point{
                 u.Point.at(u.u16Add(current_node.x, u.Subcell.size), current_node.y),
@@ -1808,23 +1804,20 @@ pub const Grid = struct {
                 u.Point.at(current_node.x, u.u16Sub(current_node.y, u.Subcell.size)),
             };
             for (neighbors) |neighbor| {
-                if (self.blocked_subcells.contains(neighbor) and !neighbor.equals(end_point)) continue; // Skip if blocked
+                if (self.blocked_subcells.contains(neighbor) and !neighbor.equals(end_point)) continue;
 
                 const tentative_g_score = u.u16Add((g_score.get(current_node) orelse u.u16max), u.Subcell.size);
                 if (tentative_g_score < (g_score.get(neighbor) orelse u.u16max)) {
                     try g_score.put(neighbor, tentative_g_score);
                     try f_score.put(neighbor, u.u16Add(tentative_g_score, u.manhattanDistance(neighbor, end_point)));
-                    try came_from.put(neighbor, current_node); // Track where we came from
+                    try came_from.put(neighbor, current_node);
 
-                    if (!u.Point.inList(neighbor, &open_set)) {
-                        try open_set.append(neighbor);
-                    }
+                    try open_set.add(u.PriorityNode.init(neighbor, f_score.get(neighbor).?));
                 }
             }
-            std.debug.print("findPath: Neighbors checked for {}/{}. End point still reachable? {}\n", .{ current_node.x, current_node.y, f_score.get(end_point) != null });
         }
-
-        return error.NoPath; // If no path was found
+        //std.debug.print("findNodePath: Failed to find end point.\n", .{});
+        return error.NoPath;
     }
 
     // Reconstructs the path from end to start

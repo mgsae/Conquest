@@ -73,7 +73,8 @@ pub const Player = struct {
 pub const World = struct {
     const DEFAULT_WIDTH = 15000; // 1920 * 8; // Limit for u16 coordinates: 65535
     const DEFAULT_HEIGHT = 9000; // 1080 * 8; // Limit for u16 coordinates: 65535
-    pub const GRID_CELL_SIZE = 1000;
+    pub const GRID_CELL_SIZE = 1024;
+    pub const GRID_SUBCELL_DIVISIONS = 16;
     pub const MOVEMENT_DIVISIONS = 10; // Modulus base for unit movement updates
     pub var tick_number: u64 = 0; // Set on map initialization
     pub var width: u16 = 0;
@@ -310,7 +311,7 @@ pub fn main() anyerror!void {
         rl.beginDrawing();
         defer rl.endDrawing();
 
-        rl.clearBackground(rl.Color.dark_gray);
+        rl.clearBackground(rl.Color.init(14, 80, 14, 255)); // Background color
         draw(profile_frame);
         if (profile_frame) u.endTimer(0, "Drawing phase took {} seconds in total.\n");
 
@@ -710,25 +711,24 @@ pub fn drawMap() void {
         return;
     }
 
-    if (Player.build_guide != null and Player.self != null) {
-        for (u.u16Sub(Player.self.?.x, u.Grid.cell_half)..u.u16Add(Player.self.?.x, u.Grid.cell_half)) |x| {
-            if (x % (u.Subcell.size) == 0) {
-                for (u.u16Sub(Player.self.?.y, u.Grid.cell_half)..u.u16Add(Player.self.?.y, u.Grid.cell_half)) |y| {
-                    if (y % (u.Subcell.size) == 0) {
-                        // Draw land textures
-                        //u.drawTexture(landTexture.?.*, @as(i32, @intCast(x)), @as(i32, @intCast(y)), rl.Color.white);
-
-                        if (isInBuildDistance(@intCast(x + u.Subcell.size / 2), @intCast(y + u.Subcell.size / 2))) {
-                            const color = if (World.grid.blocked_subcells.contains(u.Point.at(@intCast(x), @intCast(y)))) u.opacity(rl.Color.red, 0.25) else u.opacity(rl.Color.green, 0.25);
-                            u.drawRect(@as(i32, @intCast(x)), @as(i32, @intCast(y)), u.Subcell.size, u.Subcell.size, color);
-                        }
-                    }
+    if (Player.build_guide != null and Player.self != null) { // Move to drawGuide
+        // While building, 2d subgrid loop near player
+        var x: usize = u.Subcell.toNodeX(u.u16Sub(Player.self.?.x, u.Grid.cell_half));
+        var y: usize = u.Subcell.toNodeY(u.u16Sub(Player.self.?.y, u.Grid.cell_half));
+        while (y <= u.u16Add(Player.self.?.y, u.Grid.cell_half)) : (y += u.Subcell.size) {
+            while (x <= u.u16Add(Player.self.?.x, u.Grid.cell_half)) : (x += u.Subcell.size) {
+                // Draw land textures
+                //u.drawTexture(landTexture.?.*, @as(i32, @intCast(x)), @as(i32, @intCast(y)), rl.Color.white);
+                if (isInBuildDistance(@intCast(x + u.Subcell.size / 2), @intCast(y + u.Subcell.size / 2))) {
+                    const color = if (World.grid.blocked_subcells.contains(u.Point.at(@intCast(x), @intCast(y)))) u.opacity(rl.Color.red, 0.2) else u.opacity(rl.Color.white, 0.2);
+                    u.drawRect(@as(i32, @intCast(x)), @as(i32, @intCast(y)), u.Subcell.size, u.Subcell.size, color);
                 }
             }
+            x = u.Subcell.toNodeX(u.u16Sub(Player.self.?.x, u.Grid.cell_half));
         }
     }
 
-    // Draw subgrid lines while building i.e. build_guide is non-null
+    // While building/selecting, 1d subgrid loops along entire map
     if ((Player.build_guide != null and Player.self != null) or Player.selected != null) {
         var colIndex: usize = 1;
         var rowIndex: usize = 1;
@@ -756,7 +756,7 @@ pub fn drawMap() void {
                 if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or !Player.selection_nodes[0].?.equals(start_node) or !Player.selection_nodes[1].?.equals(end_node)) {
                     Player.selection_nodes[0] = start_node;
                     Player.selection_nodes[1] = end_node;
-                    const new_path = World.grid.findPath(start_node, end_node);
+                    const new_path = World.grid.findNodePath(start_node, end_node);
                     if (new_path) |path| {
                         Player.selection_path = path;
                     } else |err| {
@@ -1121,10 +1121,11 @@ fn findBuildPosition(class: u8, mouse_position: rl.Vector2) [2]u16 {
 
     //if (@rem(@divTrunc((building.width + building.height), 2), u.Subcell.size) != 0) { // If not subcell multiple
     const mouse_map_pos = u.screenToMap(mouse_position);
-    if (mouse_map_pos[0] > subcell.center()[0] - 100) snapped[0] += (u.Subcell.size / 2);
-    if (mouse_map_pos[1] > subcell.center()[1] - 100) snapped[1] += (u.Subcell.size / 2);
+    if (mouse_map_pos[0] > subcell.center()[0] - u.Subcell.size) snapped[0] += (u.Subcell.size / 2); // was - 100, not - u.Subcell.size
+    if (mouse_map_pos[1] > subcell.center()[1] - u.Subcell.size) snapped[1] += (u.Subcell.size / 2); // was - 100, not - u.Subcell.size
     //}
 
+    //std.debug.print("Found build position at {}, {}. \n", .{ snapped[0], snapped[1] });
     return [2]u16{ snapped[0], snapped[1] };
 }
 
