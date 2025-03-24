@@ -385,7 +385,9 @@ pub const Unit = struct {
     y: u16,
     life: i16,
     target: u.Circle,
+    intermediary_target: ?u.Point,
     last_step: u.Point,
+    stored_extrema: [2]?u.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
     model: *u.Model,
     state: State,
@@ -731,11 +733,32 @@ pub const Unit = struct {
                     }
                 }
             }
-            return self.stepTowardsTarget(current, self.target.center);
-        } else { // If farther than a cell away, move by waypoints towards the target
-            const waypoint = u.Waypoint.closestTowards(current, self.target.center, distance_squared, self.last_step);
-            return self.stepTowardsTarget(current, waypoint);
+            // Within a cell away, A* by nodes
+            const cur_node = u.Subcell.closestNodePoint(self.x, self.y);
+            const tar_node = u.Subcell.closestNodePoint(self.target.center.x, self.target.center.y);
+            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.stored_extrema[0].?.x != cur_node.x or self.stored_extrema[0].?.y != cur_node.y or self.stored_extrema[1].?.x != tar_node.x or self.stored_extrema[1].?.y != tar_node.y) {
+                const new_path = main.World.grid.findNodePath(cur_node, self.target);
+                if (new_path) |path| {
+                    self.intermediary_target = path.items[0];
+                } else |err| std.debug.print("Invalid path: {}.\n", .{err});
+            }
+            self.stored_extrema[0] = cur_node;
+            self.stored_extrema[1] = tar_node;
+        } else { // Farther than a cell away, move by waypoints towards the target
+            const cur_wp = u.Waypoint.cellClosestTo(u.Point.at(self.x, self.y), self.target.center);
+            const tar_wp = u.Waypoint.closest(self.target.center.x, self.target.center.y);
+            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.stored_extrema[0].?.x != cur_wp.x or self.stored_extrema[0].?.y != cur_wp.y or self.stored_extrema[1].?.x != tar_wp.x or self.stored_extrema[1].?.y != tar_wp.y) {
+                const new_path = main.World.grid.findWaypointPath(cur_wp, tar_wp);
+                if (new_path) |path| {
+                    self.intermediary_target = path.items[0];
+                } else |err| std.debug.print("Invalid path: {}.\n", .{err});
+            }
+            self.stored_extrema[0] = cur_wp;
+            self.stored_extrema[1] = tar_wp;
+
+            //intermediary_target = u.Waypoint.closestTowards(current, self.target.center, distance_squared, self.last_step);
         }
+        return self.stepTowardsTarget(current, self.intermediary_target orelse self.target.center);
     }
 
     /// Returns a point offset by self's `speed` towards `target` from self's `current` position.
@@ -808,6 +831,7 @@ pub const Unit = struct {
         projectiles.* = std.ArrayList(*Projectile).init(main.World.grid.allocator.*);
         const from_class = Unit.preset(class);
         const start_point = u.Point.at(x, y);
+        const initial_target = if (class == 0) findResource(start_point, u.reachFromRect(from_class.width, from_class.height)) else findTarget(owner, start_point, u.reachFromRect(from_class.width, from_class.height));
 
         var model: *u.Model = undefined;
 
@@ -828,8 +852,10 @@ pub const Unit = struct {
             .model = model,
             .x = x,
             .y = y,
-            .target = if (class == 0) findResource(start_point, u.reachFromRect(from_class.width, from_class.height)) else findTarget(owner, start_point, u.reachFromRect(from_class.width, from_class.height)),
+            .target = initial_target,
+            .intermediary_target = initial_target.center,
             .last_step = start_point,
+            .stored_extrema = [2]?u.Point{ null, null },
             .cached_cellsigns = [_]u32{0} ** 9,
             .projectiles = projectiles,
             .state = State.Default,
@@ -1749,8 +1775,11 @@ pub const Grid = struct {
         return total_entities;
     }
 
-    pub fn findNodePath(self: *Grid, start_point: u.Point, end_point: u.Point) !std.ArrayList(u.Point) {
+    pub fn findNodePath(self: *Grid, start_point: u.Point, end_circle: u.Circle) !std.ArrayList(u.Point) {
         const allocator = self.allocator.*;
+
+        const start_node = u.Subcell.closestNodePoint(start_point.x, start_point.y);
+        const end_node = u.Subcell.closestNodePoint(end_circle.center.x, end_circle.center.y);
 
         var open_set = std.PriorityQueue(u.PriorityNode, u16, u.lessThan).init(allocator, 0);
 
@@ -1764,36 +1793,17 @@ pub const Grid = struct {
         defer came_from.deinit();
 
         // Initialize start node
-        try g_score.put(start_point, 0);
-        try f_score.put(start_point, u.manhattanDistance(start_point, end_point));
-        try open_set.add(u.PriorityNode.init(start_point, u.manhattanDistance(start_point, end_point)));
+        try g_score.put(start_node, 0);
+        try f_score.put(start_node, u.manhattanDistance(start_node, end_node));
+        try open_set.add(u.PriorityNode.init(start_node, u.manhattanDistance(start_node, end_node)));
 
-        //std.debug.print("findNodePath: initialized start node at {}/{}, end node at {}/{}.\n", .{ start_point.x, start_point.y, end_point.x, end_point.y });
-
-        // First, checks if the end_point is completely blocked
-        var has_open_neighbor = false;
-        const end_neighbors = [_]u.Point{
-            u.Point.at(u.u16Add(end_point.x, u.Subcell.size), end_point.y),
-            u.Point.at(u.u16Sub(end_point.x, u.Subcell.size), end_point.y),
-            u.Point.at(end_point.x, u.u16Add(end_point.y, u.Subcell.size)),
-            u.Point.at(end_point.x, u.u16Sub(end_point.y, u.Subcell.size)),
-        };
-        for (end_neighbors) |n| {
-            if (!self.blocked_subcells.contains(n)) {
-                has_open_neighbor = true;
-                break;
-            }
-        }
-        if (!has_open_neighbor) {
-            //std.debug.print("findNodePath: End point has no open neighbor.\n", .{});
-            return error.Inacessible;
-        }
+        //std.debug.print("findNodePath: initialized start node at {}/{}, end node at {}/{}.\n", .{ start_node.x, start_node.y, end_point.x, end_point.y });
 
         while (open_set.count() > 0) { // Find node with lowest f_score
             //std.debug.print("open_set count: {d}.\n", .{open_set.count()});
             const current_node = open_set.remove().point; // Gets node with the lowest f_score
-            if (current_node.equals(end_point)) { // Success, reached end
-                return self.reconstructPath(came_from, end_point);
+            if (current_node.equals(end_node)) { // Success, reached end
+                return self.reconstructPath(came_from, end_node);
             }
 
             // Check neighbors (up, down, left, right)
@@ -1804,12 +1814,12 @@ pub const Grid = struct {
                 u.Point.at(current_node.x, u.u16Sub(current_node.y, u.Subcell.size)),
             };
             for (neighbors) |neighbor| {
-                if (self.blocked_subcells.contains(neighbor) and !neighbor.equals(end_point)) continue;
+                if (self.blocked_subcells.contains(neighbor) and !end_circle.contains(neighbor) and !neighbor.equals(end_node)) continue;
 
                 const tentative_g_score = u.u16Add((g_score.get(current_node) orelse u.u16max), u.Subcell.size);
                 if (tentative_g_score < (g_score.get(neighbor) orelse u.u16max)) {
                     try g_score.put(neighbor, tentative_g_score);
-                    try f_score.put(neighbor, u.u16Add(tentative_g_score, u.manhattanDistance(neighbor, end_point)));
+                    try f_score.put(neighbor, u.u16Add(tentative_g_score, u.manhattanDistance(neighbor, end_node)));
                     try came_from.put(neighbor, current_node);
 
                     try open_set.add(u.PriorityNode.init(neighbor, f_score.get(neighbor).?));
@@ -1817,6 +1827,60 @@ pub const Grid = struct {
             }
         }
         //std.debug.print("findNodePath: Failed to find end point.\n", .{});
+        return error.NoPath;
+    }
+
+    pub fn findWaypointPath(self: *Grid, start_point: u.Point, end_point: u.Point) !std.ArrayList(u.Point) {
+        const allocator = self.allocator.*;
+        // These should also be nodes
+        const start_wp = u.Waypoint.closest(start_point.x, start_point.y);
+        const end_wp = u.Waypoint.closest(end_point.x, end_point.y);
+        var open_set = std.PriorityQueue(u.PriorityNode, u16, u.lessThan).init(allocator, 0);
+
+        var g_score = std.AutoHashMap(u.Point, u16).init(allocator); // Cost of reaching node from start
+        var f_score = std.AutoHashMap(u.Point, u16).init(allocator); // Cost of reaching end via node
+        var came_from = std.AutoHashMap(u.Point, u.Point).init(allocator); // Previous node of node
+        //std.debug.print("findWaypointPath: set up prio queue and hashmaps.\n", .{});
+        defer open_set.deinit();
+        defer g_score.deinit();
+        defer f_score.deinit();
+        defer came_from.deinit();
+
+        // Initialize start node
+        try g_score.put(start_wp, 0);
+        try f_score.put(start_wp, u.manhattanDistance(start_wp, end_wp));
+        try open_set.add(u.PriorityNode.init(start_wp, u.manhattanDistance(start_wp, end_wp)));
+
+        //std.debug.print("findWaypointPath: initialized start node at {}/{}, end node at {}/{}.\n", .{ start_point.x, start_point.y, end_point.x, end_point.y });
+
+        while (open_set.count() > 0) { // Find node with lowest f_score
+            //std.debug.print("open_set count: {d}.\n", .{open_set.count()});
+            const current_wp = open_set.remove().point; // Gets node with the lowest f_score
+            if (current_wp.equals(end_wp)) { // Success, reached end
+                return self.reconstructPath(came_from, end_wp);
+            }
+
+            // Check neighbors (up, down, left, right)
+            const neighbors = [_]u.Point{
+                u.Point.at(u.u16Add(current_wp.x, u.Grid.cell_size), current_wp.y),
+                u.Point.at(u.u16Sub(current_wp.x, u.Grid.cell_size), current_wp.y),
+                u.Point.at(current_wp.x, u.u16Add(current_wp.y, u.Grid.cell_size)),
+                u.Point.at(current_wp.x, u.u16Sub(current_wp.y, u.Grid.cell_size)),
+            };
+            for (neighbors) |neighbor| {
+                if (self.blocked_subcells.contains(neighbor) and !neighbor.equals(end_wp)) continue;
+
+                const tentative_g_score = u.u16Add((g_score.get(current_wp) orelse u.u16max), u.Grid.cell_size);
+                if (tentative_g_score < (g_score.get(neighbor) orelse u.u16max)) {
+                    try g_score.put(neighbor, tentative_g_score);
+                    try f_score.put(neighbor, u.u16Add(tentative_g_score, u.manhattanDistance(neighbor, end_wp)));
+                    try came_from.put(neighbor, current_wp);
+
+                    try open_set.add(u.PriorityNode.init(neighbor, f_score.get(neighbor).?));
+                }
+            }
+        }
+        //std.debug.print("findWaypointPath: Failed to find end point.\n", .{});
         return error.NoPath;
     }
 

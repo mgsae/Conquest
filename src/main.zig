@@ -131,7 +131,7 @@ pub const World = struct {
         }
         // Class 1 resource (wood)
         for (0..100) |_| {
-            const xy = u.Subcell.snapToNode(u.randomU16(World.width), u.randomU16(World.height), e.Resource.preset(1).width, e.Resource.preset(1).height);
+            const xy = u.Subcell.snapToCorner(u.randomU16(World.width), u.randomU16(World.height), e.Resource.preset(1).width, e.Resource.preset(1).height);
             resource = try e.Resource.create(xy[0], xy[1], 1);
             try e.resources.append(resource);
         }
@@ -166,17 +166,20 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     var flags = rl.ConfigFlags{};
     flags.window_highdpi = true;
-    flags.vsync_hint = false;
-    flags.borderless_windowed_mode = true;
+    //flags.vsync_hint = false;
+    flags.borderless_windowed_mode = false;
     flags.fullscreen_mode = false;
+    flags.window_undecorated = false;
 
     rl.setConfigFlags(flags);
 
     // Initialize window
-    Camera.width = rl.getMonitorWidth(0);
-    Camera.height = rl.getMonitorHeight(0);
+    Camera.width = 1920 * 1.5;
+    Camera.height = 1080 * 1.5;
+    std.debug.print("Camera width/height: {}/{}\n", .{ Camera.width, Camera.height });
     rl.initWindow(Camera.width, Camera.height, "Conquest");
     rl.setTargetFPS(120);
+    rl.setWindowSize(800, 500);
     defer rl.closeWindow(); // Close window and OpenGL context
 
     //--------------------------------------------------------------------------------------
@@ -220,7 +223,7 @@ pub fn main() anyerror!void {
     //}
     for (0..0) |_| {
         const class = @as(u8, @intCast(u.randomU16(3)));
-        const xy = u.Subcell.snapToNode(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), e.Structure.preset(class).width, e.Structure.preset(class).height);
+        const xy = u.Subcell.snapToCorner(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), e.Structure.preset(class).width, e.Structure.preset(class).height);
         _ = e.Structure.construct(3, xy[0], xy[1], class);
     }
 
@@ -713,8 +716,8 @@ pub fn drawMap() void {
 
     if (Player.build_guide != null and Player.self != null) { // Move to drawGuide
         // While building, 2d subgrid loop near player
-        var x: usize = u.Subcell.toNodeX(u.u16Sub(Player.self.?.x, u.Grid.cell_half));
-        var y: usize = u.Subcell.toNodeY(u.u16Sub(Player.self.?.y, u.Grid.cell_half));
+        var x: usize = u.Subcell.toCornerX(u.u16Sub(Player.self.?.x, u.Grid.cell_half));
+        var y: usize = u.Subcell.toCornerY(u.u16Sub(Player.self.?.y, u.Grid.cell_half));
         while (y <= u.u16Add(Player.self.?.y, u.Grid.cell_half)) : (y += u.Subcell.size) {
             while (x <= u.u16Add(Player.self.?.x, u.Grid.cell_half)) : (x += u.Subcell.size) {
                 // Draw land textures
@@ -724,7 +727,7 @@ pub fn drawMap() void {
                     u.drawRect(@as(i32, @intCast(x)), @as(i32, @intCast(y)), u.Subcell.size, u.Subcell.size, color);
                 }
             }
-            x = u.Subcell.toNodeX(u.u16Sub(Player.self.?.x, u.Grid.cell_half));
+            x = u.Subcell.toCornerX(u.u16Sub(Player.self.?.x, u.Grid.cell_half));
         }
     }
 
@@ -733,41 +736,60 @@ pub fn drawMap() void {
         var colIndex: usize = 1;
         var rowIndex: usize = 1;
         while (rowIndex * u.Subcell.size < World.height) : (rowIndex += 1) {
-            u.drawRect(0, @as(i32, @intCast(u.Subcell.size * rowIndex)), World.width, 2, rl.Color.light_gray);
+            u.drawRect(0, @as(i32, @intCast(u.Subcell.size * rowIndex)), World.width, 2, u.opacity(rl.Color.white, 0.5));
         }
         while (colIndex * u.Subcell.size < World.width) : (colIndex += 1) {
-            u.drawRect(@as(i32, @intCast(u.Subcell.size * colIndex)), 0, 2, World.height, rl.Color.light_gray);
+            u.drawRect(@as(i32, @intCast(u.Subcell.size * colIndex)), 0, 2, World.height, u.opacity(rl.Color.white, 0.5));
         }
         rowIndex = 1;
         while (rowIndex * u.Grid.cell_size < World.height) : (rowIndex += 1) {
-            u.drawRect(0, @as(i32, @intCast(u.Grid.cell_size * rowIndex)), World.width, 4, rl.Color.light_gray);
+            u.drawRect(0, @as(i32, @intCast(u.Grid.cell_size * rowIndex)), World.width, 4, rl.Color.white);
         }
         colIndex = 1;
         while (colIndex * u.Grid.cell_size < World.width) : (colIndex += 1) {
-            u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 4, World.height, rl.Color.light_gray);
+            u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 4, World.height, rl.Color.white);
         }
         if (Player.selected) |selected| {
             if (selected.kind == e.Kind.Unit) {
                 const unit = selected.ref.Unit;
-                const start_node = u.Subcell.closestNodePoint(unit.x, unit.y);
-                const end_node = u.Subcell.closestNodePoint(unit.target.center.x, unit.target.center.y);
-                if (start_node.equals(end_node)) return;
-                // Updates selection path if necessary
-                if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or !Player.selection_nodes[0].?.equals(start_node) or !Player.selection_nodes[1].?.equals(end_node)) {
+                const cur = u.Point.atEntity(selected);
+                const tar = unit.target.center;
+                if (u.manhattanDistance(cur, tar) > World.GRID_CELL_SIZE) {
+                    const start_wp = u.Waypoint.cellClosestTo(cur, tar);
+                    const end_wp = u.Waypoint.closest(tar.x, tar.y);
+                    if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or
+                        !Player.selection_nodes[0].?.equals(start_wp) or !Player.selection_nodes[1].?.equals(end_wp))
+                    {
+                        const new_path = World.grid.findWaypointPath(start_wp, end_wp);
+                        if (new_path) |path| {
+                            Player.selection_path = path;
+                        } else |err| std.debug.print("Invalid path: {}.\n", .{err});
+                    }
+                    Player.selection_nodes[0] = start_wp;
+                    Player.selection_nodes[1] = end_wp;
+                } else {
+                    const start_node = u.Subcell.closestNodePoint(cur.x, cur.y);
+                    const end_node = u.Subcell.closestNodePoint(tar.x, tar.y);
+                    if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or !Player.selection_nodes[0].?.equals(start_node) or !Player.selection_nodes[1].?.equals(end_node)) {
+                        const new_path = World.grid.findNodePath(start_node, unit.target);
+                        if (new_path) |path| {
+                            Player.selection_path = path;
+                        } else |err| std.debug.print("Invalid path: {}.\n", .{err});
+                    }
                     Player.selection_nodes[0] = start_node;
                     Player.selection_nodes[1] = end_node;
-                    const new_path = World.grid.findNodePath(start_node, end_node);
-                    if (new_path) |path| {
-                        Player.selection_path = path;
-                    } else |err| {
-                        std.debug.print("Invalid path: {}.\n", .{err});
-                    }
                 }
                 // Draws selection path
                 if (Player.selection_path) |path| {
                     var i: usize = 0;
-                    while (i < path.items.len) : (i += 1) {
-                        u.drawCircle(path.items[i].x, path.items[i].y, 6, rl.Color.white);
+                    var j: usize = 1;
+                    u.drawLineEx(u.Vector.fromCoords(unit.x, unit.y), u.Vector.fromCoords(path.items[i].x, path.items[i].y), 8, rl.Color.white);
+                    while (j < path.items.len) : (j += 1) {
+                        const v1 = u.Vector.fromCoords(path.items[i].x, path.items[i].y);
+                        const v2 = u.Vector.fromCoords(path.items[j].x, path.items[j].y);
+                        u.drawLineEx(v1, v2, 8, rl.Color.white);
+                        u.drawCircle(path.items[i].x, path.items[i].y, 16, rl.Color.white);
+                        i += 1;
                     }
                 }
             }
@@ -962,7 +984,7 @@ const Map = struct { // Encapsulates map properties; see World for currently act
                     };
 
                     // Multiply by u.Subcell.size to correctly position within the subcells, and snap
-                    const final = u.Subcell.snapToNode(base_x + rotated_pos.x * u.Subcell.size, base_y + rotated_pos.y * u.Subcell.size, u.Subcell.size, u.Subcell.size);
+                    const final = u.Subcell.snapToCorner(base_x + rotated_pos.x * u.Subcell.size, base_y + rotated_pos.y * u.Subcell.size, u.Subcell.size, u.Subcell.size);
                     slice[index] = u.Point.at(final[0], final[1]);
                     index += 1; // Increment by 1 for each resource
                 }
@@ -1095,8 +1117,8 @@ fn processActionInput(key_input: u32) void { // Called in processInput
 
 pub fn executeBuild(class: u8) void {
     const mouse_position = rl.getMousePosition();
-    const mouse_closest_center = u.screenToSubcell(mouse_position).center();
-    if (!isInBuildDistance(mouse_closest_center[0], mouse_closest_center[1]) or Player.id == null) return;
+    const mouse_closest_center = u.screenToSubcell(mouse_position).node;
+    if (!isInBuildDistance(mouse_closest_center.x, mouse_closest_center.y) or Player.id == null) return;
     const xy = findBuildPosition(class, mouse_position);
     const built = e.Structure.construct(Player.id.?, xy[0], xy[1], class);
     if (built) |building| {
@@ -1117,13 +1139,12 @@ fn findBuildPosition(class: u8, mouse_position: rl.Vector2) [2]u16 {
     const adjusted_position = mouse_position.add(rl.Vector2.init(x_offset, y_offset));
     const subcell = u.screenToSubcell(adjusted_position);
 
-    var snapped = u.Subcell.snapToNode(subcell.node.x, subcell.node.y, building.width, building.height);
+    var snapped = u.Subcell.snapToCorner(subcell.corner()[0], subcell.corner()[1], building.width, building.height);
 
     //if (@rem(@divTrunc((building.width + building.height), 2), u.Subcell.size) != 0) { // If not subcell multiple
     const mouse_map_pos = u.screenToMap(mouse_position);
-    if (mouse_map_pos[0] > subcell.center()[0] - u.Subcell.size) snapped[0] += (u.Subcell.size / 2); // was - 100, not - u.Subcell.size
-    if (mouse_map_pos[1] > subcell.center()[1] - u.Subcell.size) snapped[1] += (u.Subcell.size / 2); // was - 100, not - u.Subcell.size
-    //}
+    if (mouse_map_pos[0] > subcell.node.x - u.Subcell.size) snapped[0] += (u.Subcell.size / 2); // was - 100, not - u.Subcell.size
+    if (mouse_map_pos[1] > subcell.node.y - u.Subcell.size) snapped[1] += (u.Subcell.size / 2); // was - 100, not - u.Subcell.size
 
     //std.debug.print("Found build position at {}, {}. \n", .{ snapped[0], snapped[1] });
     return [2]u16{ snapped[0], snapped[1] };
@@ -1144,15 +1165,15 @@ pub fn drawGuide(class: u8) void {
     const xy = findBuildPosition(class, mouse_position);
     const building = e.Structure.preset(class);
     const collides = World.grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;
-    const mouse_closest_center = u.screenToSubcell(mouse_position).center();
-    if (collides != null or !isInBuildDistance(mouse_closest_center[0], mouse_closest_center[1]) or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
+    const mouse_closest_center = u.screenToSubcell(mouse_position).node;
+    if (collides != null or !isInBuildDistance(mouse_closest_center.x, mouse_closest_center.y) or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
         u.drawGuideFail(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));
     } else {
         u.drawGuide(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));
     }
 }
 
-pub fn drawSelection(origin: rl.Vector2) void {
+pub fn drawSelection(origin: rl.Vector2) void { // Selection box
     if (Player.self == null) return;
     const col = u.idToColor(Player.id orelse 0, 0.5);
     const mouse_pos = rl.getMousePosition();
@@ -1161,5 +1182,5 @@ pub fn drawSelection(origin: rl.Vector2) void {
     const min_y = @min(origin.y, mouse_pos.y);
     const max_y = @max(origin.y, mouse_pos.y);
     const rect = rl.Rectangle.init(min_x, min_y, max_x - min_x, max_y - min_y);
-    rl.drawRectangleLinesEx(rect, 1, col);
+    rl.drawRectangleRounded(rect, 0.1, 4, col);
 }

@@ -613,18 +613,18 @@ pub const Point = struct {
     }
 
     /// Returns the Grid columns and rows in which the point is located.
-    pub fn getCellCoordinates(self: *Point) [2]usize {
+    pub fn getCellCoordinates(self: Point) [2]usize {
         return [2]usize{ Grid.x(self.x), Grid.y(self.y) };
     }
 
     /// Returns the Subcell in which the point is located.
-    pub fn getSubcell(self: *Point) Subcell {
+    pub fn getSubcell(self: Point) Subcell {
         return Subcell.at(self.x, self.y);
     }
 
     /// Checks whether the point's `x` and `y` are those of a subcell node.
-    pub fn isNode(self: *Point) bool {
-        return self.x == Subcell.toNodeX(self.x) and self.y == Subcell.toNodeY(self.y);
+    pub fn isNode(self: Point) bool {
+        return self.x == Subcell.toCornerX(self.x) and self.y == Subcell.toCornerY(self.y);
     }
 
     pub fn inList(point: Point, list: *std.ArrayList(Point)) bool {
@@ -910,7 +910,7 @@ pub fn distanceSquared(a: Point, b: Point) u32 {
 pub fn manhattanDistance(a: Point, b: Point) u16 {
     const x = @abs(@as(i32, @intCast(a.x)) - @as(i32, @intCast(b.x)));
     const y = @abs(@as(i32, @intCast(a.y)) - @as(i32, @intCast(b.y)));
-    return asU16(u32, x + y);
+    return asU16(u32, @min(u16max, x + y));
 }
 
 /// Compares `a` and `b` coordinates and checks whether both differences are lower than `distance`.
@@ -1197,14 +1197,25 @@ pub const Subcell = struct {
         return [2]u16{ self.node.x, self.node.y };
     }
 
-    pub fn center(self: Subcell) [2]u16 {
-        return [2]u16{ self.node.x + (size / 2), self.node.y + (size / 2) };
+    pub fn corner(self: Subcell) [2]u16 { // Top left
+        return [2]u16{ self.node.x - half, self.node.y - half };
     }
 
-    /// Returns node (top left) of the 10th part of a cell that `x`,`y` is in. Not necessarily the closest node. Use `closestNode` to get the closest node instead.
-    pub fn nodeFromCoordinates(x: u16, y: u16) [2]u16 {
+    pub fn cornerPoint(self: Subcell) Point { // Top left
+        return Point{ self.node.x - half, self.node.y - half };
+    }
+
+    /// Returns (top left) corner of the 10th part of a cell that `x`,`y` is in. Not necessarily the closest node. Use `closestNode` to get the closest node instead.
+    pub fn cornerFromCoordinates(x: u16, y: u16) [2]u16 {
         const node_x = @divTrunc(x, Subcell.size) * Subcell.size;
         const node_y = @divTrunc(y, Subcell.size) * Subcell.size;
+        return [2]u16{ node_x, node_y };
+    }
+
+    /// Returns node (center) of the 10th part of a cell that `x`,`y` is in. Not necessarily the closest node. Use `closestNode` to get the closest node instead.
+    pub fn nodeFromCoordinates(x: u16, y: u16) [2]u16 {
+        const node_x = (@divTrunc(x, Subcell.size) * Subcell.size) + Subcell.half;
+        const node_y = (@divTrunc(y, Subcell.size) * Subcell.size) + Subcell.half;
         return [2]u16{ node_x, node_y };
     }
 
@@ -1218,33 +1229,39 @@ pub const Subcell = struct {
     }
 
     /// Aligns the top left of the rectangle centered on `x`,`y` with the top left of its closest subcell. Returns the rectangle's center.
+    pub fn snapToCorner(x: u16, y: u16, width: u16, height: u16) [2]u16 {
+        const snapped_center = Subcell.cornerFromCoordinates(if (x > width / 2) x - width / 2 else 0, if (y > height / 2) y - height / 2 else 0);
+        return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
+    }
+
+    /// Aligns the top left of the rectangle centered on `x`,`y` with the center of its closest subcell. Returns the rectangle's center.
     pub fn snapToNode(x: u16, y: u16, width: u16, height: u16) [2]u16 {
         const snapped_center = Subcell.nodeFromCoordinates(if (x > width / 2) x - width / 2 else 0, if (y > height / 2) y - height / 2 else 0);
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
     }
 
-    /// Returns the subcell node closest to `x,y`. Not necessarily the node of the subcell that `x,y` is in; use `nodeFromCoordinates` for that.
+    /// Returns the subcell node closest to `x,y`. Not necessarily the node of the subcell that `x,y` is in; use `cornerFromCoordinates` for that.
     pub fn closestNode(x: u16, y: u16) [2]u16 {
         const remainder_x = x % Subcell.size;
         const remainder_y = y % Subcell.size;
         const round_x: u16 = if (remainder_x >= (Subcell.size / 2)) Subcell.size else 0;
         const round_y: u16 = if (remainder_y >= (Subcell.size / 2)) Subcell.size else 0;
-        return [2]u16{ x - remainder_x + round_x, y - remainder_y + round_y };
+        return [2]u16{ x - remainder_x + round_x + Subcell.half, y - remainder_y + round_y + Subcell.half };
     }
 
-    /// Returns the subcell node closest to `x,y`. Not necessarily the node of the subcell that `x,y` is in; use `nodeFromCoordinates` for that.
+    /// Returns the subcell node closest to `x,y`. Not necessarily the node of the subcell that `x,y` is in; use `cornerFromCoordinates` for that.
     pub fn closestNodePoint(x: u16, y: u16) Point {
         const xy = closestNode(x, y);
         return Point.at(xy[0], xy[1]);
     }
 
     /// Returns the x-coordinate of the node (top-left corner) of the subcell at the given world `x` coordinate.
-    pub fn toNodeX(x: u16) u16 {
+    pub fn toCornerX(x: u16) u16 {
         return @divTrunc(x, Subcell.size) * Subcell.size;
     }
 
     /// Returns the y-coordinate of the node (top-left corner) of the subcell at the given world `y` coordinate.
-    pub fn toNodeY(y: u16) u16 {
+    pub fn toCornerY(y: u16) u16 {
         return @divTrunc(y, Subcell.size) * Subcell.size;
     }
 
@@ -1296,14 +1313,13 @@ pub const Waypoint: type = struct {
         return (@abs(x - center_x) < @abs(y - center_y));
     }
 
-    /// Takes the grid column/row of a given cell and returns the 4 waypoints along its edges. Order: left mid, top mid, right mid, bottom mid.
+    /// Takes the grid column/row of a given cell and returns waypoints along its edges. Order: left mid, top mid, right mid, bottom mid.
+    /// Only returns 2 waypoints; left/right if cell is closer to the horizontal than vertical world center, otherwise top/bottom.
     pub fn cellSidesStraight(grid_x: usize, grid_y: usize) [4]?Point {
         const node_x = @as(u16, @intCast(grid_x * Grid.cell_size));
         const node_y = @as(u16, @intCast(grid_y * Grid.cell_size));
 
-        // Determine whether the movement should be horizontal or vertical
         const horizontal = goHorz(node_x, node_y);
-
         return [4]?Point{
             if (horizontal) Point.at(node_x, node_y + Grid.cell_half) else null, // left mid
             if (!horizontal) Point.at(node_x + Grid.cell_half, node_y) else null, // top mid
@@ -1311,12 +1327,13 @@ pub const Waypoint: type = struct {
             if (!horizontal) Point.at(node_x + Grid.cell_half, node_y + Grid.cell_size) else null, // bottom mid
         };
     }
-    // New cellsides fn that does not enforce vert/horz path
-    pub fn cellSides(grid_x: usize, grid_y: usize) [4]?Point {
+
+    /// Takes grid column/row, returning an array of 4 points at the cell's left mid, top mid, right mid, bottom mid sides.
+    pub fn cellSides(grid_x: usize, grid_y: usize) [4]Point {
         const node_x = @as(u16, @intCast(grid_x * Grid.cell_size));
         const node_y = @as(u16, @intCast(grid_y * Grid.cell_size));
 
-        return [4]?Point{
+        return [4]Point{
             Point.at(node_x, node_y + Grid.cell_half), // left mid
             Point.at(node_x + Grid.cell_half, node_y), // top mid
             Point.at(node_x + Grid.cell_size, node_y + Grid.cell_half), // right mid
@@ -1363,37 +1380,36 @@ pub const Waypoint: type = struct {
         // Bias factor to discourage oscillation
         const bias_factor = 0.5; // The lower, the stronger bias away from previous_step
 
-        for (waypoints) |wp| {
-            if (wp == null) continue;
+        for (waypoints) |wp| { // Loops over the 4 cell waypoints
             // Vector from current to the waypoint under consideration
-            const wp_dx = @as(i32, wp.?.x) - @as(i32, current.x);
-            const wp_dy = @as(i32, wp.?.y) - @as(i32, current.y);
+            const wp_dx = @as(i32, wp.x) - @as(i32, current.x);
+            const wp_dy = @as(i32, wp.y) - @as(i32, current.y);
 
             // Dot product, degree of alignment with the overall vector
             const alignment: f32 = asF32(i32, dx * wp_dx + dy * wp_dy);
 
             // Vector from previous step to current waypoint
-            const prev_dx = @as(i32, wp.?.x) - @as(i32, previous_step.x);
-            const prev_dy = @as(i32, wp.?.y) - @as(i32, previous_step.y);
+            const prev_dx = @as(i32, wp.x) - @as(i32, previous_step.x);
+            const prev_dy = @as(i32, wp.y) - @as(i32, previous_step.y);
             const prev_alignment = dx * prev_dx + dy * prev_dy;
 
             // Apply bias if waypoint is in the direction of the previous step
             const biased_alignment = if (prev_alignment > 0) alignment * bias_factor else alignment;
 
             if (biased_alignment >= 0) {
-                const wp_to_target_squared = distanceSquared(wp.?, target);
-                const current_to_wp_squared = distanceSquared(current, wp.?);
+                const wp_to_target_squared = distanceSquared(wp, target);
+                const current_to_wp_squared = distanceSquared(current, wp);
                 const new_distance_squared = current_to_wp_squared + wp_to_target_squared;
 
                 // Compare both distance and biased alignment
                 if (best_waypoint == null or (new_distance_squared < best_distance_squared) or (new_distance_squared == best_distance_squared and biased_alignment > best_biased_alignment)) {
                     best_distance_squared = new_distance_squared;
                     best_biased_alignment = biased_alignment;
-                    best_waypoint = wp.?;
+                    best_waypoint = wp;
                 } else if (new_distance_squared == best_distance_squared and biased_alignment == best_biased_alignment) {
                     // If distance and alignment are the same, tie-breaks using lexicographical ordering
-                    if (wp.?.x < best_waypoint.?.x or (wp.?.x == best_waypoint.?.x and wp.?.y < best_waypoint.?.y)) {
-                        best_waypoint = wp.?;
+                    if (wp.x < best_waypoint.?.x or (wp.x == best_waypoint.?.x and wp.y < best_waypoint.?.y)) {
+                        best_waypoint = wp;
                     }
                 }
             }
@@ -1407,8 +1423,26 @@ pub const Waypoint: type = struct {
             const random = @rem(previous_step.x + target.y, 4);
 
             std.debug.print("No best waypoint found. Pseudorandom waypoint chosen. Current: {}, Previous Step: {}, Chose waypoint: {}, at {any}.\n", .{ current, previous_step, random, waypoints[random] });
-            return waypoints[random] orelse current;
+            return waypoints[random];
         }
+    }
+
+    /// Takes world `current` and `target` points, returning the cell's closest waypoint towards `target`.
+    pub fn cellClosestTo(current: Point, target: Point) Point {
+        const waypoints = cellSides(Grid.x(current.x), Grid.y(current.y));
+        const current_manhattan = manhattanDistance(current, target);
+        var best_waypoint = waypoints[0];
+        var best_distance = current_manhattan;
+        for (waypoints) |wp| {
+            const wp_distance = manhattanDistance(wp, target);
+            if (wp_distance < best_distance) {
+                best_waypoint = wp;
+                best_distance = wp_distance;
+            }
+        }
+        // If no waypoint improves the distance, return the original point as a fallback.
+        if (best_distance >= current_manhattan) return current;
+        return best_waypoint;
     }
 };
 
