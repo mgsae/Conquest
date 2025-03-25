@@ -176,10 +176,9 @@ pub fn main() anyerror!void {
     // Initialize window
     Camera.width = 1920 * 1.5;
     Camera.height = 1080 * 1.5;
-    std.debug.print("Camera width/height: {}/{}\n", .{ Camera.width, Camera.height });
     rl.initWindow(Camera.width, Camera.height, "Conquest");
     rl.setTargetFPS(120);
-    rl.setWindowSize(800, 500);
+    rl.setWindowSize(Camera.width, Camera.height);
     defer rl.closeWindow(); // Close window and OpenGL context
 
     //--------------------------------------------------------------------------------------
@@ -788,7 +787,11 @@ pub fn drawMap() void {
                         const v1 = u.Vector.fromCoords(path.items[i].x, path.items[i].y);
                         const v2 = u.Vector.fromCoords(path.items[j].x, path.items[j].y);
                         u.drawLineEx(v1, v2, 8, rl.Color.white);
-                        u.drawCircle(path.items[i].x, path.items[i].y, 16, rl.Color.white);
+                        if (path.items[i].equals(unit.intermediary_target.center)) {
+                            u.drawCircle(path.items[i].x, path.items[i].y, 16, rl.Color.green);
+                        } else {
+                            u.drawCircle(path.items[i].x, path.items[i].y, 16, rl.Color.white);
+                        }
                         i += 1;
                     }
                 }

@@ -1240,13 +1240,11 @@ pub const Subcell = struct {
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
     }
 
-    /// Returns the subcell node closest to `x,y`. Not necessarily the node of the subcell that `x,y` is in; use `cornerFromCoordinates` for that.
+    /// Returns the subcell node closest to `x,y`. Uses `cornerFromCoordinates` to find the subcell the coordinates are in,
+    /// then adds half a subcell size.
     pub fn closestNode(x: u16, y: u16) [2]u16 {
-        const remainder_x = x % Subcell.size;
-        const remainder_y = y % Subcell.size;
-        const round_x: u16 = if (remainder_x >= (Subcell.size / 2)) Subcell.size else 0;
-        const round_y: u16 = if (remainder_y >= (Subcell.size / 2)) Subcell.size else 0;
-        return [2]u16{ x - remainder_x + round_x + Subcell.half, y - remainder_y + round_y + Subcell.half };
+        const topleft = cornerFromCoordinates(x, y);
+        return [2]u16{ topleft[0] + Subcell.half, topleft[1] + Subcell.half };
     }
 
     /// Returns the subcell node closest to `x,y`. Not necessarily the node of the subcell that `x,y` is in; use `cornerFromCoordinates` for that.

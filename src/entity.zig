@@ -385,7 +385,7 @@ pub const Unit = struct {
     y: u16,
     life: i16,
     target: u.Circle,
-    intermediary_target: ?u.Point,
+    intermediary_target: u.Circle,
     last_step: u.Point,
     stored_extrema: [2]?u.Point,
     cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
@@ -736,10 +736,15 @@ pub const Unit = struct {
             // Within a cell away, A* by nodes
             const cur_node = u.Subcell.closestNodePoint(self.x, self.y);
             const tar_node = u.Subcell.closestNodePoint(self.target.center.x, self.target.center.y);
-            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.stored_extrema[0].?.x != cur_node.x or self.stored_extrema[0].?.y != cur_node.y or self.stored_extrema[1].?.x != tar_node.x or self.stored_extrema[1].?.y != tar_node.y) {
+            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.target.contains(cur_node) or self.intermediary_target.contains(cur_node)) {
+                std.debug.print("recalculating node path, unit at {}/{}.\n", .{ self.x, self.y });
                 const new_path = main.World.grid.findNodePath(cur_node, self.target);
                 if (new_path) |path| {
-                    self.intermediary_target = path.items[0];
+                    if (path.items.len > 1 and self.intermediary_target.contains(path.items[0])) {
+                        self.intermediary_target = u.Circle.at(path.items[1], u.Subcell.size);
+                    } else {
+                        self.intermediary_target = u.Circle.at(path.items[0], u.Subcell.size);
+                    }
                 } else |err| std.debug.print("Invalid path: {}.\n", .{err});
             }
             self.stored_extrema[0] = cur_node;
@@ -748,9 +753,10 @@ pub const Unit = struct {
             const cur_wp = u.Waypoint.cellClosestTo(u.Point.at(self.x, self.y), self.target.center);
             const tar_wp = u.Waypoint.closest(self.target.center.x, self.target.center.y);
             if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.stored_extrema[0].?.x != cur_wp.x or self.stored_extrema[0].?.y != cur_wp.y or self.stored_extrema[1].?.x != tar_wp.x or self.stored_extrema[1].?.y != tar_wp.y) {
+                std.debug.print("recalculating waypoint path, unit at {}/{}.\n", .{ self.x, self.y });
                 const new_path = main.World.grid.findWaypointPath(cur_wp, tar_wp);
                 if (new_path) |path| {
-                    self.intermediary_target = path.items[0];
+                    self.intermediary_target = u.Circle.at(path.items[0], u.Subcell.size);
                 } else |err| std.debug.print("Invalid path: {}.\n", .{err});
             }
             self.stored_extrema[0] = cur_wp;
@@ -758,7 +764,7 @@ pub const Unit = struct {
 
             //intermediary_target = u.Waypoint.closestTowards(current, self.target.center, distance_squared, self.last_step);
         }
-        return self.stepTowardsTarget(current, self.intermediary_target orelse self.target.center);
+        return self.stepTowardsTarget(current, self.intermediary_target.center);
     }
 
     /// Returns a point offset by self's `speed` towards `target` from self's `current` position.
@@ -853,7 +859,7 @@ pub const Unit = struct {
             .x = x,
             .y = y,
             .target = initial_target,
-            .intermediary_target = initial_target.center,
+            .intermediary_target = initial_target,
             .last_step = start_point,
             .stored_extrema = [2]?u.Point{ null, null },
             .cached_cellsigns = [_]u32{0} ** 9,
@@ -1198,6 +1204,11 @@ pub const Resource = struct {
             .kind = Kind.Resource,
             .ref = .{ .Resource = resource },
         };
+
+        const subcells_blocked = try u.Subcell.findBlockedSubcells(x, y, from_class.width, from_class.height, main.World.grid.allocator);
+        for (subcells_blocked) |subcell| { // Insert into blocked_subcells (subcell as the key, and empty value)
+            _ = try main.World.grid.blocked_subcells.put(subcell.node, {}); // Stores its node
+        }
 
         try main.World.grid.addToCell(entity, null, null);
         return resource;
