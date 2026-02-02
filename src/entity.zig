@@ -155,9 +155,18 @@ pub const Entity = struct {
         }
         return null;
     }
+
+    pub fn setSelected(self: *Entity, value: bool) void {
+        switch (self.kind) {
+            Kind.Player => self.ref.Player.selected = value,
+            Kind.Unit => self.ref.Unit.selected = value,
+            Kind.Structure => self.ref.Structure.selected = value,
+            Kind.Resource => self.ref.Resource.selected = value,
+        }
+    }
 };
 
-// Player //
+// Player
 //----------------------------------------------------------------------------------
 pub const Player = struct {
     entity: *Entity,
@@ -170,6 +179,7 @@ pub const Player = struct {
     speed: f16 = 5,
     state: State,
     local: bool = false,
+    selected: bool = false,
 
     pub const State = enum {
         Default,
@@ -391,9 +401,10 @@ pub const Unit = struct {
     model: *u.Model,
     state: State,
     resources: [4]u16,
-    elapsed: i16 = 0,
     projectiles: *std.ArrayList(*Projectile),
+    elapsed: i16 = 0,
     experience: i16 = 0,
+    selected: bool = false,
 
     pub const State = enum {
         Default,
@@ -408,7 +419,7 @@ pub const Unit = struct {
         // Draws model (adjust with state etc.)
         u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
         // If selected by player, draws target circumference with half alpha
-        if (main.Player.selected[0] == self.entity) {
+        if (self.selected) {
             u.drawCircumference(self.target, self.entity.color(alpha / 2));
         }
 
@@ -979,9 +990,10 @@ pub const Structure = struct {
     life: i16,
     restitution: f16,
     capacity: u16,
+    connected: ?[]*Structure,
     materials: u16 = 0,
     elapsed: u16 = 0,
-    connected: ?[]*Structure,
+    selected: bool = false,
 
     pub const State = enum {
         Default,
@@ -1152,8 +1164,9 @@ pub const Resource = struct {
     x: u16,
     y: u16,
     capacity: u16,
-    yield: u16 = 0,
     growth: f16,
+    yield: u16 = 0,
+    selected: bool = false,
 
     pub const State = enum {
         Default,
@@ -1770,16 +1783,16 @@ pub const Grid = struct {
 
     pub fn ownUnitsInArea(self: *Grid, player_id: u8, min_x: u16, min_y: u16, max_x: u16, max_y: u16) !std.ArrayList(*Entity) {
         const allocator = self.allocator.*;
-        const own_units = std.ArrayList(*Entity).init(allocator);
+        var own_units = std.ArrayList(*Entity).init(allocator);
         const nearby_entities = try self.sectionSearch((min_x + max_x) / 2, (min_y + max_y) / 2, main.Config.PLAYER_SEARCH_LIMIT);
         for (nearby_entities) |entity| {
             if (u.entityWithinSquare(entity, min_x, min_y, max_x, max_y)) {
                 if (entity.owner() == player_id and entity.kind == Kind.Unit) {
-                    own_units.append(entity);
+                    try own_units.append(entity);
                 }
             }
         }
-        return units;
+        return own_units;
     }
 
     pub fn entityCount(self: *Grid) usize {

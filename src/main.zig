@@ -395,6 +395,7 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
             const start = Player.selection_origin.?;
             const end = rl.getMousePosition();
             Player.selection_origin = null; // Reset selection box
+            setSelection(null); // Clears selection
 
             const min_x = @min(start.x, end.x);
             const max_x = @max(start.x, end.x);
@@ -405,17 +406,25 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
                 const map_min = u.screenToMap(rl.Vector2.init(min_x, min_y));
                 const map_max = u.screenToMap(rl.Vector2.init(max_x, max_y));
 
-                const found = World.grid.biggestInArea(map_min[0], map_min[1], map_max[0], map_max[1]) catch null;
-
-                // Set selection to first found entity or null
-                setSelection(found);
-                if (found != null) {
-                    std.debug.print("Selected entity {} via area selection.\n", .{@intFromPtr(found.?)});
-                } else {
-                    std.debug.print("Deselected entity (no entity found in selection box).\n", .{});
+                if (Player.id != null) {
+                    const own_units = World.grid.ownUnitsInArea(Player.id.?, map_min[0], map_min[1], map_max[0], map_max[1]) catch |err| {
+                        std.debug.print("ownUnitsInArea error: {}\n", .{err});
+                        return;
+                    };
+                    defer own_units.deinit();
+                    for (own_units.items) |unit| {
+                        addSelection(unit);
+                    }
                 }
-            } else {
-                setSelection(null); // Clears selection
+                if (Player.selected[0] == null) { // If no own units selected
+                    const biggest = World.grid.biggestInArea(map_min[0], map_min[1], map_max[0], map_max[1]) catch null;
+                    setSelection(biggest); // Sets to biggest entity or clears
+                    if (biggest != null) {
+                        std.debug.print("Selected entity {} via area selection.\n", .{@intFromPtr(biggest.?)});
+                    } else {
+                        std.debug.print("Deselected entity (no entity found in selection box).\n", .{});
+                    }
+                }
             }
         }
     }
@@ -436,10 +445,22 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
     if (profile_frame) u.endTimer(1, "Updating controls took {} seconds.");
 }
 
+/// Clears `Player.selected` and sets slot 0 to the `target` *Entity or null.
 fn setSelection(target: ?*e.Entity) void {
     Player.selected = [_]?*e.Entity{null} ** 256; // Clear selection
     Player.selected[0] = target; // null or entity
+    if (target != null) target.?.setSelected(true);
     // get secondary?
+}
+
+/// Finds the first null slot in `Player.selected` and sets it to the `target` *Entity.
+fn addSelection(target: *e.Entity) void {
+    for (Player.selected, 0..) |slot, i| {
+        if (slot == null) {
+            Player.selected[i] = target;
+            break;
+        }
+    }
 }
 
 pub fn updateCanvasZoom(mousewheel_delta: f32) void {
@@ -848,11 +869,10 @@ fn drawEntities(profile_frame: bool) void {
         for (e.players.items) |x| x.draw(1);
         if (profile_frame) u.endTimer(2, "Drawing players took {} seconds.");
     } else {
-        const selected = Player.selected[0].?;
-        for (e.resources.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
-        for (e.units.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
-        for (e.structures.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
-        for (e.players.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
+        for (e.resources.items) |x| if (x.selected) x.draw(1) else x.draw(0.5);
+        for (e.units.items) |x| if (x.selected) x.draw(1) else x.draw(0.5);
+        for (e.structures.items) |x| if (x.selected) x.draw(1) else x.draw(0.5);
+        for (e.players.items) |x| if (x.selected) x.draw(1) else x.draw(0.5);
     }
 }
 
@@ -945,7 +965,7 @@ pub fn drawInterface() void {
             const index = @as(u16, @intCast(i - 1));
             x = 750 + (65 * @divFloor(index, 8));
             y = dash_y + 20 + (20 * (index % 8));
-            text = std.fmt.bufPrintZ(&buffer, "{?}", .{selected}) catch "Error";
+            text = std.fmt.bufPrintZ(&buffer, "{s}", .{u.unitTypeFromClass(selected.?.ref.Unit.class)}) catch "Error";
             rl.drawText(text, x, y, fsize, rl.Color.black);
         }
     }
