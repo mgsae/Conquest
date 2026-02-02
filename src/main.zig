@@ -447,10 +447,13 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
 
 /// Clears `Player.selected` and sets slot 0 to the `target` *Entity or null.
 fn setSelection(target: ?*e.Entity) void {
-    Player.selected = [_]?*e.Entity{null} ** 256; // Clear selection
+    for (Player.selected) |prev_selected| { // Sets previously selected entities property to false
+        if (prev_selected != null) prev_selected.?.setSelected(false);
+    }
+    Player.selected = [_]?*e.Entity{null} ** 256; // Clears selection
     Player.selected[0] = target; // null or entity
     if (target != null) target.?.setSelected(true);
-    // get secondary?
+    // get secondaries from structures etc.?
 }
 
 /// Finds the first null slot in `Player.selected` and sets it to the `target` *Entity.
@@ -458,8 +461,26 @@ fn addSelection(target: *e.Entity) void {
     for (Player.selected, 0..) |slot, i| {
         if (slot == null) {
             Player.selected[i] = target;
+            target.setSelected(true);
             break;
         }
+    }
+}
+
+fn removeSelection(target: *e.Entity) void {
+    if (Player.selected[0] != null and Player.selected[0].? == target) {
+        setSelection(null); // Clears all
+    } else {
+        const index = for (Player.selected, 0..) |slot, i| {
+            if (slot != null and slot.? == target) {
+                break i;
+            }
+        } else return;
+        var i = index;
+        while (i + 1 < Player.selected.len) : (i += 1) {
+            Player.selected[i] = Player.selected[i + 1];
+        }
+        Player.selected[Player.selected.len - 1] = null;
     }
 }
 
@@ -637,19 +658,19 @@ fn updateEntities(profile_frame: bool) !void {
 
 fn removeEntities() !void {
     for (World.dead_resources.items) |resource| {
-        if (resource.entity == Player.selected[0]) setSelection(null);
+        if (resource.selected) removeSelection(resource.entity);
         try resource.remove();
     }
     for (World.dead_units.items) |unit| {
-        if (unit.entity == Player.selected[0]) setSelection(null);
+        if (unit.selected) removeSelection(unit.entity);
         try unit.remove();
     }
     for (World.dead_structures.items) |structure| {
-        if (structure.entity == Player.selected[0]) setSelection(null);
+        if (structure.selected) removeSelection(structure.entity);
         try structure.remove();
     }
     for (World.dead_players.items) |player| {
-        if (player.entity == Player.selected[0]) setSelection(null);
+        if (player.selected) removeSelection(player.entity);
         try player.remove();
     }
     World.dead_resources.clearAndFree();
