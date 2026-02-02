@@ -2,6 +2,7 @@ const rl = @import("raylib");
 const std: type = @import("std");
 const u = @import("utils.zig");
 const e = @import("entity.zig");
+const m = @import("map.zig");
 
 /// The local game config properties. Const values are universal, var values vary with play session.
 pub const Config = struct {
@@ -55,7 +56,7 @@ pub const Camera = struct {
 pub const Player = struct {
     pub var self: ?*e.Player = null;
     pub var id: ?u8 = null;
-    pub var selected: ?*e.Entity = null;
+    pub var selected: [256]?*e.Entity = [_]?*e.Entity{null} ** 256;
     pub var selection_origin: ?rl.Vector2 = null;
     pub var selection_nodes: [2]?u.Point = [_]?u.Point{ null, null }; // Selection node x,y, target node x,y
     pub var selection_path: ?std.ArrayList(u.Point) = null;
@@ -79,6 +80,9 @@ pub const World = struct {
     pub var tick_number: u64 = 0; // Set on map initialization
     pub var width: u16 = 0;
     pub var height: u16 = 0;
+    pub var terrain_width: u16 = 0;
+    pub var terrain_height: u16 = 0;
+    pub var terrain: []u8 = undefined;
     pub var grid: e.Grid = undefined;
     pub var rng: std.Random.DefaultPrng = undefined;
     var dead_players: std.ArrayList(*e.Player) = undefined;
@@ -90,9 +94,14 @@ pub const World = struct {
     pub var new_units: std.ArrayList(*e.Unit) = undefined;
     pub var new_resources: std.ArrayList(*e.Resource) = undefined;
 
-    fn initializeMap(allocator: *std.mem.Allocator, map: Map) !void {
-        width = map.width;
-        height = map.height;
+    fn initializeMap(allocator: *std.mem.Allocator, map_id: u32, map_file: m.MapFile) !void {
+        width = map_file.width;
+        height = map_file.height;
+
+        terrain_width = @divTrunc(width, u.Subcell.size) + 1;
+        terrain_height = @divTrunc(height, u.Subcell.size) + 1;
+        terrain = map_file.terrain;
+
         Camera.canvas_max = u.maxCanvasSize(rl.getScreenWidth(), rl.getScreenHeight(), width, height); // Updates camera zoom out limit
 
         // Initialize grid with derived dimensions
@@ -102,12 +111,17 @@ pub const World = struct {
         std.debug.print("Map Width: {}, Map Height: {}, Cell Size: {}\n", .{ World.width, World.height, u.Grid.cell_size });
         grid.init(allocator, gridWidth, gridHeight, Config.BUFFERSIZE) catch return error.GridInitializationFailed;
 
-        u.rngInit(map.id + width + height); // Initializes the RNG with the map id + width + height as the seed
+        const subcells_blocked = try map_file.getTerrainBlockedSubcells(allocator);
+        for (subcells_blocked) |subcell| {
+            try grid.blocked_subcells.put(subcell.node, {});
+        }
+
+        u.rngInit(map_id + width + height); // Initializes the RNG with the map id + width + height as the seed
         tick_number = 0; // Starts the shared tick counter
 
     }
 
-    fn initializeEntities(allocator: std.mem.Allocator, map: Map) !void {
+    fn initializeEntities(allocator: std.mem.Allocator, map_file: m.MapFile) !void {
         e.players = std.ArrayList(*e.Player).init(allocator);
         e.structures = std.ArrayList(*e.Structure).init(allocator);
         e.units = std.ArrayList(*e.Unit).init(allocator);
@@ -121,36 +135,22 @@ pub const World = struct {
         World.new_units = std.ArrayList(*e.Unit).init(allocator);
         World.new_resources = std.ArrayList(*e.Resource).init(allocator);
 
-        const resource_coords = map.resource_locations;
-        var resource: *e.Resource = undefined;
-        defer allocator.free(resource_coords);
-        // Class 0 resources (capacity)
-        for (resource_coords) |coord| {
-            resource = try e.Resource.create(coord.x, coord.y, 0);
-            try e.resources.append(resource);
-        }
-        // Class 1 resource (wood)
-        for (0..100) |_| {
-            const xy = u.Subcell.snapToCorner(u.randomU16(World.width), u.randomU16(World.height), e.Resource.preset(1).width, e.Resource.preset(1).height);
-            resource = try e.Resource.create(xy[0], xy[1], 1);
+        for (map_file.resources) |res_spawn| {
+            const resource = try e.Resource.create(res_spawn.x, res_spawn.y, res_spawn.class);
             try e.resources.append(resource);
         }
     }
 
-    fn initializePlayers(allocator: *std.mem.Allocator, map: Map, self_id: u8) !void {
-        const start_coords = map.start_locations;
-        defer allocator.free(start_coords);
+    fn initializePlayers(map_file: m.MapFile, self_id: u8) !void {
         var player: *e.Player = undefined;
-        for (start_coords, 1..) |coord, i| { // IDs start at 1 (0 is neutral)
+        for (map_file.start_locations, 1..) |loc, i| {
             if (i == self_id) {
-                player = try e.Player.createLocal(coord.x, coord.y, u.asU8(usize, i));
+                player = try e.Player.createLocal(loc.x, loc.y, u.asU8(usize, i));
                 Player.self = player; // Sets player to local pointer
             } else {
-                player = try e.Player.createRemote(coord.x, coord.y, u.asU8(usize, i));
+                player = try e.Player.createRemote(loc.x, loc.y, u.asU8(usize, i));
             }
-
             try e.players.append(player);
-            std.debug.print("Player {} starting at: ({}, {})\n", .{ i, coord.x, coord.y });
         }
     }
 };
@@ -168,7 +168,7 @@ pub fn main() anyerror!void {
     flags.window_highdpi = true;
     //flags.vsync_hint = false;
     flags.borderless_windowed_mode = false;
-    flags.fullscreen_mode = false;
+    flags.fullscreen_mode = true;
     flags.window_undecorated = false;
 
     rl.setConfigFlags(flags);
@@ -181,7 +181,6 @@ pub fn main() anyerror!void {
     rl.setWindowSize(Camera.width, Camera.height);
     defer rl.closeWindow(); // Close window and OpenGL context
 
-    //--------------------------------------------------------------------------------------
     // Game initialization (move to its own function/context)
     //--------------------------------------------------------------------------------------
     // Initialize player
@@ -200,8 +199,8 @@ pub fn main() anyerror!void {
     const cellsigns_cache = try allocator.alloc(u32, World.grid.cols * World.grid.rows);
     defer allocator.free(cellsigns_cache);
     defer World.grid.deinit(&allocator);
-    try World.initializeEntities(allocator, map);
-    try World.initializePlayers(&allocator, map, Player.id.?);
+    try World.initializeEntities(allocator, map.file);
+    try World.initializePlayers(map.file, Player.id.?);
 
     // Initialize graphics
     //--------------------------------------------------------------------------------------
@@ -211,20 +210,20 @@ pub fn main() anyerror!void {
 
     // Testing/debugging
     //--------------------------------------------------------------------------------------
-    const SPREAD = 50; // PERCENTAGE
-    const rangeX: u16 = @intCast(@divTrunc(@as(i32, @intCast(World.width)) * SPREAD, 100));
-    const rangeY: u16 = @intCast(@divTrunc(@as(i32, @intCast(World.height)) * SPREAD, 100));
+    // const SPREAD = 50; // PERCENTAGE
+    // const rangeX: u16 = @intCast(@divTrunc(@as(i32, @intCast(World.width)) * SPREAD, 100));
+    // const rangeY: u16 = @intCast(@divTrunc(@as(i32, @intCast(World.height)) * SPREAD, 100));
 
-    //try e.structures.append(try e.Structure.create(1225, 1225, 0));
-    //try e.units.append(try e.Unit.create(2500, 1500, 0));
-    //for (0..5000) |_| {
-    //    try e.units.append(try e.Unit.create(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), @as(u8, @intCast(u.randomU16(3)))));
-    //}
-    for (0..0) |_| {
-        const class = @as(u8, @intCast(u.randomU16(3)));
-        const xy = u.Subcell.snapToCorner(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), e.Structure.preset(class).width, e.Structure.preset(class).height);
-        _ = e.Structure.construct(3, xy[0], xy[1], class);
-    }
+    // //try e.structures.append(try e.Structure.create(1225, 1225, 0));
+    // //try e.units.append(try e.Unit.create(2500, 1500, 0));
+    // //for (0..5000) |_| {
+    // //    try e.units.append(try e.Unit.create(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), @as(u8, @intCast(u.randomU16(3)))));
+    // //}
+    // for (0..0) |_| {
+    //     const class = @as(u8, @intCast(u.randomU16(3)));
+    //     const xy = u.Subcell.snapToCorner(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), e.Structure.preset(class).width, e.Structure.preset(class).height);
+    //     _ = e.Structure.construct(3, xy[0], xy[1], class);
+    // }
 
     defer e.units.deinit();
     defer e.structures.deinit();
@@ -313,7 +312,7 @@ pub fn main() anyerror!void {
         rl.beginDrawing();
         defer rl.endDrawing();
 
-        rl.clearBackground(rl.Color.init(14, 80, 14, 255)); // Background color
+        rl.clearBackground(rl.Color.init(40, 40, 80, 255)); // Background color
         draw(profile_frame);
         if (profile_frame) u.endTimer(0, "Drawing phase took {} seconds in total.\n");
 
@@ -372,11 +371,10 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
 
     // Build guide is active, i.e. player is placing a structure
     if (Player.build_guide != null) {
-        Player.selected = null; // Clear selection
         if (stored_mouse_input_r.equals(rl.Vector2.zero()) == 0) {
             Player.build_guide = null; // If mouse right is pressed, cancels build guide
         } else if (Config.keys.actionActive(key_input, u.Key.Action.BuildConfirm)) {
-            std.debug.print("Set player order!\n", .{});
+            // std.debug.print("Set player order!\n", .{});
             Player.build_order = Player.build_guide.?;
         }
     } else { // Build guide is inactive
@@ -385,15 +383,15 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
             const at_mouse = World.grid.collidesWith(map_coords[0], map_coords[1], 1, 1, null) catch null;
 
             if (at_mouse) |entity| { // Direct click selection
-                Player.selected = if (entity != Player.selected) entity else null;
-                std.debug.print("Selected entity {}.\n", .{@intFromPtr(entity)});
+                setSelection(if (entity == Player.selected[0]) null else entity);
+                // std.debug.print("Selected entity {}.\n", .{@intFromPtr(entity)});
             } else if (Player.selection_origin == null) { // Start selection box
                 Player.selection_origin = stored_mouse_input_l; // Saves mouse position as box origin
-                std.debug.print("Mouse pressed not on entity, starting selection box.\n", .{});
+                // std.debug.print("Mouse pressed not on entity, starting selection box.\n", .{});
             }
             // Making area selection, but mouse left not down
         } else if (Player.selection_origin != null and !(rl.isMouseButtonDown(rl.MouseButton.mouse_button_left))) {
-            std.debug.print("Mouse released while selection started, finding selection.\n", .{});
+            // std.debug.print("Mouse released while selection started, finding selection.\n", .{});
             const start = Player.selection_origin.?;
             const end = rl.getMousePosition();
             Player.selection_origin = null; // Reset selection box
@@ -409,15 +407,15 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
 
                 const found = World.grid.biggestInArea(map_min[0], map_min[1], map_max[0], map_max[1]) catch null;
 
-                // Set selection to first found entity
-                Player.selected = found;
+                // Set selection to first found entity or null
+                setSelection(found);
                 if (found != null) {
                     std.debug.print("Selected entity {} via area selection.\n", .{@intFromPtr(found.?)});
                 } else {
                     std.debug.print("Deselected entity (no entity found in selection box).\n", .{});
                 }
             } else {
-                Player.selected = null; // Clears selection
+                setSelection(null); // Clears selection
             }
         }
     }
@@ -436,6 +434,12 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
 
     if (Config.keys.actionActive(key_input, u.Key.Action.SpecialEnter)) Config.profile_mode = !Config.profile_mode; // Enter toggles profile mode (verbose logs) for now
     if (profile_frame) u.endTimer(1, "Updating controls took {} seconds.");
+}
+
+fn setSelection(target: ?*e.Entity) void {
+    Player.selected = [_]?*e.Entity{null} ** 256; // Clear selection
+    Player.selected[0] = target; // null or entity
+    // get secondary?
 }
 
 pub fn updateCanvasZoom(mousewheel_delta: f32) void {
@@ -478,7 +482,7 @@ pub fn updateCanvasPosition(mouse_input_r: rl.Vector2, key_input: u32) void {
     const effective_speed: f32 = u.frameAdjusted(@as(f32, @floatCast(Camera.SCROLL_RATE)) / @max(1, Camera.canvas_zoom * 0.1));
 
     if ((key_input & (1 << 9)) != 0) { // Space key centers camera on player/selected
-        if (Player.selected == null) u.canvasOnPlayer() else u.canvasOnEntity(Player.selected.?);
+        if (Player.selected[0] == null) u.canvasOnPlayer() else u.canvasOnEntity(Player.selected[0].?);
     } else if (mouse_input_r.x != 0 or mouse_input_r.y != 0) { // Right-button drags canvas target
         Camera.canvas_offset_x_target += mouse_input_r.x * u.limitToTickRate(1);
         Camera.canvas_offset_y_target += mouse_input_r.y * u.limitToTickRate(1);
@@ -590,7 +594,7 @@ fn updateEntities(profile_frame: bool) !void {
         }
     }
     // Adding freshly added to main lists, then clearing new lists
-    for (World.new_players.items) |fresh| { // Not sure this will every be used
+    for (World.new_players.items) |fresh| { // Not sure this will ever be used
         try e.players.append(fresh);
     }
     for (World.new_structures.items) |fresh| {
@@ -612,19 +616,19 @@ fn updateEntities(profile_frame: bool) !void {
 
 fn removeEntities() !void {
     for (World.dead_resources.items) |resource| {
-        if (resource.entity == Player.selected) Player.selected = null;
+        if (resource.entity == Player.selected[0]) setSelection(null);
         try resource.remove();
     }
     for (World.dead_units.items) |unit| {
-        if (unit.entity == Player.selected) Player.selected = null;
+        if (unit.entity == Player.selected[0]) setSelection(null);
         try unit.remove();
     }
     for (World.dead_structures.items) |structure| {
-        if (structure.entity == Player.selected) Player.selected = null;
+        if (structure.entity == Player.selected[0]) setSelection(null);
         try structure.remove();
     }
     for (World.dead_players.items) |player| {
-        if (player.entity == Player.selected) Player.selected = null;
+        if (player.entity == Player.selected[0]) setSelection(null);
         try player.remove();
     }
     World.dead_resources.clearAndFree();
@@ -706,24 +710,40 @@ fn draw(profile_frame: bool) void {
 
 /// Draws map and grid markers relative to current canvas
 pub fn drawMap() void {
-    // Retrieve the texture, handle the potential null case
-    const landTexture = Config.textureManager.get("land") catch null;
-    if (landTexture == null) {
-        std.debug.print("Warning: 'land' texture not found!\n", .{});
-        return;
+
+    // // Draws colors for now, textures needed
+    // const landTexture = Config.textureManager.get("land") catch null;
+    // if (landTexture == null) {
+    //     std.debug.print("Warning: 'land' texture not found!\n", .{});
+    //     return;
+    // }
+    const terrain = World.terrain;
+    const tw = World.terrain_width;
+    const th = World.terrain_height;
+    const subcell = u.Subcell.size;
+    const subhalf = u.Subcell.half;
+    for (0..th) |y| {
+        for (0..tw) |x| {
+            const index = y * tw + x;
+            const terrain_type = @as(m.TerrainType, @enumFromInt(terrain[index]));
+            const color = terrain_type.color();
+            u.drawRect(@intCast(x * subcell), @intCast(y * subcell), subcell, subcell, color);
+        }
     }
 
     if (Player.build_guide != null and Player.self != null) { // Move to drawGuide
         // While building, 2d subgrid loop near player
         var x: usize = u.Subcell.toCornerX(u.u16Sub(Player.self.?.x, u.Grid.cell_half));
         var y: usize = u.Subcell.toCornerY(u.u16Sub(Player.self.?.y, u.Grid.cell_half));
-        while (y <= u.u16Add(Player.self.?.y, u.Grid.cell_half)) : (y += u.Subcell.size) {
-            while (x <= u.u16Add(Player.self.?.x, u.Grid.cell_half)) : (x += u.Subcell.size) {
+        while (y <= u.u16Add(Player.self.?.y, u.Grid.cell_half)) : (y += subcell) {
+            while (x <= u.u16Add(Player.self.?.x, u.Grid.cell_half)) : (x += subcell) {
                 // Draw land textures
                 //u.drawTexture(landTexture.?.*, @as(i32, @intCast(x)), @as(i32, @intCast(y)), rl.Color.white);
-                if (isInBuildDistance(@intCast(x + u.Subcell.size / 2), @intCast(y + u.Subcell.size / 2))) {
-                    const color = if (World.grid.blocked_subcells.contains(u.Point.at(@intCast(x), @intCast(y)))) u.opacity(rl.Color.red, 0.2) else u.opacity(rl.Color.white, 0.2);
-                    u.drawRect(@as(i32, @intCast(x)), @as(i32, @intCast(y)), u.Subcell.size, u.Subcell.size, color);
+                if (isInBuildDistance(@intCast(x + subcell / 2), @intCast(y + subcell / 2))) {
+                    const nodex: u16 = @intCast(x + subhalf);
+                    const nodey: u16 = @intCast(y + subhalf);
+                    const color = if (World.grid.blocked_subcells.contains(u.Point.at(nodex, nodey))) u.opacity(rl.Color.red, 0.2) else u.opacity(rl.Color.white, 0.2);
+                    u.drawRect(@as(i32, @intCast(x)), @as(i32, @intCast(y)), subcell, subcell, color);
                 }
             }
             x = u.Subcell.toCornerX(u.u16Sub(Player.self.?.x, u.Grid.cell_half));
@@ -731,49 +751,61 @@ pub fn drawMap() void {
     }
 
     // While building/selecting, 1d subgrid loops along entire map
-    if ((Player.build_guide != null and Player.self != null) or Player.selected != null) {
+    if ((Player.build_guide != null and Player.self != null) or Player.selected[0] != null) {
         var colIndex: usize = 1;
         var rowIndex: usize = 1;
-        while (rowIndex * u.Subcell.size < World.height) : (rowIndex += 1) {
-            u.drawRect(0, @as(i32, @intCast(u.Subcell.size * rowIndex)), World.width, 2, u.opacity(rl.Color.white, 0.5));
+        const thinLine = 4;
+        const thickLine = 4;
+        // std.debug.print("current Camera.canvas_zoom: {}\n", .{Camera.canvas_zoom});
+
+        while (rowIndex * subcell < World.height) : (rowIndex += 1) {
+            rl.drawRectangle(0, u.canvasY(@intCast(subcell * rowIndex), Camera.canvas_offset_y, Camera.canvas_zoom), World.width, thinLine, u.opacity(rl.Color.white, 0.2));
         }
-        while (colIndex * u.Subcell.size < World.width) : (colIndex += 1) {
-            u.drawRect(@as(i32, @intCast(u.Subcell.size * colIndex)), 0, 2, World.height, u.opacity(rl.Color.white, 0.5));
+        while (colIndex * subcell < World.width) : (colIndex += 1) {
+            rl.drawRectangle(u.canvasX(@as(i32, @intCast(subcell * colIndex)), Camera.canvas_offset_x, Camera.canvas_zoom), 0, thinLine, World.height, u.opacity(rl.Color.white, 0.2));
         }
         rowIndex = 1;
         while (rowIndex * u.Grid.cell_size < World.height) : (rowIndex += 1) {
-            u.drawRect(0, @as(i32, @intCast(u.Grid.cell_size * rowIndex)), World.width, 4, rl.Color.white);
+            rl.drawRectangle(0, u.canvasY(@as(i32, @intCast(u.Grid.cell_size * rowIndex)), Camera.canvas_offset_y, Camera.canvas_zoom), World.width, thickLine, u.opacity(rl.Color.white, 0.4));
         }
         colIndex = 1;
         while (colIndex * u.Grid.cell_size < World.width) : (colIndex += 1) {
-            u.drawRect(@as(i32, @intCast(u.Grid.cell_size * colIndex)), 0, 4, World.height, rl.Color.white);
+            rl.drawRectangle(u.canvasX(@as(i32, @intCast(u.Grid.cell_size * colIndex)), Camera.canvas_offset_x, Camera.canvas_zoom), 0, thickLine, World.height, u.opacity(rl.Color.white, 0.4));
         }
-        if (Player.selected) |selected| {
+        if (Player.selected[0]) |selected| {
             if (selected.kind == e.Kind.Unit) {
                 const unit = selected.ref.Unit;
                 const cur = u.Point.atEntity(selected);
                 const tar = unit.target.center;
-                if (u.manhattanDistance(cur, tar) > World.GRID_CELL_SIZE) {
+                if (u.manhattanDistance(cur, tar) > World.GRID_CELL_SIZE) { // Macro pathing
                     const start_wp = u.Waypoint.cellClosestTo(cur, tar);
                     const end_wp = u.Waypoint.closest(tar.x, tar.y);
-                    if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or
-                        !Player.selection_nodes[0].?.equals(start_wp) or !Player.selection_nodes[1].?.equals(end_wp))
-                    {
-                        const new_path = World.grid.findWaypointPath(start_wp, end_wp);
-                        if (new_path) |path| {
-                            Player.selection_path = path;
-                        } else |err| std.debug.print("Invalid path: {}.\n", .{err});
+                    // If no selection data or selected unit's position/target updated, finds waypoint path and sets Player.selection data
+                    if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or !Player.selection_nodes[0].?.equals(start_wp) or !Player.selection_nodes[1].?.equals(end_wp)) {
+                        const new_path = World.grid.findWaypointPath(start_wp, end_wp) catch |err| {
+                            std.debug.print("Invalid path: {}.\n", .{err});
+                            return;
+                        };
+                        if (Player.selection_path) |*old| {
+                            old.deinit(); // Frees previous
+                        }
+                        Player.selection_path = new_path;
                     }
                     Player.selection_nodes[0] = start_wp;
                     Player.selection_nodes[1] = end_wp;
-                } else {
+                } else { // Micro pathing
                     const start_node = u.Subcell.closestNodePoint(cur.x, cur.y);
                     const end_node = u.Subcell.closestNodePoint(tar.x, tar.y);
+                    // If no selection data or selected unit's position/target updated, finds node path and sets Player.selection data
                     if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or !Player.selection_nodes[0].?.equals(start_node) or !Player.selection_nodes[1].?.equals(end_node)) {
-                        const new_path = World.grid.findNodePath(start_node, unit.target);
-                        if (new_path) |path| {
-                            Player.selection_path = path;
-                        } else |err| std.debug.print("Invalid path: {}.\n", .{err});
+                        const new_path = World.grid.findNodePath(start_node, unit.target) catch |err| {
+                            std.debug.print("Invalid path: {}.\n", .{err});
+                            return;
+                        };
+                        if (Player.selection_path) |*old| {
+                            old.deinit(); // Frees previous
+                        }
+                        Player.selection_path = new_path;
                     }
                     Player.selection_nodes[0] = start_node;
                     Player.selection_nodes[1] = end_node;
@@ -782,18 +814,19 @@ pub fn drawMap() void {
                 if (Player.selection_path) |path| {
                     var i: usize = 0;
                     var j: usize = 1;
-                    u.drawLineEx(u.Vector.fromCoords(unit.x, unit.y), u.Vector.fromCoords(path.items[i].x, path.items[i].y), 8, rl.Color.white);
+                    u.drawLineEx(u.Vector.fromCoords(unit.x, unit.y), u.Vector.fromCoords(path.items[i].x, path.items[i].y), 8, u.opacity(rl.Color.white, 0.8));
                     while (j < path.items.len) : (j += 1) {
                         const v1 = u.Vector.fromCoords(path.items[i].x, path.items[i].y);
                         const v2 = u.Vector.fromCoords(path.items[j].x, path.items[j].y);
-                        u.drawLineEx(v1, v2, 8, rl.Color.white);
+                        u.drawLineEx(v1, v2, 4, u.opacity(rl.Color.white, 0.4));
                         if (path.items[i].equals(unit.intermediary_target.center)) {
-                            u.drawCircle(path.items[i].x, path.items[i].y, 16, rl.Color.green);
+                            u.drawCircle(path.items[i].x, path.items[i].y, 8, u.opacity(rl.Color.white, 0.8));
                         } else {
-                            u.drawCircle(path.items[i].x, path.items[i].y, 16, rl.Color.white);
+                            u.drawCircle(path.items[i].x, path.items[i].y, 4, u.opacity(rl.Color.white, 0.4));
                         }
                         i += 1;
                     }
+                    u.drawCircle(unit.target.center.x, unit.target.center.y, 8, u.opacity(rl.Color.white, 0.8));
                 }
             }
         }
@@ -801,7 +834,7 @@ pub fn drawMap() void {
 }
 
 fn drawEntities(profile_frame: bool) void {
-    if (Player.selected == null) {
+    if (Player.selected[0] == null) {
         if (profile_frame) u.startTimer(2, "\n- - Drawing resources.");
         for (e.resources.items) |x| x.draw(1);
         if (profile_frame) u.endTimer(2, "Drawing resources took {} seconds.");
@@ -815,10 +848,11 @@ fn drawEntities(profile_frame: bool) void {
         for (e.players.items) |x| x.draw(1);
         if (profile_frame) u.endTimer(2, "Drawing players took {} seconds.");
     } else {
-        for (e.resources.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
-        for (e.units.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
-        for (e.structures.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
-        for (e.players.items) |x| if (x.entity == Player.selected) x.draw(1) else x.draw(0.5);
+        const selected = Player.selected[0].?;
+        for (e.resources.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
+        for (e.units.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
+        for (e.structures.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
+        for (e.players.items) |x| if (x.entity == selected) x.draw(1) else x.draw(0.5);
     }
 }
 
@@ -827,64 +861,92 @@ pub fn drawInterface() void {
     if (Player.build_guide != null) drawGuide(Player.build_guide.?);
     if (Player.selection_origin != null) drawSelection(Player.selection_origin.?);
 
-    // Dashboard
-    rl.drawRectangle(0, rl.getScreenHeight() - Config.DASHBOARD_HEIGHT, rl.getScreenWidth(), Config.DASHBOARD_HEIGHT, rl.Color.white);
+    // Bottom dashboard
+    const dash_y: i32 = rl.getScreenHeight() - Config.DASHBOARD_HEIGHT;
+    rl.drawRectangle(0, dash_y, rl.getScreenWidth(), Config.DASHBOARD_HEIGHT, rl.Color.init(140, 140, 255, 180));
 
     // Sets id to selected's owner, otherwise client's player id
-    const id = if (Player.selected != null) Player.selected.?.owner() else Player.id orelse 0;
-
-    // Writes column 1
+    const id = if (Player.selected[0] != null) Player.selected[0].?.owner() else Player.id orelse 0;
     var x: u16 = 50;
-    const fsize = 28;
+    var fsize: i32 = 28; // Fontsize
     var buffer: [64]u8 = undefined;
+
+    // Writes column 1 : Player
     var text = std.fmt.bufPrintZ(&buffer, "Player: {?}", .{id}) catch "Error";
-    rl.drawText(text, x, rl.getScreenHeight() - 180, fsize, rl.Color.black);
+    rl.drawText(text, x, dash_y + 20, fsize, rl.Color.black);
     text = std.fmt.bufPrintZ(&buffer, "Units: {}", .{Player.id_unit_count[id]}) catch "Error";
-    rl.drawText(text, x, rl.getScreenHeight() - 140, fsize, rl.Color.black);
+    rl.drawText(text, x, dash_y + 60, fsize, rl.Color.black);
     text = std.fmt.bufPrintZ(&buffer, "Structures: {}", .{Player.id_structure_count[id]}) catch "Error";
-    rl.drawText(text, x, rl.getScreenHeight() - 100, fsize, rl.Color.black);
+    rl.drawText(text, x, dash_y + 100, fsize, rl.Color.black);
     if (Player.build_guide != null) {
         text = std.fmt.bufPrintZ(&buffer, "Creating: {s}", .{u.structureTypeFromClass(Player.build_guide.?)}) catch "Error";
-        rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
+        rl.drawText(text, x, dash_y + 140, fsize, rl.Color.black);
     } else if (Player.id_player[id]) |player| {
         text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{player.life}) catch "Error";
-        rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
+        rl.drawText(text, x, dash_y + 140, fsize, rl.Color.black);
     }
 
-    // Writes column 2
     x = 400;
-    if (Player.selected != null) {
-        const selected = Player.selected.?;
-        text = switch (selected.kind) {
-            e.Kind.Player => std.fmt.bufPrintZ(&buffer, "Player", .{}) catch "Error",
-            e.Kind.Unit => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(selected.ref.Unit.class), u.kindToString(e.Kind.Unit) }) catch "Error",
-            e.Kind.Structure => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(selected.ref.Structure.class), u.kindToString(e.Kind.Structure) }) catch "Error",
-            e.Kind.Resource => std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(selected.ref.Resource.class), u.kindToString(e.Kind.Resource) }) catch "Error",
-        };
-        rl.drawText(text, x, rl.getScreenHeight() - 180, fsize, rl.Color.black);
-        text = if (selected.kind == e.Kind.Resource)
-            std.fmt.bufPrintZ(&buffer, "Remaining: {}", .{selected.life()}) catch "Error"
-        else
-            std.fmt.bufPrintZ(&buffer, "Life: {}", .{selected.life()}) catch "Error";
-        rl.drawText(text, x, rl.getScreenHeight() - 140, fsize, rl.Color.black);
-        if (selected.kind == e.Kind.Unit) {
-            if (selected.ref.Unit.class == 0) { // Carrying resources?
-                const carry = selected.ref.Unit.resources;
-                text = std.fmt.bufPrintZ(&buffer, "{s}: {d}, {s}: {d}, {s}: {d}, {s}: {d}", .{ u.resourceTypeFromClass(0), carry[0], u.resourceTypeFromClass(1), carry[1], u.resourceTypeFromClass(2), carry[2], u.resourceTypeFromClass(3), carry[3] }) catch "Error";
-            } else {
-                text = std.fmt.bufPrintZ(&buffer, "Experience: {}", .{selected.ref.Unit.experience}) catch "Error";
+    // Writes column 2 : Primary selection
+    if (Player.selected[0] != null) {
+        const target: *e.Entity = Player.selected[0].?;
+        const kind: e.Kind = target.kind;
+        const ref = target.ref;
+        var y: i32 = dash_y + 20;
+        for (0..4) |field| {
+            defer y += 40; // 20, 60, 100, 140
+            text = std.fmt.bufPrintZ(&buffer, "", .{}) catch "Error";
+            if (kind == e.Kind.Player) {
+                switch (field) {
+                    0 => text = std.fmt.bufPrintZ(&buffer, "Player", .{}) catch "Error",
+                    1 => text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{target.life()}) catch "Error",
+                    else => {},
+                }
+            } else if (kind == e.Kind.Unit) {
+                const unit = ref.Unit;
+                switch (field) {
+                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(ref.Unit.class), @tagName(ref.Unit.state) }) catch "Error",
+                    1 => text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{target.life()}) catch "Error",
+                    2 => // Checks for carried resources
+                    {
+                        if (unit.class == 0) { // Gatherer
+                            const carry = ref.Unit.resources;
+                            text = std.fmt.bufPrintZ(&buffer, "{s}: {d}, {s}: {d}, {s}: {d}, {s}: {d}", .{ u.resourceTypeFromClass(0), carry[0], u.resourceTypeFromClass(1), carry[1], u.resourceTypeFromClass(2), carry[2], u.resourceTypeFromClass(3), carry[3] }) catch "Error";
+                        } else { // Non-gatherer
+                            text = std.fmt.bufPrintZ(&buffer, "Experience: {}", .{target.ref.Unit.experience}) catch "Error";
+                        }
+                    },
+                    else => {},
+                }
+            } else if (kind == e.Kind.Structure) {
+                switch (field) {
+                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(target.ref.Structure.class), u.kindToString(e.Kind.Structure) }) catch "Error",
+                    1 => text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{target.life()}) catch "Error",
+                    2 => text = std.fmt.bufPrintZ(&buffer, "Capacity: {}/{}", .{ target.ref.Structure.capacity, e.Structure.preset(target.ref.Structure.class).capacity }) catch "Error",
+                    3 => text = std.fmt.bufPrintZ(&buffer, "Materials: {}", .{target.ref.Structure.materials}) catch "Error",
+                    else => {},
+                }
+            } else if (kind == e.Kind.Resource) {
+                switch (field) {
+                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(target.ref.Resource.class), u.kindToString(e.Kind.Resource) }) catch "Error",
+                    1 => text = std.fmt.bufPrintZ(&buffer, "Remaining: {}", .{target.life()}) catch "Error",
+                    2 => text = std.fmt.bufPrintZ(&buffer, "Yield: {d}", .{target.ref.Resource.yield / Config.TICKRATE}) catch "Error",
+                    3 => text = std.fmt.bufPrintZ(&buffer, "Growth: {d}", .{target.ref.Resource.growth}) catch "Error",
+                    else => {},
+                }
             }
-            rl.drawText(text, x, rl.getScreenHeight() - 100, fsize, rl.Color.black);
-        } else if (selected.kind == e.Kind.Structure) {
-            text = std.fmt.bufPrintZ(&buffer, "Capacity: {}/{}", .{ selected.ref.Structure.capacity, e.Structure.preset(selected.ref.Structure.class).capacity }) catch "Error";
-            rl.drawText(text, x, rl.getScreenHeight() - 100, fsize, rl.Color.black);
-            text = std.fmt.bufPrintZ(&buffer, "Materials: {}", .{selected.ref.Structure.materials}) catch "Error";
-            rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
-        } else if (selected.kind == e.Kind.Resource) {
-            text = std.fmt.bufPrintZ(&buffer, "Yield: {d}", .{selected.ref.Resource.yield / Config.TICKRATE}) catch "Error";
-            rl.drawText(text, x, rl.getScreenHeight() - 100, fsize, rl.Color.black);
-            text = std.fmt.bufPrintZ(&buffer, "Growth: {d}", .{selected.ref.Resource.growth}) catch "Error";
-            rl.drawText(text, x, rl.getScreenHeight() - 60, fsize, rl.Color.black);
+            rl.drawText(text, x, y, fsize, rl.Color.black); // Draws field data or ""
+        }
+
+        fsize = 14;
+        // Writes columns 3 - 18 : Secondary selections
+        for (Player.selected, 0..) |selected, i| {
+            if (selected == null or i <= 0) continue;
+            const index = @as(u16, @intCast(i - 1));
+            x = 750 + (65 * @divFloor(index, 8));
+            y = dash_y + 20 + (20 * (index % 8));
+            text = std.fmt.bufPrintZ(&buffer, "{?}", .{selected}) catch "Error";
+            rl.drawText(text, x, y, fsize, rl.Color.black);
         }
     }
 
@@ -893,108 +955,30 @@ pub fn drawInterface() void {
 }
 
 // Game conditions
-//----------------------------------------------------------------------------------
+//----------------------------------------------------------------------------
 // May want to move into a separate module, `world` or `map`
-const Map = struct { // Encapsulates map properties; see World for currently active map
-    id: u32,
-    name: []const u8,
-    width: u16,
-    height: u16,
-    start_locations: []u.Point,
-    resource_locations: []u.Point,
+const Map = struct {
+    file: m.MapFile,
 
-    /// Finds map from `id` and initializes the `World` with the new properties. Returns the opened `Map` or error if invalid `id`.
     pub fn open(allocator: *std.mem.Allocator, id: u32) !Map {
-        var opened_map: Map = undefined;
-        opened_map = try get(allocator, id);
-        // Setting game world properties from opened map
-        try World.initializeMap(allocator, opened_map);
-        std.debug.print("Opening map ID {}, name: {s}.\n", .{ id, opened_map.name });
-        return opened_map;
-    }
-
-    /// Finds map in the database from `id`. Returns error if not found.
-    fn get(allocator: *std.mem.Allocator, id: u32) !Map {
-        return switch (id) {
-            0 => Map{
-                .id = id,
-                .name = "Default Map",
-                .width = World.DEFAULT_WIDTH,
-                .height = World.DEFAULT_HEIGHT,
-                .start_locations = try defaultStartLocations(allocator, World.DEFAULT_WIDTH, World.DEFAULT_HEIGHT, 2),
-                .resource_locations = try defaultResourceLocations(allocator, World.DEFAULT_WIDTH, World.DEFAULT_HEIGHT),
-            },
-            else => error.MapNotFound,
-        };
-    }
-
-    fn defaultStartLocations(allocator: *std.mem.Allocator, width: u16, height: u16, player_count: u8) ![]u.Point {
-        const offset = u.Grid.cell_half * 3; // Starts one and a half cell in from corner
-        const coordinates: [4]u.Point = [_]u.Point{
-            u.Point{ .x = offset, .y = offset },
-            u.Point{ .x = width - offset, .y = height - offset },
-            u.Point{ .x = width - offset, .y = offset },
-            u.Point{ .x = offset, .y = height - offset },
+        const filename = switch (id) {
+            0 => "maps/default.map",
+            1 => "maps/three_lanes.map",
+            2 => "maps/islands.map",
+            else => return error.MapNotFound,
         };
 
-        const slice = try allocator.alloc(u.Point, player_count);
-        for (slice, 0..) |*coord, i| {
-            coord.* = coordinates[i];
-        }
+        const map_file = try m.MapFile.load(filename, allocator.*);
 
-        std.debug.print("Returning coordinates for {} players\n", .{player_count});
-        for (slice) |coord| {
-            std.debug.print("({}, {})\n", .{ coord.x, coord.y });
-        }
+        // Initialize world with loaded data
+        try World.initializeMap(allocator, id, map_file);
 
-        return slice;
+        std.debug.print("Loaded map: {} ({}x{})\n", .{ id, map_file.width, map_file.height });
+        return Map{ .file = map_file };
     }
 
-    fn defaultResourceLocations(allocator: *std.mem.Allocator, width: u16, height: u16) ![]u.Point {
-        const cols = @divTrunc(width, u.Grid.cell_size);
-        const rows = @divTrunc(height, u.Grid.cell_size);
-        const total = (cols * rows) * 2;
-        var slice = try allocator.alloc(u.Point, total);
-        var index: usize = 0;
-        var local_index: usize = 0;
-
-        // Base subcell positions (unrotated base pattern)
-        const subcell_positions = [_]u.Point{
-            u.Point{ .x = 2, .y = 3 },
-            u.Point{ .x = 9, .y = 5 },
-        };
-
-        for (0..cols) |col| { // Places resources on each col/row
-            const base_x = u.asU16(usize, col * u.Grid.cell_size);
-            for (0..rows) |row| {
-                local_index += 1;
-                if (local_index % 5 == 0) {
-                    continue;
-                }
-                const base_y = u.asU16(usize, row * u.Grid.cell_size);
-
-                // Determine the rotation based on the cell position
-                const rotation = (col + row) % 4;
-
-                // Rotate or reflect the base positions based on the rotation value
-                for (0..2) |i| {
-                    const rotated_pos = switch (rotation) {
-                        0 => subcell_positions[i], // No rotation
-                        1 => u.Point{ .x = subcell_positions[i].y, .y = 10 - subcell_positions[i].x }, // 90 degrees
-                        2 => u.Point{ .x = 10 - subcell_positions[i].x, .y = 10 - subcell_positions[i].y }, // 180 degrees
-                        3 => u.Point{ .x = 10 - subcell_positions[i].y, .y = subcell_positions[i].x }, // 270 degrees
-                        else => unreachable,
-                    };
-
-                    // Multiply by u.Subcell.size to correctly position within the subcells, and snap
-                    const final = u.Subcell.snapToCorner(base_x + rotated_pos.x * u.Subcell.size, base_y + rotated_pos.y * u.Subcell.size, u.Subcell.size, u.Subcell.size);
-                    slice[index] = u.Point.at(final[0], final[1]);
-                    index += 1; // Increment by 1 for each resource
-                }
-            }
-        }
-
-        return slice;
+    pub fn close(self: *Map, allocator: *std.mem.Allocator) void {
+        self.file.deinit(allocator.*);
     }
 };
 
@@ -1009,7 +993,7 @@ pub fn moveDivMultiple(tick: i16, multiple: i16) bool {
 }
 
 // AI Player
-//----------------------------------------------------------------------------------
+//----------------------------------------------------------------------------
 pub const EnemyPlayerAI = struct {
     player: *e.Player,
 
@@ -1034,21 +1018,16 @@ pub const EnemyPlayerAI = struct {
             u.shuffleArray(u8, &directions);
 
             // Generate a "random" structure class value between 0 and 3
-            const class_value = u.asU8(u64, tick / 300 % 4);
+            const class_value = if (tick % move_all < move_all / 3) 0 else u.asU8(u64, tick / 300 % 4);
             constructBuilding(ai, class_value, tick);
         }
     }
 
     pub fn constructBuilding(ai: *e.Player, class: u8, tick: u64) void {
-        // Convert to i32 and calculate x and y, clamping to prevent underflow
         const x_raw = @max(@rem(@as(i32, @intCast(tick)), 500) - 250, 0);
         const y_raw = @max(@rem(@divTrunc(@as(i32, @intCast(tick)), 2), 500) - 250, 0);
-
-        // Convert to u16 after clamping
         const x = @as(u16, @intCast(x_raw));
         const y = @as(u16, @intCast(y_raw));
-
-        // Construct the building at the calculated position
         _ = e.Structure.construct(ai.id, ai.x + x, ai.y + y, class);
     }
 
@@ -1066,7 +1045,7 @@ pub const EnemyPlayerAI = struct {
 };
 
 // Game controls interaction
-//----------------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 fn processMoveInput(key_input: u32, changed_x: *?u16, changed_y: *?u16) !void { // Called in processInput
     if (Player.self == null) return;
     const speed = u.limitToTickRate(Player.self.?.speed);
@@ -1098,7 +1077,7 @@ fn processActionInput(key_input: u32) void { // Called in processInput
         Player.build_index = null;
         Player.build_guide = null;
         std.debug.print("noting the backspace action", .{});
-        if (Player.selected) |selected| {
+        if (Player.selected[0]) |selected| {
             std.debug.print("finding selected", .{});
             if (Player.id != null and selected.owner() == Player.id.? and selected.kind == e.Kind.Structure) {
                 std.debug.print("trying to destroy", .{});
@@ -1115,6 +1094,7 @@ fn processActionInput(key_input: u32) void { // Called in processInput
             std.debug.print("Removed build guide!\n", .{});
             Player.build_guide = null;
         }
+        setSelection(null); // Clears selection
     }
 }
 
@@ -1126,7 +1106,7 @@ pub fn executeBuild(class: u8) void {
     const built = e.Structure.construct(Player.id.?, xy[0], xy[1], class);
     if (built) |building| {
         std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
-        Player.selected = building.entity; // Hack, sets selected to building to instantly deselect it (in updateControls) by the same click
+        setSelection(building.entity); // set Player.selected to building entity here as a "hack" to deselect
     } else {
         std.debug.print("Failed to build structure\n", .{});
         // Handle the failure case, e.g., notify the player
@@ -1146,8 +1126,8 @@ fn findBuildPosition(class: u8, mouse_position: rl.Vector2) [2]u16 {
 
     //if (@rem(@divTrunc((building.width + building.height), 2), u.Subcell.size) != 0) { // If not subcell multiple
     const mouse_map_pos = u.screenToMap(mouse_position);
-    if (mouse_map_pos[0] > subcell.node.x - u.Subcell.size) snapped[0] += (u.Subcell.size / 2); // was - 100, not - u.Subcell.size
-    if (mouse_map_pos[1] > subcell.node.y - u.Subcell.size) snapped[1] += (u.Subcell.size / 2); // was - 100, not - u.Subcell.size
+    if (mouse_map_pos[0] > subcell.node.x - u.Subcell.size) snapped[0] += (u.Subcell.half);
+    if (mouse_map_pos[1] > subcell.node.y - u.Subcell.size) snapped[1] += (u.Subcell.half);
 
     //std.debug.print("Found build position at {}, {}. \n", .{ snapped[0], snapped[1] });
     return [2]u16{ snapped[0], snapped[1] };
@@ -1161,15 +1141,15 @@ fn isInBuildDistance(x: u16, y: u16) bool {
 }
 
 // Interface
-//----------------------------------------------------------------------------------
+//----------------------------------------------------------------------------
 pub fn drawGuide(class: u8) void {
     if (Player.self == null) return;
     const mouse_position = rl.getMousePosition();
     const xy = findBuildPosition(class, mouse_position);
     const building = e.Structure.preset(class);
-    const collides = World.grid.collidesWith(xy[0], xy[1], building.width, building.height, null) catch null;
+    const open = u.isOpenGround(xy[0], xy[1], building.width, building.height) catch false;
     const mouse_closest_center = u.screenToSubcell(mouse_position).node;
-    if (collides != null or !isInBuildDistance(mouse_closest_center.x, mouse_closest_center.y) or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
+    if (!open or !isInBuildDistance(mouse_closest_center.x, mouse_closest_center.y) or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
         u.drawGuideFail(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));
     } else {
         u.drawGuide(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));

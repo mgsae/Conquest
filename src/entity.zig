@@ -122,11 +122,10 @@ pub const Entity = struct {
         }
     }
 
-    pub fn isTouching(self: *Entity, other: *Entity) bool {
+    /// Checks if side of self touches side of other. Use `u.closestContact` to find self's nearest such point.
+    pub fn isTouching(self: *Entity, other: *Entity, distance: u16) bool {
         const delta = u.deltaXy(self.x(), self.y(), other.x(), other.y());
-
-        const buffer = u.asU16(f16, @round(self.speed()));
-
+        const buffer = u.asU16(f16, @round(self.speed())) + distance;
         return (@abs(delta[0]) <= (self.width() / 2) + (other.width() / 2) + buffer) and
             (@abs(delta[1]) <= (self.height() / 2) + (other.height() / 2) + buffer);
     }
@@ -178,7 +177,7 @@ pub const Player = struct {
     };
 
     pub fn draw(self: Player, alpha: f32) void {
-        if (main.Player.selected == self.entity) { // If selected by local player, draws circle
+        if (main.Player.selected[0] == self.entity) { // If selected by local player, draws circle
             u.drawCircle(self.x, self.y, u.Grid.cell_half, self.entity.color(alpha * 0.125));
         }
         u.drawPlayer(self.x, self.y, self.width, self.height, self.entity.color(alpha));
@@ -409,7 +408,7 @@ pub const Unit = struct {
         // Draws model (adjust with state etc.)
         u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
         // If selected by player, draws target circumference with half alpha
-        if (main.Player.selected == self.entity) {
+        if (main.Player.selected[0] == self.entity) {
             u.drawCircumference(self.target, self.entity.color(alpha / 2));
         }
 
@@ -499,12 +498,26 @@ pub const Unit = struct {
         }
 
         if (old_x == self.x and old_y == self.y) { // If no change after moving, retargets
-            if (main.moveDivMultiple(self.elapsed, 2)) { // Alternating between random point and trying to head towards player again
+            if (main.moveDivMultiple(self.elapsed, 2)) { // Alternating between random point and player-retargeting
                 self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size); // Random nearby offset
-
-            } else { // Tries heading towards player/resource again
-                if (self.class != 0) { // Non-gatherers
-                    self.target = findTarget(self.owner, self.last_step, self.entity.reach());
+            } else if (self.class != 0) { // Non-gatherers try heading towards player again
+                self.target = findTarget(self.owner, self.last_step, self.entity.reach());
+            } else { // Gatherers
+                if (self.state == State.Carrying) {
+                    if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |b| {
+                        self.target = u.Circle.aroundEntity(b, self.entity.reach());
+                    } else {
+                        self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
+                    }
+                } else {
+                    const resource = getResourceTarget(self);
+                    if (resource) |r| {
+                        // std.debug.print("Gatherer idling retargets: found resource target!", .{});
+                        self.target = u.Circle.aroundEntity(r, self.entity.reach());
+                    } else { // Random nearby offset
+                        // std.debug.print("Gatherer idling retargets: did NOT find resource target.", .{});
+                        self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
+                    }
                 }
             }
             return;
@@ -679,7 +692,7 @@ pub const Unit = struct {
     fn offsetFromPosition(position: u.Point) u.Point {
         const x: i16 = @as(i16, @intCast(position.x)) + (u.randomI16(u.Grid.cell_half) - u.Grid.cell_half / 2);
         const y: i16 = @as(i16, @intCast(position.y)) + (u.randomI16(u.Grid.cell_half) - u.Grid.cell_half / 2);
-        return u.Point.at(u.mapClampX(x, u.Grid.cell_half), u.mapClampX(y, u.Grid.cell_half));
+        return u.Point.at(u.mapClampX(x, u.Grid.cell_half), u.mapClampY(y, u.Grid.cell_half));
     }
 
     /// Calculates and returns the unit's immediate move based on its current `target` and `class`.
@@ -700,24 +713,25 @@ pub const Unit = struct {
 
                 // Gatherers, check whether pick up or deliver
                 if (self.state != State.Carrying) { // Gatherers not carrying
-                    const resource = u.concentricSearch(&main.World.grid, self.last_step, Entity.isAvailableResource);
+                    const resource = getResourceTarget(self); // = u.concentricSearch(&main.World.grid, self.last_step, Entity.isAvailableResource);
                     if (resource) |r| {
-                        if (self.entity.isTouching(r)) { // Is at resource, drain it and set carry state
+                        if (self.entity.isTouching(r, self.entity.reach())) { // Is at resource, drain it and set carry state
                             r.ref.Resource.capacity = u.u16Sub(r.ref.Resource.capacity, 1);
                             self.state = State.Carrying;
                             self.resources[r.ref.Resource.class] += 1; // Increments resource-class carried
-                        } else {
+                        } else { // Not at resource, sets to target
                             //std.debug.print("Is not touching resource, will set it to target.\n", .{});
-                            self.target = u.Circle.aroundEntity(r, self.entity.reach()); // Not at resource, sets to target
+                            self.target = u.Circle.at(u.Point.closestContact(self.entity, r), u.Subcell.size);
                         }
                     } else { // Found no resource, so targets random nearby position
+                        std.debug.print("FOUND NO RESOURCE\n", .{});
                         self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
                     }
                 } else { // Gatherers already carrying
                     //std.debug.print("Am carrying, will check for own building nearby.\n", .{});
                     const own_building = u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure);
                     if (own_building) |b| {
-                        if (self.entity.isTouching(b)) { // Is at building, adds carried food/wood to its capacity/materials
+                        if (self.entity.isTouching(b, self.entity.reach())) { // Is at building, adds carried food/wood to its capacity/materials
                             b.ref.Structure.capacity = @min(Structure.preset(b.ref.Structure.class).capacity, b.ref.Structure.capacity + self.resources[0]);
                             b.ref.Structure.materials = b.ref.Structure.materials + self.resources[1];
                             self.resources[0] = 0; // Removes carried food
@@ -728,19 +742,26 @@ pub const Unit = struct {
                             self.target = u.Circle.aroundEntity(b, self.entity.reach()); // Not at building, sets to target
                         }
                     } else { // Found no own building, so targets random nearby position
-                        //std.debug.print("Found no building,  so will target random nearby position.\n", .{});
+                        std.debug.print("FOUND NO OWN BUILDING\n", .{});
                         self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
                     }
                 }
             }
             // Within a cell away, A* by nodes
-            const cur_node = u.Subcell.closestNodePoint(self.x, self.y);
+            const cur_node = u.Subcell.closestNodePoint(current.x, current.y);
             const tar_node = u.Subcell.closestNodePoint(self.target.center.x, self.target.center.y);
-            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.target.contains(cur_node) or self.intermediary_target.contains(cur_node)) {
-                std.debug.print("recalculating node path, unit at {}/{}.\n", .{ self.x, self.y });
+            const distance_to_center = u.asF16(u16, u.manhattanDistance(current, self.intermediary_target.center)) - u.asF16(u16, (self.width() + self.height()) / 2);
+            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or
+                !self.stored_extrema[1].?.equals(tar_node) or
+                self.target.contains(current) or distance_to_center <= self.speed())
+            {
+                //std.debug.print("recalculating node path, unit at {}/{}.\n", .{ self.x, self.y });
                 const new_path = main.World.grid.findNodePath(cur_node, self.target);
                 if (new_path) |path| {
-                    if (path.items.len > 1 and self.intermediary_target.contains(path.items[0])) {
+                    defer path.deinit();
+                    if (self.target.contains(path.items[0]) and self.class != 0) {
+                        return current; // Trigger retarget
+                    } else if (path.items.len > 1 and self.intermediary_target.contains(path.items[0])) {
                         self.intermediary_target = u.Circle.at(path.items[1], u.Subcell.size);
                     } else {
                         self.intermediary_target = u.Circle.at(path.items[0], u.Subcell.size);
@@ -753,9 +774,10 @@ pub const Unit = struct {
             const cur_wp = u.Waypoint.cellClosestTo(u.Point.at(self.x, self.y), self.target.center);
             const tar_wp = u.Waypoint.closest(self.target.center.x, self.target.center.y);
             if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.stored_extrema[0].?.x != cur_wp.x or self.stored_extrema[0].?.y != cur_wp.y or self.stored_extrema[1].?.x != tar_wp.x or self.stored_extrema[1].?.y != tar_wp.y) {
-                std.debug.print("recalculating waypoint path, unit at {}/{}.\n", .{ self.x, self.y });
+                //std.debug.print("recalculating waypoint path, unit at {}/{}.\n", .{ self.x, self.y });
                 const new_path = main.World.grid.findWaypointPath(cur_wp, tar_wp);
                 if (new_path) |path| {
+                    defer path.deinit();
                     self.intermediary_target = u.Circle.at(path.items[0], u.Subcell.size);
                 } else |err| std.debug.print("Invalid path: {}.\n", .{err});
             }
@@ -817,7 +839,7 @@ pub const Unit = struct {
     /// Does a concentric search for a non-depleted resource nearby.
     fn getResourceTarget(self: *Unit) ?*Entity {
         const found_entity = u.concentricSearch(&main.World.grid, self.last_step, Entity.isAvailableResource);
-        if (found_entity != null and self.entity.inRangeOf(found_entity.?, u.Subcell.size + 10)) return found_entity;
+        if (found_entity != null and self.entity.inRangeOf(found_entity.?, u.Subcell.size * 10)) return found_entity;
         return null;
     }
 
@@ -1068,8 +1090,8 @@ pub const Structure = struct {
     }
 
     pub fn construct(owner: u8, x: u16, y: u16, class: u8) ?*Structure {
-        const collides = main.World.grid.collidesWith(x, y, preset(class).width, preset(class).height, null) catch return null;
-        if (collides != null or !u.isInMap(x, y, preset(class).width, preset(class).height)) {
+        const open = u.isOpenGround(x, y, preset(class).width, preset(class).height) catch false;
+        if (!open or !u.isInMap(x, y, preset(class).width, preset(class).height)) {
             return null;
         }
         const structure = Structure.create(owner, x, y, class) catch return null;
@@ -1723,58 +1745,41 @@ pub const Grid = struct {
         const right = x + half_width;
         const top = @max(half_height, y) - half_height;
         const bottom = y + half_height;
-        const nearby_entities = if (current_entity != null and current_entity.?.kind == Kind.Unit)
-            try self.sectionSearch(x, y, main.Config.UNIT_SEARCH_LIMIT)
-        else
-            try self.sectionSearch(x, y, main.Config.PLAYER_SEARCH_LIMIT);
-        for (nearby_entities) |entity| {
+        const nearby_entities = if (current_entity != null and current_entity.?.kind == Kind.Unit) try self.sectionSearch(x, y, main.Config.UNIT_SEARCH_LIMIT) else try self.sectionSearch(x, y, main.Config.PLAYER_SEARCH_LIMIT);
+        for (nearby_entities) |entity| { // Checks each entity to compare with
             if (current_entity) |cur| {
-                if (cur == entity) {
-                    continue; // Skip current entity
-                }
+                if (cur == entity) continue; // Skips self entity, if specified
             }
-
-            const entity_half_width = @divTrunc(entity.width(), 2);
-            const entity_half_height = @divTrunc(entity.height(), 2);
-
-            const entity_left = @max(entity_half_width, entity.x()) - entity_half_width;
-            const entity_right = entity.x() + entity_half_width;
-            const entity_top = @max(entity_half_height, entity.y()) - entity_half_height;
-            const entity_bottom = entity.y() + entity_half_height;
-
-            if ((left < entity_right) and (right > entity_left) and
-                (top < entity_bottom) and (bottom > entity_top))
-            {
-                return entity; // Returns colliding entity
-            }
+            if (u.entityWithinSquare(entity, left, top, right, bottom)) return entity; // Returns colliding entity
         }
         return null;
     }
 
+    /// Searches for entities in area and returns biggest one, if any.
     pub fn biggestInArea(self: *Grid, min_x: u16, min_y: u16, max_x: u16, max_y: u16) !?*Entity {
         const nearby_entities = try self.sectionSearch((min_x + max_x) / 2, // Search at center of selection box
             (min_y + max_y) / 2, main.Config.PLAYER_SEARCH_LIMIT);
-
         var biggest_entity: ?*Entity = null;
-
         for (nearby_entities) |entity| {
-            const entity_half_width = @divTrunc(entity.width(), 2);
-            const entity_half_height = @divTrunc(entity.height(), 2);
-
-            const entity_left = @max(entity_half_width, entity.x()) - entity_half_width;
-            const entity_right = entity.x() + entity_half_width;
-            const entity_top = @max(entity_half_height, entity.y()) - entity_half_height;
-            const entity_bottom = entity.y() + entity_half_height;
-
-            if ((min_x < entity_right) and (max_x > entity_left) and
-                (min_y < entity_bottom) and (max_y > entity_top))
-            {
-                if (biggest_entity == null or u.bigger(entity.width(), entity.height(), biggest_entity.?.width(), biggest_entity.?.height()) == 0) {
-                    biggest_entity = entity;
-                }
+            if (u.entityWithinSquare(entity, min_x, min_y, max_x, max_y)) {
+                if (biggest_entity == null or u.bigger(entity.width(), entity.height(), biggest_entity.?.width(), biggest_entity.?.height()) == 0) biggest_entity = entity;
             }
         }
         return biggest_entity;
+    }
+
+    pub fn ownUnitsInArea(self: *Grid, player_id: u8, min_x: u16, min_y: u16, max_x: u16, max_y: u16) !std.ArrayList(*Entity) {
+        const allocator = self.allocator.*;
+        const own_units = std.ArrayList(*Entity).init(allocator);
+        const nearby_entities = try self.sectionSearch((min_x + max_x) / 2, (min_y + max_y) / 2, main.Config.PLAYER_SEARCH_LIMIT);
+        for (nearby_entities) |entity| {
+            if (u.entityWithinSquare(entity, min_x, min_y, max_x, max_y)) {
+                if (entity.owner() == player_id and entity.kind == Kind.Unit) {
+                    own_units.append(entity);
+                }
+            }
+        }
+        return units;
     }
 
     pub fn entityCount(self: *Grid) usize {

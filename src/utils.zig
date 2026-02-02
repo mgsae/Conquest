@@ -431,6 +431,11 @@ pub fn u16Add(a: u16, b: u16) u16 {
     return if (u16max - a < b) u16max else a + b;
 }
 
+/// Returns `a` plus `b`, clamped to maximum u16max.
+pub fn u16Mult(a: u16, b: u16) u16 {
+    return if (a == 0 or b <= u16max / a) a * b else u16max;
+}
+
 pub fn ceilDiv(numerator: i32, denominator: i32) i32 {
     const divResult = @divTrunc(numerator, denominator);
     const remainder = @rem(numerator, denominator);
@@ -635,6 +640,24 @@ pub const Point = struct {
         }
         return false;
     }
+
+    /// Returns the point closest to self that makes the self touch target entity, satisfying `e.isTouching`.
+    pub fn closestContact(self: *e.Entity, target: *e.Entity) Point {
+        const buffer = asU16(f16, @round(self.speed()));
+        const rx = target.width() / 2 + self.width() / 2 + buffer;
+        const ry = target.height() / 2 + self.height() / 2 + buffer;
+        const tx = asI32(u16, target.x());
+        const ty = asI32(u16, target.y());
+        const sx = asI32(u16, self.x());
+        const sy = asI32(u16, self.y());
+        const min_x = tx - asI32(u16, rx);
+        const max_x = tx + asI32(u16, rx);
+        const min_y = ty - asI32(u16, ry);
+        const max_y = ty + asI32(u16, ry);
+        const cx = @min(@max(sx, min_x), max_x);
+        const cy = @min(@max(sy, min_y), max_y);
+        return Point.at(asU16(i32, cx), asU16(i32, cy));
+    }
 };
 
 pub const Circle = struct {
@@ -711,6 +734,24 @@ pub const Circle = struct {
     /// Returns a circle centered on an entity whose radius equals the distance from the entity's center to its corners, plus buffer.
     pub fn aroundEntity(entity: *e.Entity, buffer: u16) Circle {
         return around(entity.x(), entity.y(), entity.width(), entity.height(), buffer);
+    }
+
+    /// Returns the closest point within the circle to the entity's center.
+    pub fn closestPointToEntity(self: Circle, entity: *e.Entity) Point {
+        const entity_center = Point.atEntity(entity);
+        if (self.contains(entity_center)) return entity_center;
+
+        // Vector from the circle center to entity center
+        const dx = u16Sub(entity_center.x, self.center.x);
+        const dy = u16Sub(entity_center.y, self.center.y);
+        const distance = fastSqrt(asF32(u16, u16Add(u16Mult(dx, dx), u16Mult(dy, dy))));
+
+        // Scale vector to circle's radius
+        const scale = asF32(u16, self.radius - entity.reach()) / distance;
+        const closest_x = self.center.x + asU16(f32, asF32(u16, dx) * scale);
+        const closest_y = self.center.y + asU16(f32, asF32(u16, dy) * scale);
+
+        return Point.at(closest_x, closest_y);
     }
 };
 
@@ -913,13 +954,6 @@ pub fn manhattanDistance(a: Point, b: Point) u16 {
     return asU16(u32, @min(u16max, x + y));
 }
 
-/// Compares `a` and `b` coordinates and checks whether both differences are lower than `distance`.
-pub fn withinSquare(a: Point, b: Point, distance: f16) bool {
-    const dx = asF32(u16, a.x) - asF32(u16, b.x);
-    const dy = asF32(u16, a.y) - asF32(u16, b.y);
-    return dx < distance and dy < distance;
-}
-
 /// Compares `a` and `b` coordinates. Returns `max` if outside `threshold` square, returns remaining distance (clamping < 0.1) if within. Useful for adjusting speed when arriving at target.
 pub fn adjustToDistance(a: Point, b: Point, threshold: f16, max: f16) f16 {
     const dx = asF32(u16, a.x) - asF32(u16, b.x);
@@ -945,6 +979,17 @@ pub fn entityDistance(e1: *e.Entity, e2: *e.Entity) f32 {
     const a = Point.at(e1.x(), e1.y());
     const b = Point.at(e2.x(), e2.y());
     return fastSqrt(asF32(u32, distanceSquared(a, b)));
+}
+
+/// Finds the size of `entity` and checks whether it fits within the square from `left`/`top` to `right`/`bottom`.
+pub fn entityWithinSquare(entity: *e.Entity, left: u16, top: u16, right: u16, bottom: u16) bool {
+    const entity_half_width = @divTrunc(entity.width(), 2);
+    const entity_half_height = @divTrunc(entity.height(), 2);
+    const entity_left = @max(entity_half_width, entity.x()) - entity_half_width;
+    const entity_right = entity.x() + entity_half_width;
+    const entity_top = @max(entity_half_height, entity.y()) - entity_half_height;
+    const entity_bottom = entity.y() + entity_half_height;
+    return ((left < entity_right) and (right > entity_left) and (top < entity_bottom) and (bottom > entity_top));
 }
 
 /// Fast inverse square root (Quake III algorithm)
@@ -1186,11 +1231,15 @@ pub const Subcell = struct {
     pub const half: comptime_int = size / 2;
     pub const quarter: comptime_int = size / 4;
 
-    /// Returns the subcell corresponding to the `x`,`y` world coordinates, with node at its top-left.
+    /// Returns the subcell corresponding to the `x`,`y` world coordinates, with its node at its center.
     pub fn at(x: u16, y: u16) Subcell {
         return Subcell{
             .node = nodePoint(x, y),
         };
+    }
+
+    pub fn fromNode(node: Point) Subcell {
+        return Subcell{ .node = node };
     }
 
     pub fn nodeCoordinates(self: Subcell) [2]u16 {
@@ -1205,14 +1254,14 @@ pub const Subcell = struct {
         return Point{ self.node.x - half, self.node.y - half };
     }
 
-    /// Returns (top left) corner of the 10th part of a cell that `x`,`y` is in. Not necessarily the closest node. Use `closestNode` to get the closest node instead.
+    /// Returns (top left) corner of the cell subdivision  that `x`,`y` is in. Not necessarily the closest node. Use `closestNode` to get the closest node instead.
     pub fn cornerFromCoordinates(x: u16, y: u16) [2]u16 {
         const node_x = @divTrunc(x, Subcell.size) * Subcell.size;
         const node_y = @divTrunc(y, Subcell.size) * Subcell.size;
         return [2]u16{ node_x, node_y };
     }
 
-    /// Returns node (center) of the 10th part of a cell that `x`,`y` is in. Not necessarily the closest node. Use `closestNode` to get the closest node instead.
+    /// Returns node (center) of the cell subdivision that `x`,`y` is in. Not necessarily the closest node. Use `closestNode` to get the closest node instead.
     pub fn nodeFromCoordinates(x: u16, y: u16) [2]u16 {
         const node_x = (@divTrunc(x, Subcell.size) * Subcell.size) + Subcell.half;
         const node_y = (@divTrunc(y, Subcell.size) * Subcell.size) + Subcell.half;
@@ -1240,8 +1289,7 @@ pub const Subcell = struct {
         return [2]u16{ snapped_center[0] + width / 2, snapped_center[1] + height / 2 };
     }
 
-    /// Returns the subcell node closest to `x,y`. Uses `cornerFromCoordinates` to find the subcell the coordinates are in,
-    /// then adds half a subcell size.
+    /// Returns the subcell node closest to `x,y`. Uses `cornerFromCoordinates` to find the subcell the coordinates are in, then adds half a subcell size.
     pub fn closestNode(x: u16, y: u16) [2]u16 {
         const topleft = cornerFromCoordinates(x, y);
         return [2]u16{ topleft[0] + Subcell.half, topleft[1] + Subcell.half };
@@ -1253,12 +1301,12 @@ pub const Subcell = struct {
         return Point.at(xy[0], xy[1]);
     }
 
-    /// Returns the x-coordinate of the node (top-left corner) of the subcell at the given world `x` coordinate.
+    /// Returns the x-coordinate of the top-left corner of the subcell at the given world `x` coordinate.
     pub fn toCornerX(x: u16) u16 {
         return @divTrunc(x, Subcell.size) * Subcell.size;
     }
 
-    /// Returns the y-coordinate of the node (top-left corner) of the subcell at the given world `y` coordinate.
+    /// Returns the y-coordinate of the top-left corner of the subcell at the given world `y` coordinate.
     pub fn toCornerY(y: u16) u16 {
         return @divTrunc(y, Subcell.size) * Subcell.size;
     }
@@ -1495,6 +1543,17 @@ pub fn mapClampFloatY(y: f32, height: u16) u16 {
     return @as(u16, @intFromFloat(@round(clamped_y)));
 }
 
+/// Checks both entity collision and blocked subcells to determine if `width` and `height` around `x`/`y` is free.
+pub fn isOpenGround(x: u16, y: u16, width: u16, height: u16) !bool {
+    const collides = main.World.grid.collidesWith(x, y, width, height, null) catch null;
+    if (collides != null) return false;
+    const subcells = try Subcell.findBlockedSubcells(x, y, width, height, main.World.grid.allocator);
+    for (subcells) |subcell| {
+        if (main.World.grid.blocked_subcells.contains(subcell.node)) return false;
+    }
+    return true;
+}
+
 /// Searches for `Entity` that satisfies the `condition`, starting with the section at the `origin` point.
 pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.Entity {
     const origin_col = asI32(usize, Grid.x(origin.x));
@@ -1503,24 +1562,21 @@ pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.
     var closest_distance = std.math.inf(f32);
 
     var radius: i32 = 0;
-    while (true) {
-        var found_any_entity = false;
+    const max_radius = @as(i32, @intCast(@max(grid.cols, grid.rows))) + 16;
+    while (radius <= max_radius) {
         var d: i32 = -radius;
-
-        while (d <= radius) { // Check the four sides of the square at this radius
+        while (d <= radius) {
             const offsets = [4]Point{
-                Point.fromIntegers(origin_col + d, origin_row - radius), // Top
-                Point.fromIntegers(origin_col + d, origin_row + radius), // Bottom
-                Point.fromIntegers(origin_col - radius, origin_row + d), // Left
-                Point.fromIntegers(origin_col + radius, origin_row + d), // Right
+                Point.fromIntegers(origin_col + d, origin_row - radius),
+                Point.fromIntegers(origin_col + d, origin_row + radius),
+                Point.fromIntegers(origin_col - radius, origin_row + d),
+                Point.fromIntegers(origin_col + radius, origin_row + d),
             };
-
             for (&offsets) |offset| {
-                if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.cols and offset.y < grid.rows) {
-                    const entities: ?*std.ArrayList(*e.Entity) = grid.sectionEntities(offset.x, offset.y);
-                    if (entities != null) {
-                        found_any_entity = true;
-                        for (entities.?.items) |entity| {
+                if (offset.x < grid.cols and offset.y < grid.rows) {
+                    const entities = grid.sectionEntities(offset.x, offset.y);
+                    if (entities) |list| {
+                        for (list.items) |entity| {
                             if (condition(entity)) {
                                 const distance = asF32(u32, distanceSquared(Point.at(origin.x, origin.y), Point.at(entity.x(), entity.y())));
                                 if (distance < closest_distance) {
@@ -1534,12 +1590,10 @@ pub fn concentricSearch(grid: *e.Grid, origin: Point, condition: Predicate) ?*e.
             }
             d += 1;
         }
-        if (closest_entity != null) return closest_entity; // If found entity in this radius, return the closest one
-        if (!found_any_entity) break; // If no entities were found overall, stop searching
-
-        radius += 2; // Increases radius by 2 since each section covers 3x3 cells, thus overlaps by one on each side
+        if (closest_entity != null) return closest_entity;
+        radius += 2;
     }
-    return null; // If no entity was found after the entire search
+    return null;
 }
 
 /// Searches for `Entity` that satisfies the `relation` to `origin` `Entity`. Returns pointer to nearest `Entity` found, or `null`.
@@ -1550,26 +1604,22 @@ pub fn concentricRelationalSearch(grid: *e.Grid, origin: *e.Entity, relation: Re
     var closest_distance = std.math.inf(f32);
 
     var radius: i32 = 0;
-    while (true) {
-        var found_any_entity = false;
+    const max_radius = @as(i32, @intCast(@max(grid.cols, grid.rows))) + 2;
+    while (radius <= max_radius) {
         var d: i32 = -radius;
-
         while (d <= radius) {
-            // Check the four sides of the square at this radius
-            const offsets = [4]Point{
+            const offsets = [4]Point{ // Checks the four sides of the square at this radius
                 Point.fromIntegers(origin_col + d, origin_row - radius), // Top
                 Point.fromIntegers(origin_col + d, origin_row + radius), // Bottom
                 Point.fromIntegers(origin_col - radius, origin_row + d), // Left
                 Point.fromIntegers(origin_col + radius, origin_row + d), // Right
             };
-
             for (&offsets) |offset| {
                 if (offset.x >= 0 and offset.y >= 0 and offset.x < grid.cols and offset.y < grid.rows) {
                     const entities: ?*std.ArrayList(*e.Entity) = grid.sectionEntities(offset.x, offset.y);
-                    if (entities != null) {
-                        found_any_entity = true;
-                        for (entities.?.items) |entity| {
-                            if (relation(origin, entity)) { // Check if relation holds
+                    if (entities) |list| {
+                        for (list.items) |entity| {
+                            if (relation(origin, entity)) { // Checks if relation holds
                                 const distance = asF32(u32, distanceSquared(Point.at(origin.x(), origin.y()), Point.at(entity.x(), entity.y())));
                                 if (distance < closest_distance) {
                                     closest_entity = entity;
@@ -1583,8 +1633,6 @@ pub fn concentricRelationalSearch(grid: *e.Grid, origin: *e.Entity, relation: Re
             d += 1;
         }
         if (closest_entity != null) return closest_entity; // If found entity in this radius, return the closest one
-        if (!found_any_entity) break; // If no entities were found overall, stop searching
-
         radius += 2; // Increases radius by 2 since each section covers 3x3 cells, thus overlaps by one on each side
     }
 
@@ -1601,7 +1649,7 @@ pub fn findConnectedStructures(grid: *e.Grid, origin: *e.Structure) !?[]*e.Struc
 
     if (entities) |entitylist| {
         for (entitylist.items) |entity| {
-            if (entity.kind == e.Kind.Structure and e.Entity.isTouching(origin.entity, entity)) {
+            if (entity.kind == e.Kind.Structure and e.Entity.isTouching(origin.entity, entity, 1)) {
                 try structures.append(entity.ref.Structure);
             }
         }
