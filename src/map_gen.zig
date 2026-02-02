@@ -1,6 +1,9 @@
 const std = @import("std");
 const MapFile = @import("map.zig").MapFile;
 
+// To update maps:
+// zig run src/map_gen.zig
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -8,11 +11,14 @@ pub fn main() !void {
 
     std.fs.cwd().makeDir("maps") catch {};
 
-    // Generate "Three Lanes" map
-    try generateThreeLanes(allocator, "maps/three_lanes.map");
-
     // Generate "Open Plains" map
     try generateOpenPlains(allocator, "maps/default.map");
+
+    // Generate "Mini Test" map
+    try generateMiniTest(allocator, "maps/mini.map");
+
+    // Generate "Three Lanes" map
+    try generateThreeLanes(allocator, "maps/three_lanes.map");
 
     std.debug.print("Maps generated successfully\n", .{});
 }
@@ -142,6 +148,64 @@ fn generateOpenPlains(allocator: std.mem.Allocator, path: []const u8) !void {
         .width = width,
         .height = height,
         .player_count = 2,
+        .terrain = terrain,
+        .start_locations = starts,
+        .resources = try resources.toOwnedSlice(),
+    };
+
+    try map.save(path);
+}
+
+fn generateMiniTest(allocator: std.mem.Allocator, path: []const u8) !void {
+    const width: u16 = 1024 * 3;
+    const height: u16 = 1024 * 2;
+    const terrain_width = @divTrunc(width, 64) + 1;
+    const terrain_height = @divTrunc(height, 64) + 1;
+
+    const terrain = try allocator.alloc(u8, terrain_width * terrain_height);
+    defer allocator.free(terrain);
+    @memset(terrain, 0);
+
+    // Scatter some mountain clusters
+    var prng = std.rand.DefaultPrng.init(42);
+    const random = prng.random();
+
+    for (0..8) |_| {
+        const cx = random.intRangeAtMost(usize, 10, terrain_width - 10);
+        const cy = random.intRangeAtMost(usize, 10, terrain_height - 10);
+
+        // Small cluster
+        for (0..random.intRangeAtMost(usize, 3, 8)) |_| {
+            const ox = random.intRangeAtMost(isize, -5, 5);
+            const oy = random.intRangeAtMost(isize, -5, 5);
+            const x = @as(usize, @intCast(@max(0, @min(@as(isize, @intCast(cx)) + ox, terrain_width - 1))));
+            const y = @as(usize, @intCast(@max(0, @min(@as(isize, @intCast(cy)) + oy, terrain_height - 1))));
+
+            terrain[y * terrain_width + x] = 1;
+        }
+    }
+
+    const starts = try allocator.alloc(MapFile.StartLocation, 1);
+    defer allocator.free(starts);
+    starts[0] = .{ .x = 500, .y = 500 };
+
+    // Random resources
+    var resources = std.ArrayList(MapFile.ResourceSpawn).init(allocator);
+    defer resources.deinit();
+
+    for (0..40) |_| {
+        try resources.append(.{
+            .x = @intCast(random.intRangeAtMost(u16, 300, width - 300)),
+            .y = @intCast(random.intRangeAtMost(u16, 300, height - 300)),
+            .class = random.intRangeAtMost(u8, 0, 1),
+        });
+    }
+
+    const map = MapFile{
+        .version = 1,
+        .width = width,
+        .height = height,
+        .player_count = 1,
         .terrain = terrain,
         .start_locations = starts,
         .resources = try resources.toOwnedSlice(),

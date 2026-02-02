@@ -670,7 +670,7 @@ pub const Unit = struct {
         for (players.items) |player| {
             if (player.id == owner) continue;
             const distance = u.fastSqrt(u.asF32(u32, u.distanceSquared(position, u.Point.at(player.x, player.y))));
-            if (closest_player == undefined or distance < closest_distance) {
+            if (closest_player == null or distance < closest_distance) {
                 closest_player = player;
                 closest_distance = distance;
             }
@@ -688,7 +688,7 @@ pub const Unit = struct {
         for (resources.items) |resource| {
             if (resource.state == Resource.State.Depleted) continue;
             const distance = u.fastSqrt(u.asF32(u32, u.distanceSquared(position, u.Point.at(resource.x, resource.y))));
-            if (closest_resource == undefined or distance < closest_distance) {
+            if (closest_resource == null or distance < closest_distance) {
                 closest_resource = resource;
                 closest_distance = distance;
             }
@@ -762,12 +762,15 @@ pub const Unit = struct {
             const cur_node = u.Subcell.closestNodePoint(current.x, current.y);
             const tar_node = u.Subcell.closestNodePoint(self.target.center.x, self.target.center.y);
             const distance_to_center = u.asF16(u16, u.manhattanDistance(current, self.intermediary_target.center)) - u.asF16(u16, (self.width() + self.height()) / 2);
-            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or
-                !self.stored_extrema[1].?.equals(tar_node) or
-                self.target.contains(current) or distance_to_center <= self.speed())
-            {
+            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or !self.stored_extrema[1].?.equals(tar_node) or self.target.contains(current) or distance_to_center <= self.speed()) {
                 //std.debug.print("recalculating node path, unit at {}/{}.\n", .{ self.x, self.y });
-                const new_path = main.World.grid.findNodePath(cur_node, self.target);
+                const new_path = main.World.grid.findNodePath(cur_node, self.target) catch |err| switch (err) {
+                    error.NoPath => null,
+                    else => {
+                        std.debug.print("Error: {}\n", .{err});
+                        return current;
+                    },
+                };
                 if (new_path) |path| {
                     defer path.deinit();
                     if (self.target.contains(path.items[0]) and self.class != 0) {
@@ -777,7 +780,7 @@ pub const Unit = struct {
                     } else {
                         self.intermediary_target = u.Circle.at(path.items[0], u.Subcell.size);
                     }
-                } else |err| std.debug.print("Invalid path: {}.\n", .{err});
+                }
             }
             self.stored_extrema[0] = cur_node;
             self.stored_extrema[1] = tar_node;
@@ -786,11 +789,17 @@ pub const Unit = struct {
             const tar_wp = u.Waypoint.closest(self.target.center.x, self.target.center.y);
             if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.stored_extrema[0].?.x != cur_wp.x or self.stored_extrema[0].?.y != cur_wp.y or self.stored_extrema[1].?.x != tar_wp.x or self.stored_extrema[1].?.y != tar_wp.y) {
                 //std.debug.print("recalculating waypoint path, unit at {}/{}.\n", .{ self.x, self.y });
-                const new_path = main.World.grid.findWaypointPath(cur_wp, tar_wp);
+                const new_path = main.World.grid.findWaypointPath(cur_wp, tar_wp) catch |err| switch (err) {
+                    error.NoPath => null,
+                    else => {
+                        std.debug.print("Error: {}\n", .{err});
+                        return current;
+                    },
+                };
                 if (new_path) |path| {
                     defer path.deinit();
                     self.intermediary_target = u.Circle.at(path.items[0], u.Subcell.size);
-                } else |err| std.debug.print("Invalid path: {}.\n", .{err});
+                }
             }
             self.stored_extrema[0] = cur_wp;
             self.stored_extrema[1] = tar_wp;
@@ -1092,10 +1101,18 @@ pub const Structure = struct {
             .ref = .{ .Structure = structure },
         };
 
-        const subcells_blocked = try u.Subcell.findBlockedSubcells(x, y, from_class.width, from_class.height, main.World.grid.allocator);
-        for (subcells_blocked) |subcell| { // Insert into blocked_subcells (subcell as the key, and empty value)
-            _ = try main.World.grid.blocked_subcells.put(subcell.node, {}); // Stores its node
-        }
+        _ = u.Subcell.forEachBlockedSubcell(
+            x,
+            y,
+            from_class.width,
+            from_class.height,
+            struct {
+                fn f(subcell: u.Subcell) bool {
+                    _ = main.World.grid.blocked_subcells.put(subcell.node, {}) catch {};
+                    return true;
+                }
+            }.f,
+        );
 
         try main.World.grid.addToCell(entity, null, null);
         return structure;
@@ -1123,10 +1140,20 @@ pub const Structure = struct {
         for (structures.items) |structure| {
             std.debug.assert(structure != self); // For debugging, structure must be removed at this point
         }
-        const subcells_blocked = try u.Subcell.findBlockedSubcells(self.x, self.y, self.width(), self.height(), main.World.grid.allocator);
-        for (subcells_blocked) |subcell| { // Insert into blocked_subcells (subcell as the key, and empty value)
-            _ = main.World.grid.blocked_subcells.remove(subcell.node); // Removes its node
-        }
+
+        _ = u.Subcell.forEachBlockedSubcell(
+            self.x,
+            self.y,
+            self.width(),
+            self.height(),
+            struct {
+                fn f(subcell: u.Subcell) bool {
+                    _ = main.World.grid.blocked_subcells.put(subcell.node, {}) catch {};
+                    return true;
+                }
+            }.f,
+        );
+
         //self.model.destroy(main.World.grid.allocator); // Deallocates memory for the model
         main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
         main.World.grid.allocator.destroy(self); // Deallocates memory for the Structure
@@ -1240,10 +1267,18 @@ pub const Resource = struct {
             .ref = .{ .Resource = resource },
         };
 
-        const subcells_blocked = try u.Subcell.findBlockedSubcells(x, y, from_class.width, from_class.height, main.World.grid.allocator);
-        for (subcells_blocked) |subcell| { // Insert into blocked_subcells (subcell as the key, and empty value)
-            _ = try main.World.grid.blocked_subcells.put(subcell.node, {}); // Stores its node
-        }
+        _ = u.Subcell.forEachBlockedSubcell(
+            x,
+            y,
+            from_class.width,
+            from_class.height,
+            struct {
+                fn f(subcell: u.Subcell) bool {
+                    _ = main.World.grid.blocked_subcells.put(subcell.node, {}) catch {};
+                    return true;
+                }
+            }.f,
+        );
 
         try main.World.grid.addToCell(entity, null, null);
         return resource;

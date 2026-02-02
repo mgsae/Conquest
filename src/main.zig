@@ -161,6 +161,10 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var allocator = gpa.allocator();
+    defer {
+        const leaked = gpa.detectLeaks();
+        std.debug.print("Has memory leak: {any}", .{leaked});
+    }
 
     // Initialize window
     //--------------------------------------------------------------------------------------
@@ -168,7 +172,7 @@ pub fn main() anyerror!void {
     flags.window_highdpi = true;
     //flags.vsync_hint = false;
     flags.borderless_windowed_mode = false;
-    flags.fullscreen_mode = true;
+    flags.fullscreen_mode = false;
     flags.window_undecorated = false;
 
     rl.setConfigFlags(flags);
@@ -195,6 +199,7 @@ pub fn main() anyerror!void {
 
     // Initialize map
     //--------------------------------------------------------------------------------------
+    // This will be handled by a map selection process. For now, straight in.
     const map = try Map.open(&allocator, 0); // Opens default map and initializes world
     const cellsigns_cache = try allocator.alloc(u32, World.grid.cols * World.grid.rows);
     defer allocator.free(cellsigns_cache);
@@ -824,9 +829,12 @@ pub fn drawMap() void {
                     const end_wp = u.Waypoint.closest(tar.x, tar.y);
                     // If no selection data or selected unit's position/target updated, finds waypoint path and sets Player.selection data
                     if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or !Player.selection_nodes[0].?.equals(start_wp) or !Player.selection_nodes[1].?.equals(end_wp)) {
-                        const new_path = World.grid.findWaypointPath(start_wp, end_wp) catch |err| {
-                            std.debug.print("Invalid path: {}.\n", .{err});
-                            return;
+                        const new_path = World.grid.findWaypointPath(start_wp, end_wp) catch |err| switch (err) {
+                            error.NoPath => null,
+                            else => {
+                                std.debug.print("Error: {}.\n", .{err});
+                                return;
+                            },
                         };
                         if (Player.selection_path) |*old| {
                             old.deinit(); // Frees previous
@@ -840,9 +848,12 @@ pub fn drawMap() void {
                     const end_node = u.Subcell.closestNodePoint(tar.x, tar.y);
                     // If no selection data or selected unit's position/target updated, finds node path and sets Player.selection data
                     if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or !Player.selection_nodes[0].?.equals(start_node) or !Player.selection_nodes[1].?.equals(end_node)) {
-                        const new_path = World.grid.findNodePath(start_node, unit.target) catch |err| {
-                            std.debug.print("Invalid path: {}.\n", .{err});
-                            return;
+                        const new_path = World.grid.findNodePath(start_node, unit.target) catch |err| switch (err) {
+                            error.NoPath => null,
+                            else => {
+                                std.debug.print("Error: {}\n", .{err});
+                                return;
+                            },
                         };
                         if (Player.selection_path) |*old| {
                             old.deinit(); // Frees previous
@@ -986,7 +997,13 @@ pub fn drawInterface() void {
             const index = @as(u16, @intCast(i - 1));
             x = 750 + (65 * @divFloor(index, 8));
             y = dash_y + 20 + (20 * (index % 8));
-            text = std.fmt.bufPrintZ(&buffer, "{s}", .{u.unitTypeFromClass(selected.?.ref.Unit.class)}) catch "Error";
+            const label: []const u8 = switch (kind) {
+                e.Kind.Player => "Player",
+                e.Kind.Resource => u.resourceTypeFromClass(selected.?.ref.Resource.class),
+                e.Kind.Structure => u.structureTypeFromClass(selected.?.ref.Structure.class),
+                e.Kind.Unit => u.unitTypeFromClass(selected.?.ref.Unit.class),
+            };
+            text = std.fmt.bufPrintZ(&buffer, "{s}", .{label}) catch "Error";
             rl.drawText(text, x, y, fsize, rl.Color.black);
         }
     }
@@ -1003,9 +1020,10 @@ const Map = struct {
 
     pub fn open(allocator: *std.mem.Allocator, id: u32) !Map {
         const filename = switch (id) {
-            0 => "maps/default.map",
-            1 => "maps/three_lanes.map",
-            2 => "maps/islands.map",
+            0 => "maps/mini.map",
+            1 => "maps/default.map",
+            2 => "maps/three_lanes.map",
+            3 => "maps/islands.map",
             else => return error.MapNotFound,
         };
 
@@ -1188,9 +1206,10 @@ pub fn drawGuide(class: u8) void {
     const mouse_position = rl.getMousePosition();
     const xy = findBuildPosition(class, mouse_position);
     const building = e.Structure.preset(class);
-    const open = u.isOpenGround(xy[0], xy[1], building.width, building.height) catch false;
+    const in_map = u.isInMap(xy[0], xy[1], building.width, building.height);
+    const open = if (in_map) (u.isOpenGround(xy[0], xy[1], building.width, building.height) catch false) else false;
     const mouse_closest_center = u.screenToSubcell(mouse_position).node;
-    if (!open or !isInBuildDistance(mouse_closest_center.x, mouse_closest_center.y) or !u.isInMap(xy[0], xy[1], building.width, building.height)) {
+    if (!open or !isInBuildDistance(mouse_closest_center.x, mouse_closest_center.y)) {
         u.drawGuideFail(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));
     } else {
         u.drawGuide(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));

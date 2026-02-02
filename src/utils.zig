@@ -1321,24 +1321,23 @@ pub const Subcell = struct {
         return @divTrunc(y, Subcell.size);
     }
 
-    /// Takes world `x`,`y` center and `width`,`height` of rectangle, returning the list of subcells touching the area.
-    pub fn findBlockedSubcells(x: u16, y: u16, width: u16, height: u16, allocator: *std.mem.Allocator) ![]Subcell {
-        // Finds "subcell grid coordinates" of rectangle corners
+    pub fn forEachBlockedSubcell(x: u16, y: u16, width: u16, height: u16, comptime F: fn (Subcell) bool) bool {
         const top_left_x = Subcell.subGridX(x - width / 2);
         const top_left_y = Subcell.subGridY(y - height / 2);
         const bottom_right_x = Subcell.subGridX(x + width / 2 + Subcell.size / 2);
         const bottom_right_y = Subcell.subGridY(y + height / 2 + Subcell.size / 2);
-        var subcells = std.ArrayList(Subcell).init(allocator.*);
-        defer subcells.deinit();
-        for (top_left_x..bottom_right_x) |col| {
-            for (top_left_y..bottom_right_y) |row| {
-                const subcell_world_x = @as(u16, @intCast(col * Subcell.size));
-                const subcell_world_y = @as(u16, @intCast(row * Subcell.size));
-                const subcell = Subcell.at(subcell_world_x, subcell_world_y);
-                try subcells.append(subcell);
+        var col = top_left_x;
+        while (col <= bottom_right_x) : (col += 1) {
+            var row = top_left_y;
+            while (row <= bottom_right_y) : (row += 1) {
+                const subcell = Subcell.at(
+                    @as(u16, @intCast(col * Subcell.size)),
+                    @as(u16, @intCast(row * Subcell.size)),
+                );
+                if (!F(subcell)) return false; // early exit
             }
         }
-        return subcells.toOwnedSlice();
+        return true;
     }
 };
 
@@ -1547,11 +1546,17 @@ pub fn mapClampFloatY(y: f32, height: u16) u16 {
 pub fn isOpenGround(x: u16, y: u16, width: u16, height: u16) !bool {
     const collides = main.World.grid.collidesWith(x, y, width, height, null) catch null;
     if (collides != null) return false;
-    const subcells = try Subcell.findBlockedSubcells(x, y, width, height, main.World.grid.allocator);
-    for (subcells) |subcell| {
-        if (main.World.grid.blocked_subcells.contains(subcell.node)) return false;
-    }
-    return true;
+    return Subcell.forEachBlockedSubcell(
+        x,
+        y,
+        width,
+        height,
+        struct {
+            fn f(subcell: Subcell) bool {
+                return !main.World.grid.blocked_subcells.contains(subcell.node);
+            }
+        }.f,
+    );
 }
 
 /// Searches for `Entity` that satisfies the `condition`, starting with the section at the `origin` point.
