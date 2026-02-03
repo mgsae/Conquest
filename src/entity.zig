@@ -1101,18 +1101,7 @@ pub const Structure = struct {
             .ref = .{ .Structure = structure },
         };
 
-        _ = u.Subcell.forEachBlockedSubcell(
-            x,
-            y,
-            from_class.width,
-            from_class.height,
-            struct {
-                fn f(subcell: u.Subcell) bool {
-                    _ = main.World.grid.blocked_subcells.put(subcell.node, {}) catch {};
-                    return true;
-                }
-            }.f,
-        );
+        u.markSubcellsBlocked(x, y, from_class.width, from_class.height, true);
 
         try main.World.grid.addToCell(entity, null, null);
         return structure;
@@ -1141,18 +1130,7 @@ pub const Structure = struct {
             std.debug.assert(structure != self); // For debugging, structure must be removed at this point
         }
 
-        _ = u.Subcell.forEachBlockedSubcell(
-            self.x,
-            self.y,
-            self.width(),
-            self.height(),
-            struct {
-                fn f(subcell: u.Subcell) bool {
-                    _ = main.World.grid.blocked_subcells.put(subcell.node, {}) catch {};
-                    return true;
-                }
-            }.f,
-        );
+        u.markSubcellsBlocked(self.x, self.y, self.width(), self.height(), false);
 
         //self.model.destroy(main.World.grid.allocator); // Deallocates memory for the model
         main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
@@ -1267,18 +1245,7 @@ pub const Resource = struct {
             .ref = .{ .Resource = resource },
         };
 
-        _ = u.Subcell.forEachBlockedSubcell(
-            x,
-            y,
-            from_class.width,
-            from_class.height,
-            struct {
-                fn f(subcell: u.Subcell) bool {
-                    _ = main.World.grid.blocked_subcells.put(subcell.node, {}) catch {};
-                    return true;
-                }
-            }.f,
-        );
+        u.markSubcellsBlocked(x, y, from_class.width, from_class.height, true);
 
         try main.World.grid.addToCell(entity, null, null);
         return resource;
@@ -1291,6 +1258,7 @@ pub const Resource = struct {
         for (resources.items) |resource| {
             std.debug.assert(resource != self); // For debugging, resource must be removed at this point
         }
+        u.markSubcellsBlocked(self.x, self.y, self.width(), self.height(), false);
         main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
         main.World.grid.allocator.destroy(self); // Deallocates memory for the Resource
     }

@@ -1322,10 +1322,16 @@ pub const Subcell = struct {
     }
 
     pub fn forEachBlockedSubcell(x: u16, y: u16, width: u16, height: u16, comptime F: fn (Subcell) bool) bool {
-        const top_left_x = Subcell.subGridX(x - width / 2);
-        const top_left_y = Subcell.subGridY(y - height / 2);
-        const bottom_right_x = Subcell.subGridX(x + width / 2 + Subcell.size / 2);
-        const bottom_right_y = Subcell.subGridY(y + height / 2 + Subcell.size / 2);
+        const half_w = width / 2;
+        const half_h = height / 2;
+        const left_x = if (x > half_w) x - half_w else 0;
+        const top_y = if (y > half_h) y - half_h else 0;
+        const right_x = x + half_w + Subcell.size / 2;
+        const bottom_y = y + half_h + Subcell.size / 2;
+        const top_left_x = Subcell.subGridX(left_x);
+        const top_left_y = Subcell.subGridY(top_y);
+        const bottom_right_x = Subcell.subGridX(right_x);
+        const bottom_right_y = Subcell.subGridY(bottom_y);
         var col = top_left_x;
         while (col <= bottom_right_x) : (col += 1) {
             var row = top_left_y;
@@ -1554,6 +1560,26 @@ pub fn isOpenGround(x: u16, y: u16, width: u16, height: u16) !bool {
         struct {
             fn f(subcell: Subcell) bool {
                 return !main.World.grid.blocked_subcells.contains(subcell.node);
+            }
+        }.f,
+    );
+}
+
+/// Adds or removes from `blocked_subcells` any node within `width`/`height` around `x`/`y`.
+pub fn markSubcellsBlocked(x: u16, y: u16, width: u16, height: u16, comptime blocked: bool) void {
+    _ = Subcell.forEachBlockedSubcell(
+        x,
+        y,
+        width,
+        height,
+        struct {
+            fn f(subcell: Subcell) bool {
+                if (blocked) {
+                    _ = main.World.grid.blocked_subcells.put(subcell.node, {}) catch {};
+                } else {
+                    _ = main.World.grid.blocked_subcells.remove(subcell.node);
+                }
+                return true;
             }
         }.f,
     );
