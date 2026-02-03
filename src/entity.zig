@@ -928,6 +928,7 @@ pub const Unit = struct {
         } else { // Unknown cause of death, very sad
 
         }
+        try main.World.grid.removeFromAllSections(self.entity); // Immediate removal
         self.state = State.Dead;
     }
 
@@ -1051,7 +1052,11 @@ pub const Structure = struct {
                     std.debug.print("Failed to spawn unit: {}. May want some sort of indication.\n", .{err});
                 }
             }
-            self.connected = u.findConnectedStructures(&main.World.grid, self) catch null; // Updates array
+            if (self.connected) |old_connected| main.World.grid.allocator.free(old_connected);
+            self.connected = u.findConnectedStructures(&main.World.grid, self) catch |err| {
+                std.debug.print("Failed to update connections: {}\n", .{err});
+                return;
+            }; // Updates array
         }
         if (self.capacity > 0) { // Propagates capacity to connected buildings with lower capacity
             if (self.connected) |buildings| {
@@ -1114,11 +1119,16 @@ pub const Structure = struct {
         }
         const structure = Structure.create(owner, x, y, class) catch return null;
         main.World.new_structures.append(structure) catch return null;
+        structure.connected = u.findConnectedStructures(&main.World.grid, structure) catch |err| {
+            std.debug.print("Failed to initialize connections: {}\n", .{err});
+            return null;
+        }; // Initial connections array
         return structure;
     }
 
     pub fn destroy(self: *Structure) void {
         // Effect here
+        main.World.grid.removeFromAllSections(self.entity) catch {}; // Immediate removal
         self.state = State.Destroyed;
     }
 
@@ -1132,6 +1142,7 @@ pub const Structure = struct {
 
         u.markSubcellsBlocked(self.x, self.y, self.width(), self.height(), false);
 
+        if (self.connected) |connected| main.World.grid.allocator.free(connected); // Frees connection array
         //self.model.destroy(main.World.grid.allocator); // Deallocates memory for the model
         main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
         main.World.grid.allocator.destroy(self); // Deallocates memory for the Structure
@@ -1185,10 +1196,10 @@ pub const Resource = struct {
     }
 
     pub fn update(self: *Resource) void {
-        self.yield += 1;
-        if (self.capacity < preset(self.class).capacity and self.growth > 0) {
-            const max_yield = u.ticksFromSecs(self.growth);
-            if (self.yield >= max_yield) {
+        self.yield = u.u16Add(self.yield, 1); // Adds 1 to yield every update
+        if (self.capacity < preset(self.class).capacity and self.growth > 0) { // When growing resource is in use
+            const max_yield = u.ticksFromSecs(self.growth); // Checks if growth update cycle has been reached
+            if (self.yield >= max_yield) { // When above `growth` updates, can spawn copy and resets counter
                 var copy: ?*Resource = null;
                 if (u.randomU16(100) < @as(u16, @intFromFloat(@round(self.growth)))) {
                     if (self.spawnResource()) |result| {
@@ -1198,13 +1209,16 @@ pub const Resource = struct {
                         std.debug.print("Failed to spawn resource {s}: {}.\n", .{ u.resourceTypeFromClass(self.class), err });
                     }
                 }
-                if (copy == null) {
+                if (copy == null) { // If didn't spawn copy, ticks capacity towards inactivity
                     self.capacity = @min(preset(self.class).capacity, self.capacity + 1);
                 }
-                self.yield -= max_yield;
+                self.yield = u.u16Sub(self.yield, max_yield); // Resets update counter
             }
         }
-        if (self.capacity <= 0) self.state = State.Depleted;
+        if (self.capacity <= 0) {
+            main.World.grid.removeFromAllSections(self.entity) catch {}; // Immediate removal
+            self.state = State.Depleted;
+        }
     }
 
     /// `Resource` property fields determined by `class`.
@@ -1831,7 +1845,12 @@ pub const Grid = struct {
 
         //std.debug.print("findNodePath: initialized start node at {}/{}, end node at {}/{}.\n", .{ start_node.x, start_node.y, end_point.x, end_point.y });
 
+        const MAX_ITERATIONS: usize = 1000;
+        var iterations: usize = 0;
+
         while (open_set.count() > 0) { // Find node with lowest f_score
+            iterations += 1;
+            if (iterations >= MAX_ITERATIONS) return error.NoPath;
             //std.debug.print("open_set count: {d}.\n", .{open_set.count()});
             const current_node = open_set.remove().point; // Gets node with the lowest f_score
             if (current_node.equals(end_node)) { // Success, reached end
@@ -1885,7 +1904,12 @@ pub const Grid = struct {
 
         //std.debug.print("findWaypointPath: initialized start node at {}/{}, end node at {}/{}.\n", .{ start_point.x, start_point.y, end_point.x, end_point.y });
 
+        const MAX_ITERATIONS: usize = 500;
+        var iterations: usize = 0;
+
         while (open_set.count() > 0) { // Find node with lowest f_score
+            iterations += 1;
+            if (iterations >= MAX_ITERATIONS) return error.NoPath;
             //std.debug.print("open_set count: {d}.\n", .{open_set.count()});
             const current_wp = open_set.remove().point; // Gets node with the lowest f_score
             if (current_wp.equals(end_wp)) { // Success, reached end

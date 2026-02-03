@@ -1324,22 +1324,15 @@ pub const Subcell = struct {
     pub fn forEachBlockedSubcell(x: u16, y: u16, width: u16, height: u16, comptime F: fn (Subcell) bool) bool {
         const half_w = width / 2;
         const half_h = height / 2;
-        const left_x = if (x > half_w) x - half_w else 0;
-        const top_y = if (y > half_h) y - half_h else 0;
-        const right_x = x + half_w + Subcell.size / 2;
-        const bottom_y = y + half_h + Subcell.size / 2;
-        const top_left_x = Subcell.subGridX(left_x);
-        const top_left_y = Subcell.subGridY(top_y);
-        const bottom_right_x = Subcell.subGridX(right_x);
-        const bottom_right_y = Subcell.subGridY(bottom_y);
-        var col = top_left_x;
-        while (col <= bottom_right_x) : (col += 1) {
-            var row = top_left_y;
-            while (row <= bottom_right_y) : (row += 1) {
-                const subcell = Subcell.at(
-                    @as(u16, @intCast(col * Subcell.size)),
-                    @as(u16, @intCast(row * Subcell.size)),
-                );
+        const top_left_x = if (x > half_w) Subcell.subGridX(x - width / 2) else 0;
+        const top_left_y = if (y > half_h) Subcell.subGridY(y - height / 2) else 0;
+        const bottom_right_x = Subcell.subGridX(x + width / 2 + Subcell.size / 2);
+        const bottom_right_y = Subcell.subGridY(y + height / 2 + Subcell.size / 2);
+        for (top_left_x..bottom_right_x) |col| {
+            for (top_left_y..bottom_right_y) |row| {
+                const subcell_world_x = @as(u16, @intCast(col * Subcell.size));
+                const subcell_world_y = @as(u16, @intCast(row * Subcell.size));
+                const subcell = Subcell.at(subcell_world_x, subcell_world_y);
                 if (!F(subcell)) return false; // early exit
             }
         }

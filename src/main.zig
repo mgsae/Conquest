@@ -213,23 +213,8 @@ pub fn main() anyerror!void {
     Config.textureManager.loadAllTextures() catch std.debug.print("Failed to load textures.\n", .{});
     defer Config.textureManager.unloadAllTextures();
 
-    // Testing/debugging
+    // Cleanup
     //--------------------------------------------------------------------------------------
-    // const SPREAD = 50; // PERCENTAGE
-    // const rangeX: u16 = @intCast(@divTrunc(@as(i32, @intCast(World.width)) * SPREAD, 100));
-    // const rangeY: u16 = @intCast(@divTrunc(@as(i32, @intCast(World.height)) * SPREAD, 100));
-
-    // //try e.structures.append(try e.Structure.create(1225, 1225, 0));
-    // //try e.units.append(try e.Unit.create(2500, 1500, 0));
-    // //for (0..5000) |_| {
-    // //    try e.units.append(try e.Unit.create(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), @as(u8, @intCast(u.randomU16(3)))));
-    // //}
-    // for (0..0) |_| {
-    //     const class = @as(u8, @intCast(u.randomU16(3)));
-    //     const xy = u.Subcell.snapToCorner(u.randomU16(rangeX) + @divTrunc(World.width - rangeX, 2), u.randomU16(rangeY) + @divTrunc(World.height - rangeY, 2), e.Structure.preset(class).width, e.Structure.preset(class).height);
-    //     _ = e.Structure.construct(3, xy[0], xy[1], class);
-    // }
-
     defer e.units.deinit();
     defer e.structures.deinit();
     defer e.players.deinit();
@@ -457,8 +442,14 @@ fn setSelection(target: ?*e.Entity) void {
     }
     Player.selected = [_]?*e.Entity{null} ** 256; // Clears selection
     Player.selected[0] = target; // null or entity
-    if (target != null) target.?.setSelected(true);
-    // get secondaries from structures etc.?
+    if (target == null) return;
+    target.?.setSelected(true); // Sets flag on entity
+    // Adding derived secondary selected
+    if (target.?.kind == e.Kind.Structure and target.?.ref.Structure.connected != null) {
+        for (target.?.ref.Structure.connected.?) |connected_structure| {
+            addSelection(connected_structure.entity);
+        }
+    }
 }
 
 /// Finds the first null slot in `Player.selected` and sets it to the `target` *Entity.
