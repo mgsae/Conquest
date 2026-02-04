@@ -225,7 +225,7 @@ pub const TerrainType = enum(u8) {
 
     pub fn color(self: TerrainType) rl.Color {
         return switch (self) {
-            .Ground => rl.Color.init(60, 80, 60, 255), // Dark
+            .Ground => rl.Color.init(40, 40, 40, 255), // Dark
             .Mountain => rl.Color.init(100, 100, 100, 255), // Gray
             .Water => rl.Color.init(50, 50, 150, 255), // Blue
             .Forest => rl.Color.init(40, 100, 40, 255), // Green

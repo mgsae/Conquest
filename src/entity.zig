@@ -2,6 +2,7 @@ const std: type = @import("std");
 const rl = @import("raylib");
 const main = @import("main.zig");
 const u = @import("utils.zig");
+const Genome = @import("traits.zig").Genome;
 
 // Setting up entities
 pub var players: std.ArrayList(*Player) = undefined;
@@ -28,7 +29,7 @@ pub const Entity = struct {
     pub fn width(self: *Entity) u16 {
         return switch (self.kind) {
             Kind.Player => self.ref.Player.width,
-            Kind.Unit => self.ref.Unit.width(),
+            Kind.Unit => self.ref.Unit.width,
             Kind.Structure => self.ref.Structure.width(),
             Kind.Resource => self.ref.Resource.width(),
         };
@@ -37,7 +38,7 @@ pub const Entity = struct {
     pub fn height(self: *Entity) u16 {
         return switch (self.kind) {
             Kind.Player => self.ref.Player.height,
-            Kind.Unit => self.ref.Unit.height(),
+            Kind.Unit => self.ref.Unit.height,
             Kind.Structure => self.ref.Structure.height(),
             Kind.Resource => self.ref.Resource.height(),
         };
@@ -100,7 +101,7 @@ pub const Entity = struct {
     pub fn speed(self: *Entity) f16 {
         return switch (self.kind) {
             Kind.Player => self.ref.Player.speed,
-            Kind.Unit => self.ref.Unit.speed(),
+            Kind.Unit => self.ref.Unit.speed,
             else => 0,
         };
     }
@@ -176,7 +177,7 @@ pub const Player = struct {
     height: u16,
     x: u16,
     y: u16,
-    speed: f16 = 5,
+    speed: f16 = 0,
     state: State,
     local: bool = false,
     selected: bool = false,
@@ -312,7 +313,7 @@ pub const Player = struct {
             .y = y,
             .width = u.Subcell.half * 3,
             .height = u.Subcell.half * 3,
-            .speed = 5,
+            .speed = 0,
             .state = State.Default,
             .local = true,
         };
@@ -338,7 +339,7 @@ pub const Player = struct {
             .y = y,
             .width = u.Subcell.half * 3,
             .height = u.Subcell.half * 3,
-            .speed = 5,
+            .speed = 0,
             .state = State.Default,
             .local = false,
         };
@@ -388,11 +389,23 @@ pub const Player = struct {
 //----------------------------------------------------------------------------------
 pub const Unit = struct {
     entity: *Entity,
-    class: u8,
+
+    genome: Genome,
+    class: u8 = 0, // PLACEHOLDER, REMOVE
+
     owner: u8,
     x: u16,
     y: u16,
     life: i16,
+
+    // Derived phenotype
+    width: u16,
+    height: u16,
+    speed: f16,
+    health: i16,
+    reach: f32,
+    tempo: i16,
+
     target: u.Circle,
     intermediary_target: u.Circle,
     last_step: u.Point,
@@ -402,6 +415,7 @@ pub const Unit = struct {
     state: State,
     resources: [4]u16,
     projectiles: *std.ArrayList(*Projectile),
+
     elapsed: i16 = 0,
     experience: i16 = 0,
     selected: bool = false,
@@ -417,13 +431,13 @@ pub const Unit = struct {
     pub fn draw(self: *Unit, alpha: f32) void {
         if (self.state == State.Dead) return;
         // Draws model (adjust with state etc.)
-        u.drawModel(self.model, self.width(), self.height(), self.entity.color(alpha), self.entity.color(alpha));
+        u.drawModel(self.model, self.width, self.height, self.entity.color(alpha), self.entity.color(alpha));
         // If selected by player, draws target circumference with half alpha
         if (self.selected) {
             u.drawCircumference(self.target, self.entity.color(alpha / 2));
         }
 
-        u.drawLifeInterpolated(self.x, self.y, preset(self.class).width, self.life, preset(self.class).life, self.last_step, self.elapsed);
+        u.drawLifeInterpolated(self.x, self.y, self.width, self.life, self.health, self.last_step, self.elapsed);
 
         // Draws projectiles with same alpha
         for (self.projectiles.items) |projectile| {
@@ -443,7 +457,7 @@ pub const Unit = struct {
             self.last_step = u.Point.at(self.x, self.y); // Sets last_step to current position
 
             // Every attackrate * 10 ticks (unless carrying)
-            if (main.moveDivMultiple(self.elapsed, preset(self.class).attackrate) and self.state != State.Carrying) {
+            if (main.moveDivMultiple(self.elapsed, self.tempo) and self.state != State.Carrying) {
                 if (self.state == State.Attacking) self.state = State.Default; // Clears attacking state
                 if (self.getAttackTarget()) |target| {
                     if (try self.attack(target)) { // Successfully launched projectile
@@ -494,10 +508,10 @@ pub const Unit = struct {
         if (self.state == State.Incapacitated) return;
 
         // If step is out of bounds, clamps to map if needed, and retargets
-        if (!u.isInMap(new_x, new_y, self.width(), self.height())) {
-            if (!u.isInMap(old_x, old_y, self.width(), self.height())) {
-                const clamped_x = u.mapClampX(@as(i16, @intCast(new_x)), self.width());
-                const clamped_y = u.mapClampY(@as(i16, @intCast(new_y)), self.height());
+        if (!u.isInMap(new_x, new_y, self.width, self.height)) {
+            if (!u.isInMap(old_x, old_y, self.width, self.height)) {
+                const clamped_x = u.mapClampX(@as(i16, @intCast(new_x)), self.width);
+                const clamped_y = u.mapClampY(@as(i16, @intCast(new_y)), self.height);
                 _ = self.tryMove(clamped_x, clamped_y, old_x, old_y);
             }
             _ = self.retarget();
@@ -570,8 +584,8 @@ pub const Unit = struct {
     fn checkCollision(self: *Unit, x: u16, y: u16) ?*Entity {
         const entities = main.World.grid.sectionEntities(u.Grid.x(x), u.Grid.y(y));
         if (entities != null) {
-            const half_width = @divTrunc(self.width(), 2);
-            const half_height = @divTrunc(self.height(), 2);
+            const half_width = @divTrunc(self.width, 2);
+            const half_height = @divTrunc(self.height, 2);
             const left = @max(half_width, x) - half_width;
             const right = x + half_width;
             const top = @max(half_height, y) - half_height;
@@ -611,11 +625,11 @@ pub const Unit = struct {
         const new_x: u16, const new_y: u16 = calculatePushPosition(self, angle, distance);
         self.state = State.Incapacitated; // Incapacitated while pushed
         //std.debug.print("Pushed towards angle {}.\n", .{angle});
-        if (!u.isInMap(new_x, new_y, self.width(), self.height())) return distance;
+        if (!u.isInMap(new_x, new_y, self.width, self.height)) return distance;
         var moved_distance: f32 = distance;
 
         // Checking whether pushed unit in turn collides with another obstacle
-        const obstacle = main.World.grid.collidesWith(new_x, new_y, self.width(), self.height(), self.entity) catch null;
+        const obstacle = main.World.grid.collidesWith(new_x, new_y, self.width, self.height, self.entity) catch null;
         if (obstacle == null) {
             self.x = new_x;
             self.y = new_y;
@@ -628,7 +642,7 @@ pub const Unit = struct {
             if (obstacle_unit.state != State.Incapacitated) {
                 moved_distance = moved_distance / 2; // Halves pushing distance for each additional obstacle
             } else {
-                moved_distance = pushed(obstacle_unit, angle, @min(distance, distance * u.sizeFactor(self.width(), self.height(), obstacle_unit.width(), obstacle_unit.height())));
+                moved_distance = pushed(obstacle_unit, angle, @min(distance, distance * u.sizeFactor(self.width, self.height, obstacle_unit.width, obstacle_unit.height)));
                 const push_delta_xy = u.vectorToDelta(angle, moved_distance);
                 const push_new_x = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + push_delta_xy[0]));
                 const push_new_y = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + push_delta_xy[1]));
@@ -735,7 +749,7 @@ pub const Unit = struct {
                             self.target = u.Circle.at(u.Point.closestContact(self.entity, r), u.Subcell.size);
                         }
                     } else { // Found no resource, so targets random nearby position
-                        std.debug.print("FOUND NO RESOURCE\n", .{});
+                        // std.debug.print("FOUND NO RESOURCE\n", .{});
                         self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
                     }
                 } else { // Gatherers already carrying
@@ -761,8 +775,8 @@ pub const Unit = struct {
             // Within a cell away, A* by nodes
             const cur_node = u.Subcell.closestNodePoint(current.x, current.y);
             const tar_node = u.Subcell.closestNodePoint(self.target.center.x, self.target.center.y);
-            const distance_to_center = u.asF16(u16, u.manhattanDistance(current, self.intermediary_target.center)) - u.asF16(u16, (self.width() + self.height()) / 2);
-            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or !self.stored_extrema[1].?.equals(tar_node) or self.target.contains(current) or distance_to_center <= self.speed()) {
+            const distance_to_center = u.asF16(u16, u.manhattanDistance(current, self.intermediary_target.center)) - u.asF16(u16, (self.width + self.height) / 2);
+            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or !self.stored_extrema[1].?.equals(tar_node) or self.target.contains(current) or distance_to_center <= self.speed) {
                 //std.debug.print("recalculating node path, unit at {}/{}.\n", .{ self.x, self.y });
                 const new_path = main.World.grid.findNodePath(cur_node, self.target) catch |err| switch (err) {
                     error.NoPath => null,
@@ -789,7 +803,7 @@ pub const Unit = struct {
             const tar_wp = u.Waypoint.closest(self.target.center.x, self.target.center.y);
             if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.stored_extrema[0].?.x != cur_wp.x or self.stored_extrema[0].?.y != cur_wp.y or self.stored_extrema[1].?.x != tar_wp.x or self.stored_extrema[1].?.y != tar_wp.y) {
                 //std.debug.print("recalculating waypoint path, unit at {}/{}.\n", .{ self.x, self.y });
-                const new_path = main.World.grid.findWaypointPath(cur_wp, tar_wp) catch |err| switch (err) {
+                const new_path = main.World.grid.findWaypointPath(cur_wp, tar_wp, self.width, self.height) catch |err| switch (err) {
                     error.NoPath => null,
                     else => {
                         std.debug.print("Error: {}\n", .{err});
@@ -811,7 +825,7 @@ pub const Unit = struct {
 
     /// Returns a point offset by self's `speed` towards `target` from self's `current` position.
     fn stepTowardsTarget(self: *Unit, current: u.Point, target: u.Point) u.Point {
-        const magnitude = u.adjustToDistance(current, target, self.speed(), self.speed());
+        const magnitude = u.adjustToDistance(current, target, self.speed, self.speed);
         const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(target.x));
         const dy = @as(i32, @intCast(current.y)) - @as(i32, @intCast(target.y));
 
@@ -845,14 +859,14 @@ pub const Unit = struct {
         const angle_diff = angle_to_target - angle_to_obstacle;
         const deviation_angle: f32 = if (angle_diff > 0) 45.0 else -45.0; // Positive = clockwise, negative = counterclockwise
         const new_angle = base_angle + deviation_angle;
-        const vector = u.vectorToDelta(new_angle, self.speed());
+        const vector = u.vectorToDelta(new_angle, self.speed);
         return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
     }
 
     /// Does a concentric search for an enemy.
     fn getAttackTarget(self: *Unit) ?*Entity {
         const found_entity = u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isEnemy);
-        if (found_entity != null and self.entity.inRangeOf(found_entity.?, range(self))) return found_entity;
+        if (found_entity != null and self.entity.inRangeOf(found_entity.?, self.reach)) return found_entity;
         return null;
     }
 
@@ -872,34 +886,32 @@ pub const Unit = struct {
         return true;
     }
 
-    pub fn create(owner: u8, x: u16, y: u16, class: u8) !*Unit {
-        const entity = try main.World.grid.allocator.create(Entity); // Memory for the parent entity
+    pub fn create(owner: u8, x: u16, y: u16, source: u8) !*Unit {
+        const entity = try main.World.grid.allocator.create(Entity); // Memory for the entity
         const unit = try main.World.grid.allocator.create(Unit); // Memory for unit
         const projectiles = try main.World.grid.allocator.create(std.ArrayList(*Projectile)); // Memory for projectiles
         projectiles.* = std.ArrayList(*Projectile).init(main.World.grid.allocator.*);
-        const from_class = Unit.preset(class);
+        const genome = Genome.preset(source);
         const start_point = u.Point.at(x, y);
-        const initial_target = if (class == 0) findResource(start_point, u.reachFromRect(from_class.width, from_class.height)) else findTarget(owner, start_point, u.reachFromRect(from_class.width, from_class.height));
+        const initial_target = if (u.randomBool()) findResource(start_point, u.reachFromRect(10, 10)) else findTarget(owner, start_point, u.reachFromRect(10, 10));
 
         var model: *u.Model = undefined;
-
-        // Determine if this unit should have legs
         model = try u.Model.createRectangle(main.World.grid.allocator, start_point);
-
-        //model = try u.Model.createChain(main.World.grid.allocator, 2, start_point, 12 + u.asF32(u8, class));
-
-        //if (class > 0) {
-        //    try u.Legs.attach(main.World.grid.allocator, model, 4, 10.0); // Assuming 4 legs with 10.0 length
-        //}
 
         unit.* = Unit{
             .entity = entity,
             .owner = owner,
-            .class = class,
-            .life = from_class.life,
+            .genome = genome,
             .model = model,
             .x = x,
             .y = y,
+            .life = 1,
+            .width = 0,
+            .height = 0,
+            .speed = 0,
+            .health = 0,
+            .reach = 0,
+            .tempo = 0,
             .target = initial_target,
             .intermediary_target = initial_target,
             .last_step = start_point,
@@ -912,8 +924,10 @@ pub const Unit = struct {
 
         entity.* = Entity{
             .kind = Kind.Unit,
-            .ref = .{ .Unit = unit }, // Store the pointer to the Unit
+            .ref = .{ .Unit = unit }, // Stores the pointer to the Unit
         };
+
+        unit.genome.applyToUnit(unit);
 
         try main.World.grid.addToCell(entity, null, null);
         return unit;
@@ -946,45 +960,12 @@ pub const Unit = struct {
         main.World.grid.allocator.destroy(self); // Deallocates memory for the Unit
     }
 
-    /// `Unit` property template fields determined by `class`.
-    pub const Properties = struct {
-        speed: f16,
-        width: u16,
-        height: u16,
-        life: i16,
-        range: f32,
-        attackrate: u8,
-    };
-
-    /// Returns a `Properties` template determined by `class`.
-    pub fn preset(class: u8) Properties { // Would set model here as well
-        return switch (class) {
-            0 => Properties{ .speed = 1.5, .width = 20, .height = 20, .life = 50, .range = 125, .attackrate = 6 }, // Gatherer
-            1 => Properties{ .speed = 1.5, .width = 25, .height = 25, .life = 225, .range = 150, .attackrate = 4 }, // Soldier
-            2 => Properties{ .speed = 1, .width = 45, .height = 45, .life = 400, .range = 500, .attackrate = 12 }, // Trebuchet
-            3 => Properties{ .speed = 2.5, .width = 35, .height = 35, .life = 200, .range = 225, .attackrate = 8 }, // Cavalry
-            else => @panic("Invalid unit class"),
-        };
-    }
-
     pub fn hasLegs(self: *Unit) bool {
         return self.class > 0;
     }
 
-    pub fn speed(self: *Unit) f16 {
-        return Unit.preset(self.class).speed * main.World.MOVEMENT_DIVISIONS;
-    }
-
-    fn range(self: *Unit) f32 {
-        return preset(self.class).range;
-    }
-
-    fn width(self: *Unit) u16 {
-        return preset(self.class).height;
-    }
-
-    fn height(self: *Unit) u16 {
-        return preset(self.class).height;
+    pub fn effectiveSpeed(self: *Unit) f16 {
+        return self.speed * main.World.MOVEMENT_DIVISIONS;
     }
 };
 
@@ -1075,7 +1056,7 @@ pub const Structure = struct {
 
     pub fn spawnUnit(self: *Structure) !*Unit {
         const spawn_class = self.spawnClass();
-        const spawn_point = self.spawnPoint(Unit.preset(spawn_class).width, Unit.preset(spawn_class).height) catch null;
+        const spawn_point = self.spawnPoint(50, 50) catch null;
         if (spawn_point) |sp| { // If spawn_point is not null, unwrap it
             const unit = try Unit.create(self.owner, sp[0], sp[1], spawn_class);
             try main.World.new_units.append(unit);
@@ -1204,7 +1185,7 @@ pub const Resource = struct {
                 if (u.randomU16(100) < @as(u16, @intFromFloat(@round(self.growth)))) {
                     if (self.spawnResource()) |result| {
                         copy = result;
-                        std.debug.print("Spawned resource: {s} at {}/{}.\n", .{ u.resourceTypeFromClass(result.class), result.x, result.y });
+                        // std.debug.print("Spawned resource: {s} at {}/{}.\n", .{ u.resourceTypeFromClass(result.class), result.x, result.y });
                     } else |err| {
                         std.debug.print("Failed to spawn resource {s}: {}.\n", .{ u.resourceTypeFromClass(self.class), err });
                     }
@@ -1881,13 +1862,11 @@ pub const Grid = struct {
         return error.NoPath;
     }
 
-    pub fn findWaypointPath(self: *Grid, start_point: u.Point, end_point: u.Point) !std.ArrayList(u.Point) {
+    pub fn findWaypointPath(self: *Grid, start_point: u.Point, end_point: u.Point, width: u16, height: u16) !std.ArrayList(u.Point) {
         const allocator = self.allocator.*;
-        // These should also be nodes
         const start_wp = u.Waypoint.closest(start_point.x, start_point.y);
         const end_wp = u.Waypoint.closest(end_point.x, end_point.y);
         var open_set = std.PriorityQueue(u.PriorityNode, u16, u.lessThan).init(allocator, 0);
-
         var g_score = std.AutoHashMap(u.Point, u16).init(allocator); // Cost of reaching node from start
         var f_score = std.AutoHashMap(u.Point, u16).init(allocator); // Cost of reaching end via node
         var came_from = std.AutoHashMap(u.Point, u.Point).init(allocator); // Previous node of node
@@ -1924,7 +1903,7 @@ pub const Grid = struct {
                 u.Point.at(current_wp.x, u.u16Sub(current_wp.y, u.Grid.cell_size)),
             };
             for (neighbors) |neighbor| {
-                if (self.blocked_subcells.contains(neighbor) and !neighbor.equals(end_wp)) continue;
+                if (neighbor.x < width or neighbor.y < height or neighbor.x > main.World.width - width or neighbor.y > main.World.height - height or (self.blocked_subcells.contains(neighbor) and !neighbor.equals(end_wp))) continue;
 
                 const tentative_g_score = u.u16Add((g_score.get(current_wp) orelse u.u16max), u.Grid.cell_size);
                 if (tentative_g_score < (g_score.get(neighbor) orelse u.u16max)) {

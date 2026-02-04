@@ -161,10 +161,11 @@ pub fn main() anyerror!void {
     //--------------------------------------------------------------------------------------
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var allocator = gpa.allocator();
-    defer {
-        const leaked = gpa.detectLeaks();
-        std.debug.print("Has memory leak: {any}", .{leaked});
-    }
+    // Catch memory leaks
+    // defer {
+    //     const leaked = gpa.detectLeaks();
+    //     std.debug.print("Has memory leak: {any}", .{leaked});
+    // }
 
     // Initialize window
     //--------------------------------------------------------------------------------------
@@ -200,7 +201,7 @@ pub fn main() anyerror!void {
     // Initialize map
     //--------------------------------------------------------------------------------------
     // This will be handled by a map selection process. For now, straight in.
-    const map = try Map.open(&allocator, 0); // Opens default map and initializes world
+    const map = try Map.open(&allocator, 1); // Opens default map and initializes world
     const cellsigns_cache = try allocator.alloc(u32, World.grid.cols * World.grid.rows);
     defer allocator.free(cellsigns_cache);
     defer World.grid.deinit(&allocator);
@@ -765,7 +766,7 @@ pub fn drawMap() void {
             const index = y * tw + x;
             const terrain_type = @as(m.TerrainType, @enumFromInt(terrain[index]));
             const color = terrain_type.color();
-            u.drawRect(@intCast(x * subcell), @intCast(y * subcell), subcell, subcell, color);
+            u.drawRect(@as(i32, @intCast(x * subcell)) - 4, @as(i32, @intCast(y * subcell)) - 4, subcell + 4, subcell + 4, color);
         }
     }
 
@@ -820,7 +821,7 @@ pub fn drawMap() void {
                     const end_wp = u.Waypoint.closest(tar.x, tar.y);
                     // If no selection data or selected unit's position/target updated, finds waypoint path and sets Player.selection data
                     if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or !Player.selection_nodes[0].?.equals(start_wp) or !Player.selection_nodes[1].?.equals(end_wp)) {
-                        const new_path = World.grid.findWaypointPath(start_wp, end_wp) catch |err| switch (err) {
+                        const new_path = World.grid.findWaypointPath(start_wp, end_wp, selected.width(), selected.height()) catch |err| switch (err) {
                             error.NoPath => null,
                             else => {
                                 std.debug.print("Error: {}.\n", .{err});
@@ -963,7 +964,7 @@ pub fn drawInterface() void {
                 }
             } else if (kind == e.Kind.Structure) {
                 switch (field) {
-                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(target.ref.Structure.class), u.kindToString(e.Kind.Structure) }) catch "Error",
+                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(target.ref.Structure.class), @tagName(e.Kind.Structure) }) catch "Error",
                     1 => text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{target.life()}) catch "Error",
                     2 => text = std.fmt.bufPrintZ(&buffer, "Capacity: {}/{}", .{ target.ref.Structure.capacity, e.Structure.preset(target.ref.Structure.class).capacity }) catch "Error",
                     3 => text = std.fmt.bufPrintZ(&buffer, "Materials: {}", .{target.ref.Structure.materials}) catch "Error",
@@ -971,7 +972,7 @@ pub fn drawInterface() void {
                 }
             } else if (kind == e.Kind.Resource) {
                 switch (field) {
-                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(target.ref.Resource.class), u.kindToString(e.Kind.Resource) }) catch "Error",
+                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(target.ref.Resource.class), @tagName(e.Kind.Resource) }) catch "Error",
                     1 => text = std.fmt.bufPrintZ(&buffer, "Remaining: {}", .{target.life()}) catch "Error",
                     2 => text = std.fmt.bufPrintZ(&buffer, "Yield: {d}", .{target.ref.Resource.yield / Config.TICKRATE}) catch "Error",
                     3 => text = std.fmt.bufPrintZ(&buffer, "Growth: {d}", .{target.ref.Resource.growth}) catch "Error",
@@ -1067,8 +1068,8 @@ pub const EnemyPlayerAI = struct {
             // Shuffles direction array
             u.shuffleArray(u8, &directions);
 
-            // Generate a "random" structure class value between 0 and 3
-            const class_value = if (tick % move_all < move_all / 3) 0 else u.asU8(u64, tick / 300 % 4);
+            // Generate a "random" structure class value between 0 and 3 (0 (farm) at 50%)
+            const class_value = if (tick % move_all < move_all / 2) 0 else u.asU8(u64, tick / 300 % 4);
             constructBuilding(ai, class_value, tick);
         }
     }

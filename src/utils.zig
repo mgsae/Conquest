@@ -355,8 +355,12 @@ pub fn mouseMoved(vector: rl.Vector2) bool {
 
 // World RNG
 //----------------------------------------------------------------------------------
-pub fn rngInit(seed: u64) void { // Initialized as map id + map width + map height
+pub fn rngInit(seed: u64) void { // Initialize as map id + map width + map height. Ensures map determinism.
     main.World.rng = std.Random.DefaultPrng.init(seed);
+}
+
+pub fn randomBool() bool { // Checks single bit from RNG output
+    return (main.World.rng.next() & 1) == 1;
 }
 
 pub fn randomU16(max: u16) u16 {
@@ -382,6 +386,19 @@ pub fn shuffleArray(comptime T: type, array: []T) void {
         const temp = array[i];
         array[i] = array[j];
         array[j] = temp;
+    }
+}
+
+pub fn randomGaussian(rand: *std.Random, comptime T: type) T {
+    while (true) {
+        const uni1 = rand.float(T) * 2.0 - 1.0; // Uniform in [-1, 1)
+        const uni2 = rand.float(T) * 2.0 - 1.0; // Uniform in [-1, 1)
+        const w = uni1 * uni1 + uni2 * uni2;
+        if (w >= 1.0 or w == 0.0) continue; // Reject if w is outside the unit circle
+        const multiplier = math.sqrt((-2.0 * math.ln(w)) / w);
+        // Returns the first value (u1 * multiplier).
+        // The second value (u2 * multiplier) is discarded here.
+        return uni1 * multiplier;
     }
 }
 
@@ -1687,32 +1704,23 @@ pub fn findConnectedStructures(grid: *e.Grid, origin: *e.Structure) !?[]*e.Struc
 
 // Game data
 //----------------------------------------------------------------------------------
-pub fn kindToString(kind: e.Kind) []const u8 {
-    return switch (kind) {
-        .Player => "Player",
-        .Unit => "Unit",
-        .Structure => "Structure",
-        .Resource => "Resource",
-    };
-}
-
 pub fn unitTypeFromClass(class: u8) []const u8 {
     return switch (class) {
-        0 => "Peasant",
-        1 => "Soldier",
-        2 => "Trebuchet",
-        3 => "Cavalry",
-        else => "Huh..? Unknown unit?",
+        0 => "Unit A", // "Peasant",
+        1 => "Unit B", // "Soldier",
+        2 => "Unit C", // "Trebuchet",
+        3 => "Unit D", // "Cavalry",
+        else => "Unknown unit type",
     };
 }
 
 pub fn structureTypeFromClass(class: u8) []const u8 {
     return switch (class) {
-        0 => "Farm",
-        1 => "Home",
-        2 => "Yard",
-        3 => "Keep",
-        else => "Huh..? Unknown building?",
+        0 => "Structure A", // "Farm",
+        1 => "Structure B", // "Home",
+        2 => "Structure C", // "Yard",
+        3 => "Structure D", // "Keep",
+        else => "Unknown structure type",
     };
 }
 
@@ -1722,7 +1730,7 @@ pub fn resourceTypeFromClass(class: u8) []const u8 {
         1 => "Wood",
         2 => "Iron",
         3 => "Grail",
-        else => "Huh..? Unknown resource?",
+        else => "Unknown resource type",
     };
 }
 
