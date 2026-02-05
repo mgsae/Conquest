@@ -947,13 +947,14 @@ pub fn drawInterface() void {
                     else => {},
                 }
             } else if (kind == e.Kind.Unit) {
-                const unit = ref.Unit;
+                //const unit = ref.Unit;
+                const class: u8 = 0; // placeholder
                 switch (field) {
-                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(ref.Unit.class), @tagName(ref.Unit.state) }) catch "Error",
+                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(class), @tagName(ref.Unit.state) }) catch "Error",
                     1 => text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{target.life()}) catch "Error",
                     2 => // Checks for carried resources
                     {
-                        if (unit.class == 0) { // Gatherer
+                        if (class == 0) { // Gatherer
                             const carry = ref.Unit.resources;
                             text = std.fmt.bufPrintZ(&buffer, "{s}: {d}, {s}: {d}, {s}: {d}, {s}: {d}", .{ u.resourceTypeFromClass(0), carry[0], u.resourceTypeFromClass(1), carry[1], u.resourceTypeFromClass(2), carry[2], u.resourceTypeFromClass(3), carry[3] }) catch "Error";
                         } else { // Non-gatherer
@@ -993,7 +994,7 @@ pub fn drawInterface() void {
                 e.Kind.Player => "Player",
                 e.Kind.Resource => u.resourceTypeFromClass(selected.?.ref.Resource.class),
                 e.Kind.Structure => u.structureTypeFromClass(selected.?.ref.Structure.class),
-                e.Kind.Unit => u.unitTypeFromClass(selected.?.ref.Unit.class),
+                e.Kind.Unit => u.unitTypeFromClass(0),
             };
             text = std.fmt.bufPrintZ(&buffer, "{s}", .{label}) catch "Error";
             rl.drawText(text, x, y, fsize, rl.Color.black);

@@ -395,7 +395,7 @@ pub fn randomGaussian(rand: *std.Random, comptime T: type) T {
         const uni2 = rand.float(T) * 2.0 - 1.0; // Uniform in [-1, 1)
         const w = uni1 * uni1 + uni2 * uni2;
         if (w >= 1.0 or w == 0.0) continue; // Reject if w is outside the unit circle
-        const multiplier = math.sqrt((-2.0 * math.ln(w)) / w);
+        const multiplier = math.sqrt((-2.0 * math.log(T, math.e, w)) / w);
         // Returns the first value (u1 * multiplier).
         // The second value (u2 * multiplier) is discarded here.
         return uni1 * multiplier;

@@ -387,18 +387,17 @@ pub const Player = struct {
 
 // Unit
 //----------------------------------------------------------------------------------
+
 pub const Unit = struct {
     entity: *Entity,
 
     genome: Genome,
-    class: u8 = 0, // PLACEHOLDER, REMOVE
-
     owner: u8,
     x: u16,
     y: u16,
     life: i16,
 
-    // Derived phenotype
+    // Phenotype - derived from genome
     width: u16,
     height: u16,
     speed: f16,
@@ -406,14 +405,19 @@ pub const Unit = struct {
     reach: f32,
     tempo: i16,
 
+    // Behavioral state
     target: u.Circle,
     intermediary_target: u.Circle,
     last_step: u.Point,
     stored_extrema: [2]?u.Point,
-    cached_cellsigns: [9]u32, // Last known cellsigns of relevant cells
+    cached_cellsigns: [9]u32,
     model: *u.Model,
     state: State,
+
+    // Resources and reproduction
     resources: [4]u16,
+    energy: u16, // Energy for mating (gained from food)
+    mate_target: ?*Unit, // Current mate if in mating process
     projectiles: *std.ArrayList(*Projectile),
 
     elapsed: i16 = 0,
@@ -424,90 +428,255 @@ pub const Unit = struct {
         Default,
         Attacking,
         Incapacitated,
+        Gathering,
         Carrying,
+        Seeking, // Looking for resources/mates
+        Mating,
         Dead,
     };
 
     pub fn draw(self: *Unit, alpha: f32) void {
         if (self.state == State.Dead) return;
-        // Draws model (adjust with state etc.)
+
         u.drawModel(self.model, self.width, self.height, self.entity.color(alpha), self.entity.color(alpha));
-        // If selected by player, draws target circumference with half alpha
+
         if (self.selected) {
             u.drawCircumference(self.target, self.entity.color(alpha / 2));
         }
 
         u.drawLifeInterpolated(self.x, self.y, self.width, self.life, self.health, self.last_step, self.elapsed);
 
-        // Draws projectiles with same alpha
         for (self.projectiles.items) |projectile| {
             projectile.draw(alpha);
         }
     }
 
     pub fn update(self: *Unit) !void {
-        if (main.moveDivMultiple(self.elapsed, 6)) self.life -= 1; // Ticks 1 life per 60 ticks
-        if (self.life <= 0) { // If dead, sets HP to min to flag for removal, and skips update
+        // Life depletion
+        if (main.moveDivMultiple(self.elapsed, 6)) {
+            self.life -= 1;
+
+            // Consume energy if low on life and has food
+            if (self.life < @divTrunc(self.health, 2) and self.resources[0] > 0) {
+                self.resources[0] -= 1;
+                self.life = @min(self.health, self.life + 20);
+            }
+        }
+
+        if (self.life <= 0) {
             try self.die(null);
             return;
         }
 
-        // Updating movement/action (every 10 ticks)
+        // Update every 10 ticks
         if (main.moveDivision(self.elapsed)) {
-            self.last_step = u.Point.at(self.x, self.y); // Sets last_step to current position
+            self.last_step = u.Point.at(self.x, self.y);
 
-            // Every attackrate * 10 ticks (unless carrying)
-            if (main.moveDivMultiple(self.elapsed, self.tempo) and self.state != State.Carrying) {
-                if (self.state == State.Attacking) self.state = State.Default; // Clears attacking state
-                if (self.getAttackTarget()) |target| {
-                    if (try self.attack(target)) { // Successfully launched projectile
-                        self.state = State.Attacking; // Sets attacking state, pausing movement
-                        self.experience += 1;
-                    }
-                }
+            // Execute actions at tempo rate
+            if (main.moveDivMultiple(self.elapsed, self.tempo)) {
+                try self.executeAction();
             }
 
-            if (self.state != State.Attacking) { // When not attacking, moves
-                const step = self.getStep(); // Generates the next movement step
-                try self.move(step.x, step.y); // Tries to execute the step, may fail/adjust due to collision
+            // Movement (unless incapacitated, attacking, gathering, or mating)
+            if (self.state != State.Attacking and
+                self.state != State.Gathering and
+                self.state != State.Mating and
+                self.state != State.Incapacitated)
+            {
+                const step = self.getStep();
+                try self.move(step.x, step.y);
             }
-            if (self.state == State.Incapacitated) self.state = State.Default; // If incapacitated, resets state
+
+            // Reset incapacitated state
+            if (self.state == State.Incapacitated) {
+                self.state = State.Default;
+            }
         }
 
-        // Updating model
+        // Update model interpolation
         const factor = u.Interpolation.getFactor(self.elapsed, main.World.MOVEMENT_DIVISIONS);
         self.model.updateRigidBodyInterpolated(0, u.Vector.fromPoint(self.last_step), u.Vector.fromCoords(self.x, self.y), factor);
 
-        // Updating projectiles, from last to first, after all other logic
+        // Update projectiles
         var i: usize = self.projectiles.items.len;
         while (i > 0) {
             i -= 1;
             const projectile = self.projectiles.items[i];
-            if (projectile.life <= 0) { // Clears up dead projectiles
+            if (projectile.life <= 0) {
                 if (projectile.targets) |targets| {
-                    targets.deinit(); // Free the list memory
-                    main.World.grid.allocator.destroy(targets); // Free the list itself
+                    targets.deinit();
+                    main.World.grid.allocator.destroy(targets);
                 }
                 _ = self.projectiles.swapRemove(i);
                 main.World.grid.allocator.destroy(projectile);
                 continue;
             }
-            projectile.update(); // Updates the projectile
+            projectile.update();
         }
 
-        // If incapacitated, resets last_step every frame to keep interpolation updated
-        if (self.state == State.Incapacitated) self.last_step = u.Point.at(self.x, self.y);
+        if (self.state == State.Incapacitated) {
+            self.last_step = u.Point.at(self.x, self.y);
+        }
+
         self.elapsed += 1;
     }
 
-    /// Searches for collision at new_x,new_y. If no obstacle is found, sets position to x, y. If obstacle is found, tries moving along edge.
+    /// Execute the appropriate action based on current state and nearby entities
+    fn executeAction(self: *Unit) !void {
+        // Priority 1: Combat if threatened
+        if (self.getAttackTarget()) |target| {
+            if (try self.attack(target)) {
+                self.state = State.Attacking;
+                self.experience += 1;
+                return;
+            }
+        }
+
+        // Clear attacking state if not attacking
+        if (self.state == State.Attacking) {
+            self.state = State.Default;
+        }
+
+        // Priority 2: Deliver resources if carrying
+        if (self.state == State.Carrying) {
+            if (self.deliverResources()) {
+                self.state = State.Default;
+                return;
+            }
+        }
+
+        // Priority 3: Gather resources if nearby and not carrying much
+        if (self.state != State.Carrying) {
+            if (self.getResourceTarget()) |target| {
+                if (self.gather(target)) {
+                    self.state = State.Gathering;
+                    self.experience += 1;
+
+                    // Convert to carrying state if gathered enough
+                    if (self.resources[0] + self.resources[1] >= 5) {
+                        self.state = State.Carrying;
+                    }
+                    return;
+                }
+            }
+        }
+
+        // Priority 4: Seek mate if energy is high enough
+        if (self.energy >= 100 and self.state != State.Mating) {
+            if (self.findPotentialMate()) |mate| {
+                self.mate_target = mate;
+                self.state = State.Seeking;
+                self.target = u.Circle.aroundEntity(mate.entity, self.reachU16());
+            }
+        }
+
+        // Clear gathering state if idle
+        if (self.state == State.Gathering) {
+            self.state = State.Default;
+        }
+    }
+
+    /// Try to deliver resources to own structure
+    fn deliverResources(self: *Unit) bool {
+        if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |building| {
+            if (self.entity.isTouching(building, self.reachU16())) {
+                // Transfer resources
+                building.ref.Structure.capacity = @min(Structure.preset(building.ref.Structure.class).capacity, building.ref.Structure.capacity + self.resources[0]);
+                building.ref.Structure.materials += self.resources[1];
+
+                // Gain energy from delivered food
+                self.energy += self.resources[0];
+
+                self.resources[0] = 0;
+                self.resources[1] = 0;
+                return true;
+            } else {
+                // Not at building yet, set as target
+                self.target = u.Circle.aroundEntity(building, self.reachU16());
+            }
+        }
+        return false;
+    }
+
+    /// Find a potential mate (opposite sex, same owner, sufficient energy)
+    fn findPotentialMate(self: *Unit) ?*Unit {
+        const search_radius = 3; // Search 3 cells around
+        const my_cell_x = u.Grid.x(self.x);
+        const my_cell_y = u.Grid.y(self.y);
+
+        var dy: i32 = -search_radius;
+        while (dy <= search_radius) : (dy += 1) {
+            var dx: i32 = -search_radius;
+            while (dx <= search_radius) : (dx += 1) {
+                const cell_x = @as(i32, @intCast(my_cell_x)) + dx;
+                const cell_y = @as(i32, @intCast(my_cell_y)) + dy;
+
+                if (cell_x < 0 or cell_y < 0) continue;
+
+                const entities = main.World.grid.sectionEntities(@intCast(cell_x), @intCast(cell_y));
+                if (entities == null) continue;
+
+                for (entities.?.items) |entity| {
+                    if (entity.kind != Kind.Unit) continue;
+                    const other = entity.ref.Unit;
+
+                    // Check if valid mate
+                    if (other != self and
+                        other.owner == self.owner and
+                        other.genome.sex != self.genome.sex and
+                        other.energy >= 100 and
+                        other.state != State.Mating and
+                        other.state != State.Dead)
+                    {
+                        return other;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Attempt mating if conditions are met
+    fn tryMate(self: *Unit) !bool {
+        if (self.mate_target) |mate| {
+            // Check if still valid and in range
+            if (mate.state == State.Dead or mate.energy < 100) {
+                self.mate_target = null;
+                self.state = State.Default;
+                return false;
+            }
+
+            if (self.entity.isTouching(mate.entity, self.reachU16())) {
+                // Both units consume energy and create offspring
+                self.energy -= 100;
+                mate.energy -= 100;
+
+                self.state = State.Mating;
+                mate.state = State.Mating;
+
+                // Create offspring with combined genome
+                const offspring_genome = try self.genome.reproduce(&mate.genome, main.World.grid.allocator);
+                const midpoint_x = @divTrunc(self.x + mate.x, 2);
+                const midpoint_y = @divTrunc(self.y + mate.y, 2);
+
+                _ = try Unit.createFromGenome(self.owner, midpoint_x, midpoint_y, offspring_genome);
+
+                self.mate_target = null;
+                mate.mate_target = null;
+
+                return true;
+            }
+        }
+        return false;
+    }
+
     fn move(self: *Unit, new_x: u16, new_y: u16) !void {
         const old_x = self.x;
         const old_y = self.y;
 
         if (self.state == State.Incapacitated) return;
 
-        // If step is out of bounds, clamps to map if needed, and retargets
+        // Bounds check
         if (!u.isInMap(new_x, new_y, self.width, self.height)) {
             if (!u.isInMap(old_x, old_y, self.width, self.height)) {
                 const clamped_x = u.mapClampX(@as(i16, @intCast(new_x)), self.width);
@@ -518,42 +687,39 @@ pub const Unit = struct {
             return;
         }
 
-        if (!self.tryMove(new_x, new_y, old_x, old_y)) { // Tries executing regular move
-            _ = self.moveAlongAxis(new_x, new_y, old_x, old_y); // If collided, tries moving along either axis
+        if (!self.tryMove(new_x, new_y, old_x, old_y)) {
+            _ = self.moveAlongAxis(new_x, new_y, old_x, old_y);
         }
 
-        if (old_x == self.x and old_y == self.y) { // If no change after moving, retargets
-            if (main.moveDivMultiple(self.elapsed, 2)) { // Alternating between random point and player-retargeting
-                self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size); // Random nearby offset
-            } else if (self.class != 0) { // Non-gatherers try heading towards player again
-                self.target = findTarget(self.owner, self.last_step, self.entity.reach());
-            } else { // Gatherers
+        // If stuck, retarget
+        if (old_x == self.x and old_y == self.y) {
+            if (main.moveDivMultiple(self.elapsed, 2)) {
+                self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
+            } else {
+                // Behavior based on state
                 if (self.state == State.Carrying) {
                     if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |b| {
-                        self.target = u.Circle.aroundEntity(b, self.entity.reach());
+                        self.target = u.Circle.aroundEntity(b, self.reachU16());
                     } else {
                         self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
                     }
+                } else if (self.state == State.Seeking and self.mate_target != null) {
+                    self.target = u.Circle.aroundEntity(self.mate_target.?.entity, self.reachU16());
                 } else {
-                    const resource = getResourceTarget(self);
-                    if (resource) |r| {
-                        // std.debug.print("Gatherer idling retargets: found resource target!", .{});
-                        self.target = u.Circle.aroundEntity(r, self.entity.reach());
-                    } else { // Random nearby offset
-                        // std.debug.print("Gatherer idling retargets: did NOT find resource target.", .{});
+                    // Look for resources or wander
+                    if (self.findNearestResource()) |r| {
+                        self.target = u.Circle.aroundEntity(r, self.reachU16());
+                    } else {
                         self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
                     }
                 }
             }
-            return;
         }
     }
 
-    /// Searches for collision at new_x,new_y. If unhindered, executes the movement, updates the grid, and returns true. If hindered, returns false.
     fn tryMove(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) bool {
-        //std.debug.print("Entities list retrieved: length = {any}, address = {}\n", .{ entities.?.items.len, @intFromPtr(entities) });
         const collision = self.checkCollision(new_x, new_y);
-        if (collision == null) { // No obstacle, move
+        if (collision == null) {
             self.x = new_x;
             self.y = new_y;
             main.World.grid.updateCellMembership(self.entity, old_x, old_y);
@@ -562,99 +728,83 @@ pub const Unit = struct {
         return false;
     }
 
-    /// Compares new_x,new_y and old_x,old_y to find largest difference. Tries tryMove() along either dimension, prioritizing the dominant axis.
-    /// Executes move if collision check passes, returning true.
     fn moveAlongAxis(self: *Unit, new_x: u16, new_y: u16, old_x: u16, old_y: u16) bool {
         const diffX: i32 = @as(i32, @intCast(new_x)) - @as(i32, @intCast(old_x));
         const diffY: i32 = @as(i32, @intCast(new_y)) - @as(i32, @intCast(old_y));
 
-        if (@abs(diffX) > @abs(diffY)) { // Horizontal axis dominant
+        if (@abs(diffX) > @abs(diffY)) {
             if (!self.tryMove(new_x, old_y, old_x, old_y)) {
                 return self.tryMove(old_x, new_y, old_x, old_y);
             }
-        } else { // Vertical axis dominant
+        } else {
             if (!self.tryMove(old_x, new_y, old_x, old_y)) {
                 return self.tryMove(new_x, old_y, old_x, old_y);
             }
         }
-        return true; // Moved along dominant axis
+        return true;
     }
 
-    /// Iterates through entities from current cell's index of `Grid.sections`. Checks for AABB collisions. Returns the first colliding `*Entity`, otherwise null.
     fn checkCollision(self: *Unit, x: u16, y: u16) ?*Entity {
         const entities = main.World.grid.sectionEntities(u.Grid.x(x), u.Grid.y(y));
-        if (entities != null) {
-            const half_width = @divTrunc(self.width, 2);
-            const half_height = @divTrunc(self.height, 2);
-            const left = @max(half_width, x) - half_width;
-            const right = x + half_width;
-            const top = @max(half_height, y) - half_height;
-            const bottom = y + half_height;
+        if (entities == null) return null;
 
-            for (entities.?.items) |entity| {
-                if (entity == self.entity) {
-                    continue;
-                }
+        const half_width = @divTrunc(self.width, 2);
+        const half_height = @divTrunc(self.height, 2);
+        const left = @max(half_width, x) - half_width;
+        const right = x + half_width;
+        const top = @max(half_height, y) - half_height;
+        const bottom = y + half_height;
 
-                const entity_x = entity.x();
-                const entity_y = entity.y();
-                const entity_half_width = @divTrunc(entity.width(), 2);
-                const entity_half_height = @divTrunc(entity.height(), 2);
+        for (entities.?.items) |entity| {
+            if (entity == self.entity) continue;
 
-                const entity_left = @max(entity_half_width, entity_x) - entity_half_width;
-                const entity_right = entity_x + entity_half_width;
-                const entity_top = @max(entity_half_height, entity_y) - entity_half_height;
-                const entity_bottom = entity_y + entity_half_height;
+            const entity_x = entity.x();
+            const entity_y = entity.y();
+            const entity_half_width = @divTrunc(entity.width(), 2);
+            const entity_half_height = @divTrunc(entity.height(), 2);
 
-                if ((left < entity_right) and (right > entity_left) and
-                    (top < entity_bottom) and (bottom > entity_top))
-                {
-                    //std.debug.print("Colliding with entity {}.\n", .{i});
-                    return entity; // Return the first colliding entity
-                }
+            const entity_left = @max(entity_half_width, entity_x) - entity_half_width;
+            const entity_right = entity_x + entity_half_width;
+            const entity_top = @max(entity_half_height, entity_y) - entity_half_height;
+            const entity_bottom = entity_y + entity_half_height;
+
+            if ((left < entity_right) and (right > entity_left) and
+                (top < entity_bottom) and (bottom > entity_top))
+            {
+                return entity;
             }
         }
         return null;
     }
 
-    /// Unit is an obstacle pushed by another entity. Searches for collision. If no new obstacle is found, unit moves `distance`.
-    /// If new obstacle is another unit, pushes it a size-factored distance, then moves the same distance. Returns the effective distance moved.
     pub fn pushed(self: *Unit, angle: f32, distance: f32) f32 {
         const old_x = self.x;
         const old_y = self.y;
         const new_x: u16, const new_y: u16 = calculatePushPosition(self, angle, distance);
-        self.state = State.Incapacitated; // Incapacitated while pushed
-        //std.debug.print("Pushed towards angle {}.\n", .{angle});
+        self.state = State.Incapacitated;
+
         if (!u.isInMap(new_x, new_y, self.width, self.height)) return distance;
         var moved_distance: f32 = distance;
 
-        // Checking whether pushed unit in turn collides with another obstacle
         const obstacle = main.World.grid.collidesWith(new_x, new_y, self.width, self.height, self.entity) catch null;
         if (obstacle == null) {
             self.x = new_x;
             self.y = new_y;
             main.World.grid.updateCellMembership(self.entity, old_x, old_y);
-        } else if (obstacle.?.kind == Kind.Unit) { // Pushed unit collides with another unit
+        } else if (obstacle.?.kind == Kind.Unit) {
             const obstacle_unit = obstacle.?.ref.Unit;
-            //std.debug.print("Pushee collided with a unit: {}\n", .{obstacle_unit});
-
-            // Checks that obstacle_unit isn't already being pushed
             if (obstacle_unit.state != State.Incapacitated) {
-                moved_distance = moved_distance / 2; // Halves pushing distance for each additional obstacle
+                moved_distance = moved_distance / 2;
             } else {
                 moved_distance = pushed(obstacle_unit, angle, @min(distance, distance * u.sizeFactor(self.width, self.height, obstacle_unit.width, obstacle_unit.height)));
                 const push_delta_xy = u.vectorToDelta(angle, moved_distance);
                 const push_new_x = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.x)) + push_delta_xy[0]));
                 const push_new_y = @as(u16, @intFromFloat(@as(f32, @floatFromInt(self.y)) + push_delta_xy[1]));
-
-                self.move(push_new_x, push_new_y) catch return 0; // Re-checks for collision and updates grid here
+                self.move(push_new_x, push_new_y) catch return 0;
             }
-        } else {
-            //std.debug.print("Pushee collided with a non-unit: {}\n", .{obstacle.?});
         }
 
-        // Reset dimensions to flag pushability here, may want to reset State.Incapacitated here now?
-        return moved_distance; // Returns effective moved distance
+        return moved_distance;
     }
 
     fn calculatePushPosition(self: *Unit, angle: f32, distance: f32) [2]u16 {
@@ -668,116 +818,91 @@ pub const Unit = struct {
         return [2]u16{ new_x, new_y };
     }
 
-    /// Sets unit's target destination to closest target to the previous. Returns `true` if target has changed, returns `false` if target remains the same.
     pub fn retarget(self: *Unit) bool {
         const prev_target = self.target;
 
-        self.target = findTarget(self.owner, self.target.center, self.entity.reach()); // Closest enemy player to its target, or random nearby point
+        // Retarget based on state
+        if (self.state == State.Carrying) {
+            if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |b| {
+                self.target = u.Circle.aroundEntity(b, self.reachU16());
+            } else {
+                self.target = u.Circle.at(offsetFromPosition(u.Point.at(self.x, self.y)), u.Subcell.size);
+            }
+        } else if (self.state == State.Seeking and self.mate_target != null) {
+            self.target = u.Circle.aroundEntity(self.mate_target.?.entity, self.reachU16());
+        } else if (self.findNearestResource()) |r| {
+            self.target = u.Circle.aroundEntity(r, self.reachU16());
+        } else {
+            self.target = u.Circle.at(offsetFromPosition(u.Point.at(self.x, self.y)), u.Subcell.size);
+        }
+
         return prev_target.center.x != self.target.center.x or prev_target.center.y != self.target.center.y;
     }
 
-    /// Returns the position of the closest enemy player. Returns random nearby point if none.
-    pub fn findTarget(owner: u8, position: u.Point, reach: u16) u.Circle {
-        var closest_player: ?*Player = null;
-        var closest_distance: f32 = std.math.inf(f32);
-
-        for (players.items) |player| {
-            if (player.id == owner) continue;
-            const distance = u.fastSqrt(u.asF32(u32, u.distanceSquared(position, u.Point.at(player.x, player.y))));
-            if (closest_player == null or distance < closest_distance) {
-                closest_player = player;
-                closest_distance = distance;
-            }
-        }
-
-        if (closest_player != null) return u.Circle.aroundEntity(closest_player.?.entity, reach);
-        return u.Circle.at(offsetFromPosition(position), u.Subcell.size); // Returns random nearby circle
+    fn findNearestResource(self: *Unit) ?*Entity {
+        return u.concentricSearch(&main.World.grid, u.Point.at(self.x, self.y), Entity.isAvailableResource);
     }
 
-    /// Returns the position of the closest non-depleted `Resource`. Returns random nearby point if none.
-    pub fn findResource(position: u.Point, reach: u16) u.Circle {
-        var closest_resource: ?*Resource = null;
-        var closest_distance: f32 = std.math.inf(f32);
-
-        for (resources.items) |resource| {
-            if (resource.state == Resource.State.Depleted) continue;
-            const distance = u.fastSqrt(u.asF32(u32, u.distanceSquared(position, u.Point.at(resource.x, resource.y))));
-            if (closest_resource == null or distance < closest_distance) {
-                closest_resource = resource;
-                closest_distance = distance;
-            }
-        }
-
-        if (closest_resource != null) return u.Circle.aroundEntity(closest_resource.?.entity, reach);
-        return u.Circle.at(offsetFromPosition(position), u.Subcell.size); // Returns random nearby circle
-
-    }
-
-    /// Returns a world-randomized `Point` within half a cell's distance from `position`.
     fn offsetFromPosition(position: u.Point) u.Point {
         const x: i16 = @as(i16, @intCast(position.x)) + (u.randomI16(u.Grid.cell_half) - u.Grid.cell_half / 2);
         const y: i16 = @as(i16, @intCast(position.y)) + (u.randomI16(u.Grid.cell_half) - u.Grid.cell_half / 2);
         return u.Point.at(u.mapClampX(x, u.Grid.cell_half), u.mapClampY(y, u.Grid.cell_half));
     }
 
-    /// Calculates and returns the unit's immediate move based on its current `target` and `class`.
     fn getStep(self: *Unit) u.Point {
         const current = u.Point.at(self.x, self.y);
         if (self.state == State.Incapacitated) {
-            return current; // If incapacitated, remain in place for tick
+            return current;
         }
+
+        // Check if attempting to mate
+        if (self.state == State.Seeking and self.mate_target != null) {
+            if (self.entity.isTouching(self.mate_target.?.entity, self.reachU16())) {
+                _ = self.tryMate() catch false;
+                return current;
+            }
+        }
+
         const distance_squared = u.distanceSquared(current, self.target.center);
 
-        // Check if within a cell's distance of target
+        // Within target cell
         if (distance_squared <= u.Grid.cell_size_squared) {
-            // std.debug.print("Within target cell at {},{}. Target is at {},{}.\n", .{ self.x, self.y, self.target.x, self.target.y });
-
-            // If within perimeter of the target point, retarget
-            if (self.target.contains(u.Point.at(self.x, self.y))) {
-                if (self.class != 0) return current; // Non-gatherers, pause to trigger retarget
-
-                // Gatherers, check whether pick up or deliver
-                if (self.state != State.Carrying) { // Gatherers not carrying
-                    const resource = getResourceTarget(self); // = u.concentricSearch(&main.World.grid, self.last_step, Entity.isAvailableResource);
-                    if (resource) |r| {
-                        if (self.entity.isTouching(r, self.entity.reach())) { // Is at resource, drain it and set carry state
-                            r.ref.Resource.capacity = u.u16Sub(r.ref.Resource.capacity, 1);
-                            self.state = State.Carrying;
-                            self.resources[r.ref.Resource.class] += 1; // Increments resource-class carried
-                        } else { // Not at resource, sets to target
-                            //std.debug.print("Is not touching resource, will set it to target.\n", .{});
-                            self.target = u.Circle.at(u.Point.closestContact(self.entity, r), u.Subcell.size);
-                        }
-                    } else { // Found no resource, so targets random nearby position
-                        // std.debug.print("FOUND NO RESOURCE\n", .{});
-                        self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
-                    }
-                } else { // Gatherers already carrying
-                    //std.debug.print("Am carrying, will check for own building nearby.\n", .{});
-                    const own_building = u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure);
-                    if (own_building) |b| {
-                        if (self.entity.isTouching(b, self.entity.reach())) { // Is at building, adds carried food/wood to its capacity/materials
-                            b.ref.Structure.capacity = @min(Structure.preset(b.ref.Structure.class).capacity, b.ref.Structure.capacity + self.resources[0]);
-                            b.ref.Structure.materials = b.ref.Structure.materials + self.resources[1];
-                            self.resources[0] = 0; // Removes carried food
-                            self.resources[1] = 0; // Removes carried wood
-                            self.state = State.Default;
+            if (self.target.contains(current)) {
+                // Reached target, decide next action
+                if (self.state == State.Carrying) {
+                    if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |b| {
+                        if (self.entity.isTouching(b, self.reachU16())) {
+                            // Will deliver in executeAction
+                            return current;
                         } else {
-                            //std.debug.print("Is not touching building, will set it to target.\n", .{});
-                            self.target = u.Circle.aroundEntity(b, self.entity.reach()); // Not at building, sets to target
+                            self.target = u.Circle.aroundEntity(b, self.reachU16());
                         }
-                    } else { // Found no own building, so targets random nearby position
-                        std.debug.print("FOUND NO OWN BUILDING\n", .{});
-                        self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
+                    } else {
+                        self.target = u.Circle.at(offsetFromPosition(current), u.Subcell.size);
+                    }
+                } else {
+                    // Look for new resource or wander
+                    if (self.getResourceTarget()) |r| {
+                        if (self.entity.isTouching(r, self.reachU16())) {
+                            return current; // Will gather in executeAction
+                        } else {
+                            self.target = u.Circle.at(u.Point.closestContact(self.entity, r), @as(u16, @intFromFloat(self.reach / 2)));
+                        }
+                    } else {
+                        self.target = u.Circle.at(offsetFromPosition(current), u.Subcell.size);
                     }
                 }
             }
-            // Within a cell away, A* by nodes
+
+            // A* pathfinding within cell
             const cur_node = u.Subcell.closestNodePoint(current.x, current.y);
             const tar_node = u.Subcell.closestNodePoint(self.target.center.x, self.target.center.y);
             const distance_to_center = u.asF16(u16, u.manhattanDistance(current, self.intermediary_target.center)) - u.asF16(u16, (self.width + self.height) / 2);
-            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or !self.stored_extrema[1].?.equals(tar_node) or self.target.contains(current) or distance_to_center <= self.speed) {
-                //std.debug.print("recalculating node path, unit at {}/{}.\n", .{ self.x, self.y });
+
+            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or
+                !self.stored_extrema[1].?.equals(tar_node) or self.target.contains(current) or
+                distance_to_center <= self.speed)
+            {
                 const new_path = main.World.grid.findNodePath(cur_node, self.target) catch |err| switch (err) {
                     error.NoPath => null,
                     else => {
@@ -787,9 +912,7 @@ pub const Unit = struct {
                 };
                 if (new_path) |path| {
                     defer path.deinit();
-                    if (self.target.contains(path.items[0]) and self.class != 0) {
-                        return current; // Trigger retarget
-                    } else if (path.items.len > 1 and self.intermediary_target.contains(path.items[0])) {
+                    if (path.items.len > 1 and self.intermediary_target.contains(path.items[0])) {
                         self.intermediary_target = u.Circle.at(path.items[1], u.Subcell.size);
                     } else {
                         self.intermediary_target = u.Circle.at(path.items[0], u.Subcell.size);
@@ -798,11 +921,15 @@ pub const Unit = struct {
             }
             self.stored_extrema[0] = cur_node;
             self.stored_extrema[1] = tar_node;
-        } else { // Farther than a cell away, move by waypoints towards the target
-            const cur_wp = u.Waypoint.cellClosestTo(u.Point.at(self.x, self.y), self.target.center);
+        } else {
+            // Waypoint pathfinding for distant targets
+            const cur_wp = u.Waypoint.cellClosestTo(current, self.target.center);
             const tar_wp = u.Waypoint.closest(self.target.center.x, self.target.center.y);
-            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.stored_extrema[0].?.x != cur_wp.x or self.stored_extrema[0].?.y != cur_wp.y or self.stored_extrema[1].?.x != tar_wp.x or self.stored_extrema[1].?.y != tar_wp.y) {
-                //std.debug.print("recalculating waypoint path, unit at {}/{}.\n", .{ self.x, self.y });
+
+            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or
+                self.stored_extrema[0].?.x != cur_wp.x or self.stored_extrema[0].?.y != cur_wp.y or
+                self.stored_extrema[1].?.x != tar_wp.x or self.stored_extrema[1].?.y != tar_wp.y)
+            {
                 const new_path = main.World.grid.findWaypointPath(cur_wp, tar_wp, self.width, self.height) catch |err| switch (err) {
                     error.NoPath => null,
                     else => {
@@ -817,13 +944,11 @@ pub const Unit = struct {
             }
             self.stored_extrema[0] = cur_wp;
             self.stored_extrema[1] = tar_wp;
-
-            //intermediary_target = u.Waypoint.closestTowards(current, self.target.center, distance_squared, self.last_step);
         }
+
         return self.stepTowardsTarget(current, self.intermediary_target.center);
     }
 
-    /// Returns a point offset by self's `speed` towards `target` from self's `current` position.
     fn stepTowardsTarget(self: *Unit, current: u.Point, target: u.Point) u.Point {
         const magnitude = u.adjustToDistance(current, target, self.speed, self.speed);
         const dx = @as(i32, @intCast(current.x)) - @as(i32, @intCast(target.x));
@@ -833,13 +958,15 @@ pub const Unit = struct {
         const vector = u.vectorToDelta(angle, magnitude);
         var next_point = u.deltaPoint(self.x, self.y, vector[0], vector[1]);
 
-        // Checks point at 3 steps ahead for collision
+        // Lookahead collision avoidance
         const lookahead_vector = u.vectorToDelta(angle, magnitude * 3);
         const lookahead_point = u.deltaPoint(self.x, self.y, lookahead_vector[0], lookahead_vector[1]);
-        // If lookahead point is outside of target circle, and is a collision, offsets the step
+
         if (!self.target.contains(lookahead_point)) {
             const obstacle = self.checkCollision(lookahead_point.x, lookahead_point.y);
-            if (obstacle != null) next_point = self.lookaheadDisplacement(angle, obstacle.?);
+            if (obstacle != null) {
+                next_point = self.lookaheadDisplacement(angle, obstacle.?);
+            }
         }
 
         return next_point;
@@ -847,38 +974,39 @@ pub const Unit = struct {
 
     fn lookaheadDisplacement(self: *Unit, base_angle: f32, collider: *Entity) u.Point {
         const obstacle = u.Point.atEntity(collider);
-        // Vector from unit to obstacle center
         const obs_dx = @as(i32, @intCast(obstacle.x)) - @as(i32, @intCast(self.x));
         const obs_dy = @as(i32, @intCast(obstacle.y)) - @as(i32, @intCast(self.y));
         const angle_to_obstacle = u.deltaToAngle(obs_dx, obs_dy);
-        // Vector from unit to target
+
         const targ_dx = @as(i32, @intCast(self.target.center.x)) - @as(i32, @intCast(self.x));
         const targ_dy = @as(i32, @intCast(self.target.center.y)) - @as(i32, @intCast(self.y));
         const angle_to_target = u.deltaToAngle(targ_dx, targ_dy);
-        // Determine which side of the obstacle is closer to the target
+
         const angle_diff = angle_to_target - angle_to_obstacle;
-        const deviation_angle: f32 = if (angle_diff > 0) 45.0 else -45.0; // Positive = clockwise, negative = counterclockwise
+        const deviation_angle: f32 = if (angle_diff > 0) 45.0 else -45.0;
         const new_angle = base_angle + deviation_angle;
         const vector = u.vectorToDelta(new_angle, self.speed);
         return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
     }
 
-    /// Does a concentric search for an enemy.
     fn getAttackTarget(self: *Unit) ?*Entity {
         const found_entity = u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isEnemy);
-        if (found_entity != null and self.entity.inRangeOf(found_entity.?, self.reach)) return found_entity;
+        if (found_entity != null and self.entity.inRangeOf(found_entity.?, self.reach)) {
+            return found_entity;
+        }
         return null;
     }
 
-    /// Does a concentric search for a non-depleted resource nearby.
     fn getResourceTarget(self: *Unit) ?*Entity {
-        const found_entity = u.concentricSearch(&main.World.grid, self.last_step, Entity.isAvailableResource);
-        if (found_entity != null and self.entity.inRangeOf(found_entity.?, u.Subcell.size * 10)) return found_entity;
+        const found_entity = u.concentricSearch(&main.World.grid, u.Point.at(self.x, self.y), Entity.isAvailableResource);
+        if (found_entity != null and self.entity.inRangeOf(found_entity.?, self.reach)) {
+            return found_entity;
+        }
         return null;
     }
 
     fn attack(self: *Unit, target: *Entity) !bool {
-        const projectile = Projectile.launch(self.entity, self.class, target) catch |err| {
+        const projectile = Projectile.launch(self.entity, 0, target) catch |err| {
             std.debug.print("Attack failed: {}.\n", .{err});
             return false;
         };
@@ -886,17 +1014,46 @@ pub const Unit = struct {
         return true;
     }
 
-    pub fn create(owner: u8, x: u16, y: u16, source: u8) !*Unit {
-        const entity = try main.World.grid.allocator.create(Entity); // Memory for the entity
-        const unit = try main.World.grid.allocator.create(Unit); // Memory for unit
-        const projectiles = try main.World.grid.allocator.create(std.ArrayList(*Projectile)); // Memory for projectiles
-        projectiles.* = std.ArrayList(*Projectile).init(main.World.grid.allocator.*);
-        const genome = Genome.preset(source);
-        const start_point = u.Point.at(x, y);
-        const initial_target = if (u.randomBool()) findResource(start_point, u.reachFromRect(10, 10)) else findTarget(owner, start_point, u.reachFromRect(10, 10));
+    fn gather(self: *Unit, target: *Entity) bool {
+        if (target.ref.Resource.capacity == 0) return false;
 
-        var model: *u.Model = undefined;
-        model = try u.Model.createRectangle(main.World.grid.allocator, start_point);
+        target.ref.Resource.capacity = u.u16Sub(target.ref.Resource.capacity, 1);
+        self.resources[target.ref.Resource.class] += 1;
+
+        // Check if carrying enough to return
+        if (self.resources[0] + self.resources[1] >= 5) {
+            self.state = State.Carrying;
+        }
+        return true;
+    }
+
+    fn reachU16(self: *Unit) u16 {
+        return @as(u16, @intFromFloat(self.reach));
+    }
+
+    pub fn create(owner: u8, x: u16, y: u16, source: u8) !*Unit {
+        const genome = Genome.preset(source);
+        return createFromGenome(owner, x, y, genome);
+    }
+
+    pub fn createFromGenome(owner: u8, x: u16, y: u16, genome: Genome) !*Unit {
+        const entity = try main.World.grid.allocator.create(Entity);
+        const unit = try main.World.grid.allocator.create(Unit);
+        const projectiles = try main.World.grid.allocator.create(std.ArrayList(*Projectile));
+        projectiles.* = std.ArrayList(*Projectile).init(main.World.grid.allocator.*);
+
+        const start_point = u.Point.at(x, y);
+
+        // Initial target - look for resources nearby
+        var initial_target: u.Circle = undefined;
+        const nearby_resource = u.concentricSearch(&main.World.grid, start_point, Entity.isAvailableResource);
+        if (nearby_resource) |r| {
+            initial_target = u.Circle.aroundEntity(r, 50);
+        } else {
+            initial_target = u.Circle.at(offsetFromPosition(start_point), u.Subcell.size);
+        }
+
+        const model = try u.Model.createRectangle(main.World.grid.allocator, start_point);
 
         unit.* = Unit{
             .entity = entity,
@@ -905,7 +1062,7 @@ pub const Unit = struct {
             .model = model,
             .x = x,
             .y = y,
-            .life = 1,
+            .life = 0,
             .width = 0,
             .height = 0,
             .speed = 0,
@@ -920,11 +1077,13 @@ pub const Unit = struct {
             .projectiles = projectiles,
             .state = State.Default,
             .resources = [_]u16{ 0, 0, 0, 0 },
+            .energy = 0,
+            .mate_target = null,
         };
 
         entity.* = Entity{
             .kind = Kind.Unit,
-            .ref = .{ .Unit = unit }, // Stores the pointer to the Unit
+            .ref = .{ .Unit = unit },
         };
 
         unit.genome.applyToUnit(unit);
@@ -934,34 +1093,25 @@ pub const Unit = struct {
     }
 
     pub fn die(self: *Unit, cause: ?u8) !void {
-        // Death effect
-        if (cause) |c| {
-            switch (c) {
-                else => {}, // Catch-all for now; expand this later with specific cases
-            }
-        } else { // Unknown cause of death, very sad
-
-        }
-        try main.World.grid.removeFromAllSections(self.entity); // Immediate removal
+        _ = cause;
+        try main.World.grid.removeFromAllSections(self.entity);
         self.state = State.Dead;
     }
 
     pub fn remove(self: *Unit) !void {
-        try main.World.grid.removeFromCell(self.entity, null, null); // Removes entity from grid
+        try main.World.grid.removeFromCell(self.entity, null, null);
         try main.World.grid.removeFromAllSections(self.entity);
-        try u.findAndSwapRemove(Unit, &units, self); // Removes unit from the units collection
-        for (units.items) |unit| {
-            std.debug.assert(unit != self); // For debugging, unit must be removed at this point
-        }
-        self.projectiles.deinit(); // Deinitializes the list of projectiles
-        main.World.grid.allocator.destroy(self.projectiles); // Deallocate the memory for the ArrayList itself
-        self.model.destroy(main.World.grid.allocator); // Deallocates memory for the model
-        main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
-        main.World.grid.allocator.destroy(self); // Deallocates memory for the Unit
-    }
+        try u.findAndSwapRemove(Unit, &units, self);
 
-    pub fn hasLegs(self: *Unit) bool {
-        return self.class > 0;
+        for (units.items) |unit| {
+            std.debug.assert(unit != self);
+        }
+
+        self.projectiles.deinit();
+        main.World.grid.allocator.destroy(self.projectiles);
+        self.model.destroy(main.World.grid.allocator);
+        main.World.grid.allocator.destroy(self.entity);
+        main.World.grid.allocator.destroy(self);
     }
 
     pub fn effectiveSpeed(self: *Unit) f16 {
