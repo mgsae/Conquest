@@ -478,11 +478,7 @@ pub const Unit = struct {
             }
 
             // Movement (unless incapacitated, attacking, gathering, or mating)
-            if (self.state != State.Attacking and
-                self.state != State.Gathering and
-                self.state != State.Mating and
-                self.state != State.Incapacitated)
-            {
+            if (self.state != State.Attacking and self.state != State.Gathering and self.state != State.Mating and self.state != State.Incapacitated) {
                 const step = self.getStep();
                 try self.move(step.x, step.y);
             }
@@ -521,7 +517,7 @@ pub const Unit = struct {
         self.elapsed += 1;
     }
 
-    /// Execute the appropriate action based on current state and nearby entities
+    /// Execute the appropriate action based on current state and nearby entities.
     fn executeAction(self: *Unit) !void {
         // Priority 1: Combat if threatened
         if (self.getAttackTarget()) |target| {
@@ -851,7 +847,7 @@ pub const Unit = struct {
 
     fn getStep(self: *Unit) u.Point {
         const current = u.Point.at(self.x, self.y);
-        if (self.state == State.Incapacitated) {
+        if (self.state == State.Incapacitated or self.state == State.Gathering) {
             return current;
         }
 
@@ -867,21 +863,18 @@ pub const Unit = struct {
 
         // Within target cell
         if (distance_squared <= u.Grid.cell_size_squared) {
-            if (self.target.contains(current)) {
-                // Reached target, decide next action
+            if (self.target.contains(current)) { // Reached target, decide next action
                 if (self.state == State.Carrying) {
                     if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |b| {
                         if (self.entity.isTouching(b, self.reachU16())) {
-                            // Will deliver in executeAction
-                            return current;
+                            return current; // Will deliver in executeAction
                         } else {
                             self.target = u.Circle.aroundEntity(b, self.reachU16());
                         }
                     } else {
                         self.target = u.Circle.at(offsetFromPosition(current), u.Subcell.size);
                     }
-                } else {
-                    // Look for new resource or wander
+                } else { // Not carrying, looks for new resource or wander
                     if (self.getResourceTarget()) |r| {
                         if (self.entity.isTouching(r, self.reachU16())) {
                             return current; // Will gather in executeAction
@@ -998,11 +991,7 @@ pub const Unit = struct {
     }
 
     fn getResourceTarget(self: *Unit) ?*Entity {
-        const found_entity = u.concentricSearch(&main.World.grid, u.Point.at(self.x, self.y), Entity.isAvailableResource);
-        if (found_entity != null and self.entity.inRangeOf(found_entity.?, self.reach)) {
-            return found_entity;
-        }
-        return null;
+        return u.concentricSearch(&main.World.grid, u.Point.at(self.x, self.y), Entity.isAvailableResource);
     }
 
     fn attack(self: *Unit, target: *Entity) !bool {
@@ -1014,15 +1003,19 @@ pub const Unit = struct {
         return true;
     }
 
+    /// Tries gathering from `target`. False if not a resource, capacity 0, or out of self's reach. Sets state to Carrying if reached carry threshold. Otherwise sets self's target to `target`.
     fn gather(self: *Unit, target: *Entity) bool {
-        if (target.ref.Resource.capacity == 0) return false;
-
+        std.debug.print("Trying to gather. target.kind: {any}, entity distance: {d}, self's reach: {d}\n", .{ target.kind, u.entityDistance(self.entity, target), self.reach });
+        if (target.kind != Kind.Resource or target.ref.Resource.capacity == 0) return false;
+        if (!self.entity.isTouching(target, self.reachU16())) return false;
         target.ref.Resource.capacity = u.u16Sub(target.ref.Resource.capacity, 1);
         self.resources[target.ref.Resource.class] += 1;
 
         // Check if carrying enough to return
         if (self.resources[0] + self.resources[1] >= 5) {
             self.state = State.Carrying;
+        } else {
+            self.target = u.Circle.aroundEntity(target, self.reachU16());
         }
         return true;
     }

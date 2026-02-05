@@ -23,7 +23,7 @@ pub const Genome = struct {
         var height: f32 = 20.0;
         var speed: f32 = 10.0;
         var health: f32 = 200.0;
-        var reach: f32 = 50.0;
+        var reach: f32 = 10.0;
         var tempo: f32 = 50.0;
 
         for (self.traits) |trait| {
@@ -42,9 +42,9 @@ pub const Genome = struct {
         unit.height = @intFromFloat(height);
         unit.speed = @as(f16, @floatCast(speed));
         unit.health = @intFromFloat(health);
-        unit.life = unit.health;
-        unit.reach = reach;
         unit.tempo = @intFromFloat(tempo);
+        unit.life = unit.health;
+        unit.reach = (width + height / 2) + reach;
     }
 
     /// Create offspring genome from two parents with mutation
