@@ -11,20 +11,27 @@ const Metric = enum {
     Hunger,
     Reach,
     Tempo,
+    Carry,
 };
 
 pub const Genome = struct {
     traits: [@typeInfo(Metric).Enum.fields.len]Trait,
     sex: Sex,
 
+    pub const Sex = enum {
+        Male,
+        Female,
+    };
+
     pub fn applyToUnit(self: *const Genome, unit: *e.Unit) void {
         // Base values
         var width: f32 = 20.0;
         var height: f32 = 20.0;
-        var speed: f32 = 10.0;
-        var health: f32 = 200.0;
-        var reach: f32 = 10.0;
-        var tempo: f32 = 50.0;
+        var speed: f32 = 30.0;
+        var health: f32 = 100.0;
+        var reach: f32 = 5.0;
+        var tempo: f32 = 20.0;
+        var carry: f32 = 3.0;
 
         for (self.traits) |trait| {
             switch (trait.metric) {
@@ -34,6 +41,7 @@ pub const Genome = struct {
                 .Health => health *= trait.value,
                 .Reach => reach *= trait.value,
                 .Tempo => tempo *= trait.value,
+                .Carry => carry *= trait.value,
                 else => {},
             }
         }
@@ -43,8 +51,9 @@ pub const Genome = struct {
         unit.speed = @as(f16, @floatCast(speed));
         unit.health = @intFromFloat(health);
         unit.tempo = @intFromFloat(tempo);
+        unit.carry = @intFromFloat(carry);
         unit.life = unit.health;
-        unit.reach = (width + height / 2) + reach;
+        unit.reach = ((width + height) / 2) + reach;
     }
 
     /// Create offspring genome from two parents with mutation
@@ -79,8 +88,7 @@ pub const Genome = struct {
 
     /// Randomly mutate all traits
     pub fn mutateAll(self: *Genome, strength: f32) void {
-        var rng = std.rand.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
-        var random = rng.random();
+        var random = main.World.rng.random();
 
         for (&self.traits) |*trait| {
             trait.mutate(&random, strength);
@@ -99,6 +107,7 @@ pub const Genome = struct {
                 traits[@intFromEnum(Metric.Hunger)] = .{ .metric = .Hunger, .value = 1.0 };
                 traits[@intFromEnum(Metric.Reach)] = .{ .metric = .Reach, .value = 1.0 };
                 traits[@intFromEnum(Metric.Tempo)] = .{ .metric = .Tempo, .value = 1.0 };
+                traits[@intFromEnum(Metric.Carry)] = .{ .metric = .Carry, .value = 1.0 };
             },
             1 => { // Soldier
                 traits[@intFromEnum(Metric.Width)] = .{ .metric = .Width, .value = 1.25 };
@@ -108,6 +117,7 @@ pub const Genome = struct {
                 traits[@intFromEnum(Metric.Hunger)] = .{ .metric = .Hunger, .value = 1.0 };
                 traits[@intFromEnum(Metric.Reach)] = .{ .metric = .Reach, .value = 2.0 };
                 traits[@intFromEnum(Metric.Tempo)] = .{ .metric = .Tempo, .value = 1.0 };
+                traits[@intFromEnum(Metric.Carry)] = .{ .metric = .Carry, .value = 1.0 };
             },
             2 => { // Trebuchet
                 traits[@intFromEnum(Metric.Width)] = .{ .metric = .Width, .value = 2.25 };
@@ -117,6 +127,7 @@ pub const Genome = struct {
                 traits[@intFromEnum(Metric.Hunger)] = .{ .metric = .Hunger, .value = 1.0 };
                 traits[@intFromEnum(Metric.Reach)] = .{ .metric = .Reach, .value = 4.0 };
                 traits[@intFromEnum(Metric.Tempo)] = .{ .metric = .Tempo, .value = 1.0 };
+                traits[@intFromEnum(Metric.Carry)] = .{ .metric = .Carry, .value = 1.0 };
             },
             3 => { // Cavalry
                 traits[@intFromEnum(Metric.Width)] = .{ .metric = .Width, .value = 1.75 };
@@ -126,24 +137,19 @@ pub const Genome = struct {
                 traits[@intFromEnum(Metric.Hunger)] = .{ .metric = .Hunger, .value = 1.0 };
                 traits[@intFromEnum(Metric.Reach)] = .{ .metric = .Reach, .value = 2.5 };
                 traits[@intFromEnum(Metric.Tempo)] = .{ .metric = .Tempo, .value = 1.0 };
+                traits[@intFromEnum(Metric.Carry)] = .{ .metric = .Carry, .value = 1.0 };
             },
             else => @panic("invalid spawn source"),
         }
 
         // Randomly assign sex for initial units
-        var rng = std.rand.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
-        const sex: Sex = if (rng.random().boolean()) .Male else .Female;
+        const sex: Sex = if (u.randomBool()) .Male else .Female;
 
         return Genome{
             .traits = traits,
             .sex = sex,
         };
     }
-};
-
-const Sex = enum {
-    Male,
-    Female,
 };
 
 pub const Trait = struct {
@@ -163,6 +169,7 @@ pub const Trait = struct {
             .Reach => @max(0.5, v), // Minimum reach
             .Tempo => @max(0.5, v), // Minimum tempo
             .Hunger => @max(0.3, @min(3.0, v)), // Hunger rate bounds
+            .Carry => @max(0, v), // Minimum carry capacity
         };
 
         self.value = v;

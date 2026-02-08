@@ -89,10 +89,12 @@ pub const World = struct {
     var dead_structures: std.ArrayList(*e.Structure) = undefined;
     var dead_units: std.ArrayList(*e.Unit) = undefined;
     var dead_resources: std.ArrayList(*e.Resource) = undefined;
+    var dead_projectiles: std.ArrayList(*e.Projectile) = undefined;
     pub var new_players: std.ArrayList(*e.Player) = undefined;
     pub var new_structures: std.ArrayList(*e.Structure) = undefined;
     pub var new_units: std.ArrayList(*e.Unit) = undefined;
     pub var new_resources: std.ArrayList(*e.Resource) = undefined;
+    pub var new_projectiles: std.ArrayList(*e.Projectile) = undefined;
 
     fn initializeMap(allocator: *std.mem.Allocator, map_id: u32, map_file: m.MapFile) !void {
         width = map_file.width;
@@ -126,14 +128,17 @@ pub const World = struct {
         e.structures = std.ArrayList(*e.Structure).init(allocator);
         e.units = std.ArrayList(*e.Unit).init(allocator);
         e.resources = std.ArrayList(*e.Resource).init(allocator);
+        e.projectiles = std.ArrayList(*e.Projectile).init(allocator);
         World.dead_players = std.ArrayList(*e.Player).init(allocator);
         World.dead_structures = std.ArrayList(*e.Structure).init(allocator);
         World.dead_units = std.ArrayList(*e.Unit).init(allocator);
         World.dead_resources = std.ArrayList(*e.Resource).init(allocator);
+        World.dead_projectiles = std.ArrayList(*e.Projectile).init(allocator);
         World.new_players = std.ArrayList(*e.Player).init(allocator);
         World.new_structures = std.ArrayList(*e.Structure).init(allocator);
         World.new_units = std.ArrayList(*e.Unit).init(allocator);
         World.new_resources = std.ArrayList(*e.Resource).init(allocator);
+        World.new_projectiles = std.ArrayList(*e.Projectile).init(allocator);
 
         for (map_file.resources) |res_spawn| {
             const resource = try e.Resource.create(res_spawn.x, res_spawn.y, res_spawn.class);
@@ -220,14 +225,17 @@ pub fn main() anyerror!void {
     defer e.structures.deinit();
     defer e.players.deinit();
     defer e.resources.deinit();
+    defer e.projectiles.deinit();
     defer World.dead_units.deinit();
     defer World.dead_structures.deinit();
     defer World.dead_players.deinit();
     defer World.dead_resources.deinit();
+    defer World.dead_projectiles.deinit();
     defer World.new_units.deinit();
     defer World.new_structures.deinit();
     defer World.new_players.deinit();
     defer World.new_resources.deinit();
+    defer World.new_projectiles.deinit();
 
     // Initialize user interface
     //--------------------------------------------------------------------------------------
@@ -266,16 +274,16 @@ pub fn main() anyerror!void {
         // Tick loop updates if time for tick duration
         while (elapsed_time >= Config.TICK_DURATION) {
             try updateEntities(profile_frame);
-            if (profile_frame) u.startTimer(1, "- Removing dead entities.");
+            // if (profile_frame) u.startTimer(1, "- Removing dead entities.");
             try removeEntities();
-            if (profile_frame) u.endTimer(1, "Removing dead entities took {} seconds.");
+            // if (profile_frame) u.endTimer(1, "Removing dead entities took {} seconds.");
 
-            if (profile_frame) u.startTimer(1, "- Updating cell signatures.");
+            // if (profile_frame) u.startTimer(1, "- Updating cell signatures.");
             World.grid.updateCellsigns(); // Updates Grid.cellsigns array
-            if (profile_frame) u.endTimer(1, "Updating cell signatures took {} seconds.");
-            if (profile_frame) u.startTimer(1, "- Updating grid sections.");
+            // if (profile_frame) u.endTimer(1, "Updating cell signatures took {} seconds.");
+            // if (profile_frame) u.startTimer(1, "- Updating grid sections.");
             World.grid.updateSections(cellsigns_cache); // Updates Grid.sections array by cellsign comparison
-            if (profile_frame) u.endTimer(1, "Updating grid sections took {} seconds.");
+            // if (profile_frame) u.endTimer(1, "Updating grid sections took {} seconds.");
 
             elapsed_time -= Config.TICK_DURATION;
             updates_performed += 1;
@@ -432,7 +440,7 @@ fn updateControls(stored_mouse_input_l: rl.Vector2, stored_mouse_input_r: rl.Vec
         }
     }
 
-    if (Config.keys.actionActive(key_input, u.Key.Action.SpecialEnter)) Config.profile_mode = !Config.profile_mode; // Enter toggles profile mode (verbose logs) for now
+    if (Config.keys.actionActive(key_input, u.Key.Action.SpecialEnter)) Config.profile_mode = !Config.profile_mode; // Enter toggles profile mode (verbose logs)
     if (profile_frame) u.endTimer(1, "Updating controls took {} seconds.");
 }
 
@@ -632,6 +640,19 @@ fn updateEntities(profile_frame: bool) !void {
             resource.update();
         }
     }
+    if (profile_frame) u.endTimer(1, "Updating resources took {} seconds.");
+
+    // Projectiles
+    if (profile_frame) u.startTimer(1, "- Updating projectiles.");
+    for (e.projectiles.items) |projectile| {
+        if (projectile.state == e.Projectile.State.Destroyed) {
+            try World.dead_projectiles.append(projectile); // To be destroyed in removeEntities
+        } else {
+            projectile.update();
+        }
+    }
+    if (profile_frame) u.endTimer(1, "Updating projectiles took {} seconds.");
+
     // Adding freshly added to main lists, then clearing new lists
     for (World.new_players.items) |fresh| { // Not sure this will ever be used
         try e.players.append(fresh);
@@ -645,15 +666,20 @@ fn updateEntities(profile_frame: bool) !void {
     for (World.new_resources.items) |fresh| {
         try e.resources.append(fresh);
     }
+    for (World.new_projectiles.items) |fresh| {
+        try e.projectiles.append(fresh);
+    }
     World.new_players.clearRetainingCapacity();
     World.new_structures.clearRetainingCapacity();
     World.new_units.clearRetainingCapacity();
     World.new_resources.clearRetainingCapacity();
-
-    if (profile_frame) u.endTimer(1, "Updating resources took {} seconds.");
+    World.new_projectiles.clearRetainingCapacity();
 }
 
 fn removeEntities() !void {
+    for (World.dead_projectiles.items) |projectile| {
+        try projectile.remove();
+    }
     for (World.dead_resources.items) |resource| {
         if (resource.selected) removeSelection(resource.entity);
         try resource.remove();
@@ -670,6 +696,7 @@ fn removeEntities() !void {
         if (player.selected) removeSelection(player.entity);
         try player.remove();
     }
+    World.dead_projectiles.clearAndFree();
     World.dead_resources.clearAndFree();
     World.dead_units.clearAndFree();
     World.dead_structures.clearAndFree();
@@ -859,19 +886,21 @@ pub fn drawMap() void {
                 if (Player.selection_path) |path| {
                     var i: usize = 0;
                     var j: usize = 1;
-                    u.drawLineEx(u.Vector.fromCoords(unit.x, unit.y), u.Vector.fromCoords(path.items[i].x, path.items[i].y), 8, u.opacity(rl.Color.white, 0.8));
+                    const col_filled = unit.entity.color(0.8);
+                    const col_faded = unit.entity.color(0.4);
+                    u.drawLineEx(u.Vector.fromCoords(unit.x, unit.y), u.Vector.fromCoords(path.items[i].x, path.items[i].y), 8, col_filled);
                     while (j < path.items.len) : (j += 1) {
                         const v1 = u.Vector.fromCoords(path.items[i].x, path.items[i].y);
                         const v2 = u.Vector.fromCoords(path.items[j].x, path.items[j].y);
                         u.drawLineEx(v1, v2, 4, u.opacity(rl.Color.white, 0.4));
-                        if (path.items[i].equals(unit.intermediary_target.center)) {
-                            u.drawCircle(path.items[i].x, path.items[i].y, 8, u.opacity(rl.Color.white, 0.8));
+                        if (path.items[i].equals(unit.immediate_target.center)) {
+                            u.drawCircle(path.items[i].x, path.items[i].y, 8, col_faded);
                         } else {
-                            u.drawCircle(path.items[i].x, path.items[i].y, 4, u.opacity(rl.Color.white, 0.4));
+                            u.drawCircle(path.items[i].x, path.items[i].y, 4, col_faded);
                         }
                         i += 1;
                     }
-                    u.drawCircle(unit.target.center.x, unit.target.center.y, 8, u.opacity(rl.Color.white, 0.8));
+                    u.drawCircle(unit.target.center.x, unit.target.center.y, 8, col_filled);
                 }
             }
         }
@@ -880,6 +909,9 @@ pub fn drawMap() void {
 
 fn drawEntities(profile_frame: bool) void {
     if (Player.selected[0] == null) {
+        if (profile_frame) u.startTimer(2, "\n- - Drawing projectiles.");
+        for (e.projectiles.items) |x| x.draw(1);
+        if (profile_frame) u.endTimer(2, "Drawing projectiles took {} seconds.");
         if (profile_frame) u.startTimer(2, "\n- - Drawing resources.");
         for (e.resources.items) |x| x.draw(1);
         if (profile_frame) u.endTimer(2, "Drawing resources took {} seconds.");
@@ -892,7 +924,8 @@ fn drawEntities(profile_frame: bool) void {
         if (profile_frame) u.startTimer(2, "- - Drawing players.");
         for (e.players.items) |x| x.draw(1);
         if (profile_frame) u.endTimer(2, "Drawing players took {} seconds.");
-    } else {
+    } else { // Entity is selected
+        for (e.projectiles.items) |x| x.draw(0.5);
         for (e.resources.items) |x| if (x.selected) x.draw(1) else x.draw(0.5);
         for (e.units.items) |x| if (x.selected) x.draw(1) else x.draw(0.5);
         for (e.structures.items) |x| if (x.selected) x.draw(1) else x.draw(0.5);
@@ -950,8 +983,8 @@ pub fn drawInterface() void {
                 //const unit = ref.Unit;
                 const class: u8 = 0; // placeholder
                 switch (field) {
-                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.unitTypeFromClass(class), @tagName(ref.Unit.state) }) catch "Error",
-                    1 => text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{target.life()}) catch "Error",
+                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} {s} ({s})", .{ @tagName(target.ref.Unit.genome.sex), u.unitTypeFromClass(class), @tagName(ref.Unit.state) }) catch "Error",
+                    1 => text = std.fmt.bufPrintZ(&buffer, "Life: {}, Energy: {}", .{ target.ref.Unit.life, target.ref.Unit.energy }) catch "Error",
                     2 => // Checks for carried resources
                     {
                         if (class == 0) { // Gatherer

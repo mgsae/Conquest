@@ -4,11 +4,12 @@ const main = @import("main.zig");
 const u = @import("utils.zig");
 const Genome = @import("traits.zig").Genome;
 
-// Setting up entities
+// Setting up entities and effects
 pub var players: std.ArrayList(*Player) = undefined;
 pub var units: std.ArrayList(*Unit) = undefined;
 pub var structures: std.ArrayList(*Structure) = undefined;
 pub var resources: std.ArrayList(*Resource) = undefined;
+pub var projectiles: std.ArrayList(*Projectile) = undefined;
 
 pub const Kind = enum {
     Player,
@@ -321,7 +322,7 @@ pub const Player = struct {
             .kind = Kind.Player,
             .ref = .{ .Player = player },
         };
-
+        u.markSubcellsBlocked(x, y, u.Subcell.half * 3, u.Subcell.half * 3, true);
         std.debug.print("Created local player at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entity) });
         try main.World.grid.addToCell(entity, null, null);
         return player;
@@ -347,7 +348,7 @@ pub const Player = struct {
             .kind = Kind.Player,
             .ref = .{ .Player = player },
         };
-
+        u.markSubcellsBlocked(x, y, u.Subcell.half * 3, u.Subcell.half * 3, true);
         std.debug.print("Created remote player at ({}, {}) with entity pointer {}\n", .{ x, y, @intFromPtr(entity) });
         try main.World.grid.addToCell(entity, null, null);
         return player;
@@ -404,10 +405,11 @@ pub const Unit = struct {
     health: i16,
     reach: f32,
     tempo: i16,
+    carry: u16,
 
     // Behavioral state
     target: u.Circle,
-    intermediary_target: u.Circle,
+    immediate_target: u.Circle,
     last_step: u.Point,
     stored_extrema: [2]?u.Point,
     cached_cellsigns: [9]u32,
@@ -417,8 +419,9 @@ pub const Unit = struct {
     // Resources and reproduction
     resources: [4]u16,
     energy: u16, // Energy for mating (gained from food)
+    selectivity: u16 = 1, // Threshold for mating (own & other's energy must exceed)
     mate_target: ?*Unit, // Current mate if in mating process
-    projectiles: *std.ArrayList(*Projectile),
+    // projectiles: *std.ArrayList(*Projectile),
 
     elapsed: i16 = 0,
     experience: i16 = 0,
@@ -429,7 +432,8 @@ pub const Unit = struct {
         Attacking,
         Incapacitated,
         Gathering,
-        Carrying,
+        Delivering,
+        Storing, // Delivering resource at building
         Seeking, // Looking for resources/mates
         Mating,
         Dead,
@@ -437,18 +441,11 @@ pub const Unit = struct {
 
     pub fn draw(self: *Unit, alpha: f32) void {
         if (self.state == State.Dead) return;
-
-        u.drawModel(self.model, self.width, self.height, self.entity.color(alpha), self.entity.color(alpha));
-
-        if (self.selected) {
-            u.drawCircumference(self.target, self.entity.color(alpha / 2));
-        }
-
+        const m: u16 = if (self.state == State.Mating) 2 else 1; // Doubling size when mating
+        u.drawModel(self.model, self.width * m, self.height * m, self.entity.color(alpha), self.entity.color(alpha));
+        if (self.selected) u.drawCircumference(self.target, self.entity.color(alpha / 2));
         u.drawLifeInterpolated(self.x, self.y, self.width, self.life, self.health, self.last_step, self.elapsed);
-
-        for (self.projectiles.items) |projectile| {
-            projectile.draw(alpha);
-        }
+        // for (self.projectiles.items) |projectile| projectile.draw(alpha);
     }
 
     pub fn update(self: *Unit) !void {
@@ -464,8 +461,12 @@ pub const Unit = struct {
         }
 
         if (self.life <= 0) {
-            try self.die(null);
+            try self.die(null); // Sets State.Dead
             return;
+        }
+
+        if (self.mate_target != null and self.mate_target.?.state == State.Dead) {
+            self.mate_target = null; // Clears outdated mate
         }
 
         // Update every 10 ticks
@@ -474,13 +475,13 @@ pub const Unit = struct {
 
             // Execute actions at tempo rate
             if (main.moveDivMultiple(self.elapsed, self.tempo)) {
-                try self.executeAction();
+                try self.executeAction(); // Updates state, behavior
             }
 
             // Movement (unless incapacitated, attacking, gathering, or mating)
-            if (self.state != State.Attacking and self.state != State.Gathering and self.state != State.Mating and self.state != State.Incapacitated) {
-                const step = self.getStep();
-                try self.move(step.x, step.y);
+            if (self.state == State.Default or self.state == State.Seeking or self.state == State.Delivering) {
+                const step = self.getStep(); // Finds next target
+                try self.move(step.x, step.y); // Performs move
             }
 
             // Reset incapacitated state
@@ -493,28 +494,28 @@ pub const Unit = struct {
         const factor = u.Interpolation.getFactor(self.elapsed, main.World.MOVEMENT_DIVISIONS);
         self.model.updateRigidBodyInterpolated(0, u.Vector.fromPoint(self.last_step), u.Vector.fromCoords(self.x, self.y), factor);
 
-        // Update projectiles
-        var i: usize = self.projectiles.items.len;
-        while (i > 0) {
-            i -= 1;
-            const projectile = self.projectiles.items[i];
-            if (projectile.life <= 0) {
-                if (projectile.targets) |targets| {
-                    targets.deinit();
-                    main.World.grid.allocator.destroy(targets);
-                }
-                _ = self.projectiles.swapRemove(i);
-                main.World.grid.allocator.destroy(projectile);
-                continue;
-            }
-            projectile.update();
-        }
+        // // Update projectiles
+        // var i: usize = self.projectiles.items.len;
+        // while (i > 0) {
+        //     i -= 1;
+        //     const projectile = self.projectiles.items[i];
+        //     if (projectile.life <= 0) {
+        //         if (projectile.targets) |targets| {
+        //             targets.deinit();
+        //             main.World.grid.allocator.destroy(targets);
+        //         }
+        //         _ = self.projectiles.swapRemove(i);
+        //         main.World.grid.allocator.destroy(projectile);
+        //         continue;
+        //     }
+        //     projectile.update();
+        // }
 
         if (self.state == State.Incapacitated) {
             self.last_step = u.Point.at(self.x, self.y);
         }
 
-        self.elapsed += 1;
+        self.elapsed = (self.elapsed +% 1) & 0x7FFF; // Wraps at 32767
     }
 
     /// Execute the appropriate action based on current state and nearby entities.
@@ -528,46 +529,52 @@ pub const Unit = struct {
             }
         }
 
-        // Clear attacking state if not attacking
+        // Not currently attacking, clears attacking state
         if (self.state == State.Attacking) {
             self.state = State.Default;
         }
 
         // Priority 2: Deliver resources if carrying
-        if (self.state == State.Carrying) {
+        if (self.state == State.Storing) {
             if (self.deliverResources()) {
                 self.state = State.Default;
                 return;
             }
         }
 
-        // Priority 3: Gather resources if nearby and not carrying much
-        if (self.state != State.Carrying) {
+        // Priority 3: Gather resources if nearby and close target
+        if (self.state != State.Delivering and u.manhattanDistance(self.last_step, self.target.center) < u.Grid.cell_size) {
             if (self.getResourceTarget()) |target| {
                 if (self.gather(target)) {
-                    self.state = State.Gathering;
+                    self.state = if (u.randomBool()) State.Gathering else State.Default;
                     self.experience += 1;
 
                     // Convert to carrying state if gathered enough
-                    if (self.resources[0] + self.resources[1] >= 5) {
-                        self.state = State.Carrying;
+                    if (self.resources[0] + self.resources[1] >= self.carry) {
+                        self.state = State.Delivering;
                     }
                     return;
                 }
             }
         }
 
+        // Not currently gathering, clears gathering state
+        if (self.state == State.Gathering) {
+            self.state = State.Default;
+        }
+
         // Priority 4: Seek mate if energy is high enough
-        if (self.energy >= 100 and self.state != State.Mating) {
+        if (self.energy >= self.selectivity and self.state != State.Mating) {
             if (self.findPotentialMate()) |mate| {
                 self.mate_target = mate;
                 self.state = State.Seeking;
                 self.target = u.Circle.aroundEntity(mate.entity, self.reachU16());
+                return;
             }
         }
 
-        // Clear gathering state if idle
-        if (self.state == State.Gathering) {
+        // After mating, clears mating state
+        if (self.state == State.Mating) {
             self.state = State.Default;
         }
     }
@@ -620,7 +627,7 @@ pub const Unit = struct {
                     if (other != self and
                         other.owner == self.owner and
                         other.genome.sex != self.genome.sex and
-                        other.energy >= 100 and
+                        other.energy >= other.selectivity and
                         other.state != State.Mating and
                         other.state != State.Dead)
                     {
@@ -636,7 +643,7 @@ pub const Unit = struct {
     fn tryMate(self: *Unit) !bool {
         if (self.mate_target) |mate| {
             // Check if still valid and in range
-            if (mate.state == State.Dead or mate.energy < 100) {
+            if (mate.state == State.Dead or mate.energy < mate.selectivity) {
                 self.mate_target = null;
                 self.state = State.Default;
                 return false;
@@ -644,8 +651,8 @@ pub const Unit = struct {
 
             if (self.entity.isTouching(mate.entity, self.reachU16())) {
                 // Both units consume energy and create offspring
-                self.energy -= 100;
-                mate.energy -= 100;
+                self.energy = 0;
+                mate.energy = 0;
 
                 self.state = State.Mating;
                 mate.state = State.Mating;
@@ -659,7 +666,7 @@ pub const Unit = struct {
 
                 self.mate_target = null;
                 mate.mate_target = null;
-
+                std.debug.print("Tried creating unit via reproduction!\n", .{});
                 return true;
             }
         }
@@ -693,7 +700,7 @@ pub const Unit = struct {
                 self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
             } else {
                 // Behavior based on state
-                if (self.state == State.Carrying) {
+                if (self.state == State.Delivering) {
                     if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |b| {
                         self.target = u.Circle.aroundEntity(b, self.reachU16());
                     } else {
@@ -818,7 +825,7 @@ pub const Unit = struct {
         const prev_target = self.target;
 
         // Retarget based on state
-        if (self.state == State.Carrying) {
+        if (self.state == State.Delivering) {
             if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |b| {
                 self.target = u.Circle.aroundEntity(b, self.reachU16());
             } else {
@@ -840,9 +847,9 @@ pub const Unit = struct {
     }
 
     fn offsetFromPosition(position: u.Point) u.Point {
-        const x: i16 = @as(i16, @intCast(position.x)) + (u.randomI16(u.Grid.cell_half) - u.Grid.cell_half / 2);
-        const y: i16 = @as(i16, @intCast(position.y)) + (u.randomI16(u.Grid.cell_half) - u.Grid.cell_half / 2);
-        return u.Point.at(u.mapClampX(x, u.Grid.cell_half), u.mapClampY(y, u.Grid.cell_half));
+        const x: i16 = @as(i16, @intCast(position.x)) + (u.randomI16(u.Grid.cell_quarter) - u.Grid.cell_quarter / 2);
+        const y: i16 = @as(i16, @intCast(position.y)) + (u.randomI16(u.Grid.cell_quarter) - u.Grid.cell_quarter / 2);
+        return u.Point.at(u.mapClampX(x, u.Grid.cell_quarter), u.mapClampY(y, u.Grid.cell_quarter));
     }
 
     fn getStep(self: *Unit) u.Point {
@@ -864,9 +871,10 @@ pub const Unit = struct {
         // Within target cell
         if (distance_squared <= u.Grid.cell_size_squared) {
             if (self.target.contains(current)) { // Reached target, decide next action
-                if (self.state == State.Carrying) {
+                if (self.state == State.Delivering) {
                     if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |b| {
                         if (self.entity.isTouching(b, self.reachU16())) {
+                            self.state = State.Storing;
                             return current; // Will deliver in executeAction
                         } else {
                             self.target = u.Circle.aroundEntity(b, self.reachU16());
@@ -877,6 +885,7 @@ pub const Unit = struct {
                 } else { // Not carrying, looks for new resource or wander
                     if (self.getResourceTarget()) |r| {
                         if (self.entity.isTouching(r, self.reachU16())) {
+                            self.state = State.Gathering;
                             return current; // Will gather in executeAction
                         } else {
                             self.target = u.Circle.at(u.Point.closestContact(self.entity, r), @as(u16, @intFromFloat(self.reach / 2)));
@@ -890,7 +899,7 @@ pub const Unit = struct {
             // A* pathfinding within cell
             const cur_node = u.Subcell.closestNodePoint(current.x, current.y);
             const tar_node = u.Subcell.closestNodePoint(self.target.center.x, self.target.center.y);
-            const distance_to_center = u.asF16(u16, u.manhattanDistance(current, self.intermediary_target.center)) - u.asF16(u16, (self.width + self.height) / 2);
+            const distance_to_center = u.asF16(u16, u.manhattanDistance(current, self.immediate_target.center)) - u.asF16(u16, (self.width + self.height) / 2);
 
             if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or
                 !self.stored_extrema[1].?.equals(tar_node) or self.target.contains(current) or
@@ -905,10 +914,10 @@ pub const Unit = struct {
                 };
                 if (new_path) |path| {
                     defer path.deinit();
-                    if (path.items.len > 1 and self.intermediary_target.contains(path.items[0])) {
-                        self.intermediary_target = u.Circle.at(path.items[1], u.Subcell.size);
+                    if (path.items.len > 1 and self.immediate_target.contains(path.items[0])) {
+                        self.immediate_target = u.Circle.at(path.items[1], u.Subcell.size);
                     } else {
-                        self.intermediary_target = u.Circle.at(path.items[0], u.Subcell.size);
+                        self.immediate_target = u.Circle.at(path.items[0], u.Subcell.size);
                     }
                 }
             }
@@ -932,14 +941,14 @@ pub const Unit = struct {
                 };
                 if (new_path) |path| {
                     defer path.deinit();
-                    self.intermediary_target = u.Circle.at(path.items[0], u.Subcell.size);
+                    self.immediate_target = u.Circle.at(path.items[0], u.Subcell.size);
                 }
             }
             self.stored_extrema[0] = cur_wp;
             self.stored_extrema[1] = tar_wp;
         }
 
-        return self.stepTowardsTarget(current, self.intermediary_target.center);
+        return self.stepTowardsTarget(current, self.immediate_target.center);
     }
 
     fn stepTowardsTarget(self: *Unit, current: u.Point, target: u.Point) u.Point {
@@ -959,9 +968,12 @@ pub const Unit = struct {
             const obstacle = self.checkCollision(lookahead_point.x, lookahead_point.y);
             if (obstacle != null) {
                 next_point = self.lookaheadDisplacement(angle, obstacle.?);
+                self.immediate_target.center = next_point;
+                if (u.randomBool() and u.manhattanDistance(self.immediate_target.center, self.target.center) < u.Grid.cell_size) {
+                    self.target = u.Circle.at(offsetFromPosition(u.Point.at(self.x, self.y)), u.Subcell.size);
+                }
             }
         }
-
         return next_point;
     }
 
@@ -976,7 +988,9 @@ pub const Unit = struct {
         const angle_to_target = u.deltaToAngle(targ_dx, targ_dy);
 
         const angle_diff = angle_to_target - angle_to_obstacle;
-        const deviation_angle: f32 = if (angle_diff > 0) 45.0 else -45.0;
+        const bias = (@intFromPtr(&self) & 1) == 1;
+        const deviation_angle: f32 = if ((angle_diff > 0) != bias) 45 else -45;
+
         const new_angle = base_angle + deviation_angle;
         const vector = u.vectorToDelta(new_angle, self.speed);
         return u.deltaPoint(self.x, self.y, vector[0], vector[1]);
@@ -995,25 +1009,24 @@ pub const Unit = struct {
     }
 
     fn attack(self: *Unit, target: *Entity) !bool {
-        const projectile = Projectile.launch(self.entity, 0, target) catch |err| {
+        _ = Projectile.launch(self.entity, 0, target) catch |err| {
             std.debug.print("Attack failed: {}.\n", .{err});
             return false;
         };
-        try self.projectiles.append(projectile);
+        //try self.projectiles.append(projectile);
         return true;
     }
 
-    /// Tries gathering from `target`. False if not a resource, capacity 0, or out of self's reach. Sets state to Carrying if reached carry threshold. Otherwise sets self's target to `target`.
+    /// Tries gathering from `target`. False if not a resource, capacity 0, or out of self's reach. Sets state to Delivering if reached carry threshold. Otherwise sets self's target to `target`.
     fn gather(self: *Unit, target: *Entity) bool {
-        std.debug.print("Trying to gather. target.kind: {any}, entity distance: {d}, self's reach: {d}\n", .{ target.kind, u.entityDistance(self.entity, target), self.reach });
         if (target.kind != Kind.Resource or target.ref.Resource.capacity == 0) return false;
         if (!self.entity.isTouching(target, self.reachU16())) return false;
         target.ref.Resource.capacity = u.u16Sub(target.ref.Resource.capacity, 1);
         self.resources[target.ref.Resource.class] += 1;
 
-        // Check if carrying enough to return
-        if (self.resources[0] + self.resources[1] >= 5) {
-            self.state = State.Carrying;
+        // Check if carrying max, set to return
+        if (self.resources[0] + self.resources[1] >= self.carry) {
+            self.state = State.Delivering;
         } else {
             self.target = u.Circle.aroundEntity(target, self.reachU16());
         }
@@ -1032,19 +1045,25 @@ pub const Unit = struct {
     pub fn createFromGenome(owner: u8, x: u16, y: u16, genome: Genome) !*Unit {
         const entity = try main.World.grid.allocator.create(Entity);
         const unit = try main.World.grid.allocator.create(Unit);
-        const projectiles = try main.World.grid.allocator.create(std.ArrayList(*Projectile));
-        projectiles.* = std.ArrayList(*Projectile).init(main.World.grid.allocator.*);
+        //const projectiles = try main.World.grid.allocator.create(std.ArrayList(*Projectile));
+        //projectiles.* = std.ArrayList(*Projectile).init(main.World.grid.allocator.*);
 
         const start_point = u.Point.at(x, y);
 
         // Initial target - look for resources nearby
-        var initial_target: u.Circle = undefined;
-        const nearby_resource = u.concentricSearch(&main.World.grid, start_point, Entity.isAvailableResource);
-        if (nearby_resource) |r| {
-            initial_target = u.Circle.aroundEntity(r, 50);
+        var initial_target: ?u.Circle = null;
+        if (genome.sex == Genome.Sex.Male) {
+            const enemy: ?*Entity = for (players.items) |p| { // Gets first non-owner player
+                if (p.id != owner) break p.entity;
+            } else null;
+            if (enemy != null) initial_target = u.Circle.aroundEntity(enemy.?, u.Subcell.size);
         } else {
-            initial_target = u.Circle.at(offsetFromPosition(start_point), u.Subcell.size);
+            const nearby_resource = u.concentricSearch(&main.World.grid, start_point, Entity.isAvailableResource);
+            if (nearby_resource) |r| {
+                initial_target = u.Circle.aroundEntity(r, 50);
+            }
         }
+        if (initial_target == null) initial_target = u.Circle.at(offsetFromPosition(start_point), u.Grid.cell_quarter);
 
         const model = try u.Model.createRectangle(main.World.grid.allocator, start_point);
 
@@ -1062,12 +1081,13 @@ pub const Unit = struct {
             .health = 0,
             .reach = 0,
             .tempo = 0,
-            .target = initial_target,
-            .intermediary_target = initial_target,
+            .carry = 0,
+            .target = initial_target.?,
+            .immediate_target = initial_target.?,
             .last_step = start_point,
             .stored_extrema = [2]?u.Point{ null, null },
             .cached_cellsigns = [_]u32{0} ** 9,
-            .projectiles = projectiles,
+            //.projectiles = projectiles,
             .state = State.Default,
             .resources = [_]u16{ 0, 0, 0, 0 },
             .energy = 0,
@@ -1081,6 +1101,7 @@ pub const Unit = struct {
 
         unit.genome.applyToUnit(unit);
 
+        try main.World.new_units.append(unit);
         try main.World.grid.addToCell(entity, null, null);
         return unit;
     }
@@ -1100,8 +1121,8 @@ pub const Unit = struct {
             std.debug.assert(unit != self);
         }
 
-        self.projectiles.deinit();
-        main.World.grid.allocator.destroy(self.projectiles);
+        //self.projectiles.deinit();
+        //main.World.grid.allocator.destroy(self.projectiles);
         self.model.destroy(main.World.grid.allocator);
         main.World.grid.allocator.destroy(self.entity);
         main.World.grid.allocator.destroy(self);
@@ -1202,7 +1223,6 @@ pub const Structure = struct {
         const spawn_point = self.spawnPoint(50, 50) catch null;
         if (spawn_point) |sp| { // If spawn_point is not null, unwrap it
             const unit = try Unit.create(self.owner, sp[0], sp[1], spawn_class);
-            try main.World.new_units.append(unit);
             return unit;
         }
         return error.NoAvailableSpawnPoint;
@@ -1449,6 +1469,7 @@ pub const Resource = struct {
 //----------------------------------------------------------------------------------
 pub const Projectile = struct {
     class: u8,
+    state: State,
     x: u16,
     y: u16,
     angle: f32,
@@ -1456,11 +1477,21 @@ pub const Projectile = struct {
     color: rl.Color,
     targets: ?*std.ArrayList(*Entity), // Populated upon launch
 
+    pub const State = enum {
+        Default,
+        Destroyed,
+    };
+
     pub fn draw(self: *Projectile, alpha: f32) void {
         u.drawEntity(self.x, self.y, self.width(), self.height(), u.opacity(self.color, alpha));
     }
 
     pub fn update(self: *Projectile) void {
+        self.life -= 1;
+        if (self.life <= 0) {
+            self.state = State.Destroyed; // Cleared in main
+            return;
+        }
         // Checks radius for targets, returns true if found
         if (self.checkImpact()) |target| {
             self.impact(target); // Deals damage and does effect
@@ -1469,7 +1500,6 @@ pub const Projectile = struct {
         const delta = u.vectorToDelta(self.angle, self.speed());
         self.x = u.mapClampFloatX(u.asF32(u16, self.x) + delta[0], self.width());
         self.y = u.mapClampFloatY(u.asF32(u16, self.y) + delta[1], self.height());
-        self.life -= 1; // Gets killed in unit update
     }
 
     /// `Projectile` property fields determined by `class`.
@@ -1515,6 +1545,7 @@ pub const Projectile = struct {
 
         projectile.* = Projectile{
             .class = class,
+            .state = State.Default,
             .x = delta.mapOffsetX(source.x()),
             .y = delta.mapOffsetY(source.y()),
             .life = from_class.life,
@@ -1563,6 +1594,15 @@ pub const Projectile = struct {
         const damage = preset(self.class).damage;
         target.setLife(if (target.life() > damage) target.life() - damage else 0);
         self.life -= 100; // Should be enough to kill projectile unless multi targets are wanted
+    }
+
+    pub fn remove(self: *Projectile) !void {
+        try u.findAndSwapRemove(Projectile, &projectiles, self);
+        for (projectiles.items) |projectile| {
+            std.debug.assert(projectile != self);
+        }
+        if (self.targets != null) main.World.grid.allocator.destroy(self.targets.?);
+        main.World.grid.allocator.destroy(self);
     }
 
     fn width(self: *Projectile) u16 {

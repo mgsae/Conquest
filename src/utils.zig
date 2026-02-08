@@ -324,7 +324,7 @@ pub const Key = struct {
         try self.bindings.put(Action.SpecialEnter, InputValue.Enter);
     }
 
-    pub fn rebind(self: *Key, action: Action, newInput: InputValue) void {
+    pub fn rebind(self: *Key, action: Action, newInput: InputValue) !void {
         try self.bindings.put(action, newInput);
     }
 
@@ -1034,6 +1034,7 @@ pub fn fastSqrt(number: f32) f32 {
 pub const Grid = struct {
     pub const cell_size = main.World.GRID_CELL_SIZE;
     pub const cell_half: comptime_int = cell_size / 2;
+    pub const cell_quarter: comptime_int = cell_half / 2;
     pub const cell_size_squared = Grid.cell_size * Grid.cell_size;
 
     pub inline fn section() [9][2]i16 {
@@ -1706,10 +1707,10 @@ pub fn findConnectedStructures(grid: *e.Grid, origin: *e.Structure) !?[]*e.Struc
 //----------------------------------------------------------------------------------
 pub fn unitTypeFromClass(class: u8) []const u8 {
     return switch (class) {
-        0 => "Unit A", // "Peasant",
-        1 => "Unit B", // "Soldier",
-        2 => "Unit C", // "Trebuchet",
-        3 => "Unit D", // "Cavalry",
+        0 => "A", // "Peasant",
+        1 => "B", // "Soldier",
+        2 => "C", // "Trebuchet",
+        3 => "D", // "Cavalry",
         else => "Unknown unit type",
     };
 }
@@ -2196,6 +2197,11 @@ pub fn drawRect(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     rl.drawRectangle(canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(width, main.Camera.canvas_zoom), canvasScale(height, main.Camera.canvas_zoom), col);
 }
 
+/// Uses raylib to draw rectangle lines scaled and positioned to canvas.
+pub fn drawSquare(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
+    rl.drawRectangleLines(canvasX(x, main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y, main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(width, main.Camera.canvas_zoom), canvasScale(height, main.Camera.canvas_zoom), col);
+}
+
 /// Uses raylib to draw line with thickness, scaled and positioned to canvas.
 pub fn drawLineEx(start: Vector, end: Vector, thickness: i32, col: rl.Color) void {
     rl.drawLineEx(Vector.toRaylib(Vector.toScreen(start)), Vector.toRaylib(Vector.toScreen(end)), asF32(i32, canvasScale(thickness, main.Camera.canvas_zoom)), col);
@@ -2255,7 +2261,9 @@ pub fn drawCapacity(x: i32, y: i32, width: i32, height: i32, capacity: i32, max_
 
 /// Draws rectangle centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawEntity(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
-    rl.drawRectangle(canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(width, main.Camera.canvas_zoom), canvasScale(height, main.Camera.canvas_zoom), col);
+    const rect = .{ .x = asF32(i32, canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom)), .y = asF32(i32, canvasY(y - @divTrunc(height, 2), main.Camera.canvas_offset_y, main.Camera.canvas_zoom)), .width = asF32(i32, canvasScale(width, main.Camera.canvas_zoom)), .height = asF32(i32, canvasScale(height, main.Camera.canvas_zoom)) };
+    rl.drawRectangleLinesEx(rect, 4.0, col);
+    // rl.drawRectangleLines(canvasX(x - @divTrunc(width, 2), main.Camera.canvas_offset_x, main.Camera.canvas_zoom), canvasY(y - @divTrunc(height, 2), main.Camera.canvas_offset_y, main.Camera.canvas_zoom), canvasScale(width, main.Camera.canvas_zoom), canvasScale(height, main.Camera.canvas_zoom), col);
 }
 
 pub fn initTexture(filename: [*:0]const u8) rl.Texture2D {
@@ -2300,7 +2308,7 @@ pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, b
         const h = asI32(usize, height / (j + 1));
         const x = asI32(f32, joint.position.x) - @divTrunc(w, 2);
         const y = asI32(f32, joint.position.y) - @divTrunc(h, 2);
-        drawRect(x, y, w, h, jointColor);
+        drawSquare(x, y, w, h, jointColor);
     }
 
     // Draw legs if they exist
@@ -2314,7 +2322,7 @@ pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, b
             const h = asI32(usize, height / 2);
             const x = asI32(f32, leg.lower_joint.position.x) - @divTrunc(w, 2);
             const y = asI32(f32, leg.lower_joint.position.y) - @divTrunc(h, 2);
-            drawRect(x, y, w, h, jointColor);
+            drawSquare(x, y, w, h, jointColor);
         }
     }
 }
