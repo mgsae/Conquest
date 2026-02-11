@@ -844,11 +844,11 @@ pub fn drawMap() void {
                 const cur = u.Point.atEntity(selected);
                 const tar = unit.target.center;
                 if (u.manhattanDistance(cur, tar) > World.GRID_CELL_SIZE) { // Macro pathing
-                    const start_wp = u.Waypoint.cellClosestTo(cur, tar);
+                    const start_wp = u.Waypoint.closest(cur.x, tar.y);
                     const end_wp = u.Waypoint.closest(tar.x, tar.y);
                     // If no selection data or selected unit's position/target updated, finds waypoint path and sets Player.selection data
                     if (Player.selection_nodes[0] == null or Player.selection_nodes[1] == null or !Player.selection_nodes[0].?.equals(start_wp) or !Player.selection_nodes[1].?.equals(end_wp)) {
-                        const new_path = World.grid.findWaypointPath(start_wp, end_wp, selected.width(), selected.height()) catch |err| switch (err) {
+                        const new_path = World.grid.findWaypointPath(start_wp, end_wp) catch |err| switch (err) {
                             error.NoPath => null,
                             else => {
                                 std.debug.print("Error: {}.\n", .{err});
@@ -892,7 +892,7 @@ pub fn drawMap() void {
                     while (j < path.items.len) : (j += 1) {
                         const v1 = u.Vector.fromCoords(path.items[i].x, path.items[i].y);
                         const v2 = u.Vector.fromCoords(path.items[j].x, path.items[j].y);
-                        u.drawLineEx(v1, v2, 4, u.opacity(rl.Color.white, 0.4));
+                        u.drawLineEx(v1, v2, 4, col_faded);
                         if (path.items[i].equals(unit.immediate_target.center)) {
                             u.drawCircle(path.items[i].x, path.items[i].y, 8, col_faded);
                         } else {
@@ -1221,7 +1221,10 @@ fn findBuildPosition(class: u8, mouse_position: rl.Vector2) [2]u16 {
 fn isInBuildDistance(x: u16, y: u16) bool {
     if (Player.self == null) return false;
     const distance_max = u.Grid.cell_half; //u.asU32(u16, e.Structure.preset(class).width + e.Structure.preset(class).height);
-    const distance = std.math.sqrt(u.distanceSquared(u.Point.at(Player.self.?.x, Player.self.?.y), u.Point.at(x, y)));
+    //const distance = std.math.sqrt(u.distanceSquared(u.Point.at(Player.self.?.x, Player.self.?.y), u.Point.at(x, y)));
+    const px: i32 = @intCast(Player.self.?.x);
+    const py: i32 = @intCast(Player.self.?.y);
+    const distance = @max(@abs(px - @as(i32, x)), @abs(py - @as(i32, y)));
     return distance <= distance_max;
 }
 

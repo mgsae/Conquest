@@ -4,6 +4,9 @@ const main = @import("main.zig");
 const u = @import("utils.zig");
 const e = @import("entity.zig");
 
+// To update maps:
+// zig run src/map_gen.zig
+
 pub const MapFile = struct {
     version: u8,
     width: u16,
@@ -90,9 +93,11 @@ pub const MapFile = struct {
 
         // Write start locations
         try writer.writeInt(u16, @intCast(self.start_locations.len), .little);
-        for (self.start_locations) |loc| {
-            try writer.writeInt(u16, loc.x, .little);
-            try writer.writeInt(u16, loc.y, .little);
+        for (self.start_locations) |loc| { // Snaps starts to subcell corner
+            const x = u.Subcell.toCornerX(loc.x);
+            const y = u.Subcell.toCornerY(loc.y);
+            try writer.writeInt(u16, x, .little);
+            try writer.writeInt(u16, y, .little);
         }
 
         // Write resources

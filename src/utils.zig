@@ -703,7 +703,8 @@ pub const Circle = struct {
     }
 
     pub fn contains(self: Circle, point: Point) bool {
-        return distanceSquared(self.center, point) <= (self.radius * self.radius);
+        const r = @as(u32, self.radius);
+        return distanceSquared(self.center, point) <= (r * r);
     }
 
     /// Returns a circle centered on a rectangle whose radius represents the average distance from the rectangle's center to its edges.
@@ -1406,8 +1407,8 @@ pub const Waypoint: type = struct {
     /// Takes world `x`,`y` cordinates and returns the closest waypoint.
     pub fn closest(x: u16, y: u16) Point {
         const waypoints = cellSides(Grid.x(x), Grid.y(y));
-        const mid_x_diff: i32 = @as(i32, x) - (waypoints[1].x + Grid.cell_half);
-        const mid_y_diff: i32 = @as(i32, y) - (waypoints[0].y) + Grid.cell_half;
+        const mid_x_diff: i32 = @as(i32, x) - waypoints[1].x;
+        const mid_y_diff: i32 = @as(i32, y) - waypoints[0].y;
 
         if (mid_x_diff < 0) { // On left side of cell
             if (@abs(mid_x_diff) > @abs(mid_y_diff)) return waypoints[0];
@@ -2291,7 +2292,8 @@ pub fn drawEntityInterpolated(x: i32, y: i32, width: i32, height: i32, col: rl.C
 /// Draws rectangle and build radius centered on `x`,`y` coordinates, scaled and positioned to canvas.
 pub fn drawPlayer(x: i32, y: i32, width: i32, height: i32, col: rl.Color) void {
     drawEntity(x, y, width, height, col);
-    drawCircumference(Circle.atIntegers(x, y, Grid.cell_half), opacity(col, 0.25));
+    // drawCircumference(Circle.atIntegers(x, y, Grid.cell_half), opacity(col, 0.25));
+    drawSquare(x - Grid.cell_half, y - Grid.cell_half, Grid.cell_size, Grid.cell_size, col);
 }
 
 pub fn drawModel(model: *Model, width: u16, height: u16, jointColor: rl.Color, boneColor: rl.Color) void {
