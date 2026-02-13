@@ -403,6 +403,7 @@ pub const Unit = struct {
     height: u16,
     speed: f16,
     health: i16,
+    hunger: u16,
     reach: f32,
     tempo: i16,
     carry: u16,
@@ -432,8 +433,9 @@ pub const Unit = struct {
         Attacking,
         Incapacitated,
         Gathering,
-        Delivering,
+        Delivering, // Heading to building to store resource
         Storing, // Delivering resource at building
+        Eating, // Heading to building to consume resource
         Seeking, // Looking for resources/mates
         Mating,
         Dead,
@@ -511,9 +513,20 @@ pub const Unit = struct {
             self.state = State.Default;
         }
 
+        // Low life, eat from building if possible
+        if (self.hunger >= self.life) {
+            if (self.eatResources()) {
+                self.state = State.Eating;
+                return;
+            }
+        }
+
+        if (self.state == State.Eating) {
+            self.state = State.Default;
+        }
+
         // If close, mates and clears mating state
         if (self.state == State.Mating) {
-            std.debug.print("Attempting to mate at x/y: {}/{}.\n", .{ self.x, self.y });
             _ = self.tryMate() catch null;
             self.state = State.Default;
             self.mate_target = null;
@@ -554,6 +567,8 @@ pub const Unit = struct {
                     return;
                 }
             }
+        } else if (self.state == State.Delivering) {
+            self.state = State.Seeking;
         }
 
         // Not currently gathering, clears gathering state
@@ -584,36 +599,45 @@ pub const Unit = struct {
         return false;
     }
 
-    /// Find a potential mate (opposite sex, same owner, sufficient energy)
-    fn findPotentialMate(self: *Unit) ?*Unit {
-        const search_radius = 2; // Cells
-        const my_cell_x = u.Grid.x(self.x);
-        const my_cell_y = u.Grid.y(self.y);
-
-        var dy: i32 = -search_radius;
-        while (dy <= search_radius) : (dy += 1) {
-            var dx: i32 = -search_radius;
-            while (dx <= search_radius) : (dx += 1) {
-                const cell_x = @as(i32, @intCast(my_cell_x)) + dx;
-                const cell_y = @as(i32, @intCast(my_cell_y)) + dy;
-
-                if (cell_x < 0 or cell_y < 0) continue;
-
-                const entities = main.World.grid.sectionEntities(@intCast(cell_x), @intCast(cell_y));
-                if (entities == null) continue;
-
-                for (entities.?.items) |entity| {
-                    if (entity.kind != Kind.Unit) continue;
-                    const other = entity.ref.Unit;
-
-                    // Check if valid mate
-                    if (other != self and other.owner == self.owner and other.genome.sex != self.genome.sex and other.energy >= other.selectivity and other.state != State.Mating and other.state != State.Dead and other.mate_target == null) {
-                        return other;
-                    }
+    /// Try to consume resources from own structure
+    fn eatResources(self: *Unit) bool {
+        if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |building| {
+            if (self.entity.isTouching(building, self.reachU16())) {
+                // Consume resources if available
+                if (building.ref.Structure.capacity > 0) {
+                    building.ref.Structure.capacity = @max(0, building.ref.Structure.capacity - 1);
+                    // Gain life from consuming food: life + (life * energy)
+                    self.life = @min(self.health, self.life + (self.life * @max(1, u.asI16(u16, self.energy))));
                 }
+                return true; // True even if building had no capacity
+            } else {
+                // Not at building yet, set as target
+                self.target = u.Circle.aroundEntity(building, self.reachU16());
             }
         }
-        return null;
+        return false;
+    }
+
+    /// Finds closest potential mate (opposite sex, same owner, sufficient energy).
+    fn findPotentialMate(self: *Unit) ?*Unit {
+        const cell_x = u.Grid.x(self.x);
+        const cell_y = u.Grid.y(self.y);
+        const entities = main.World.grid.sectionEntities(cell_x, cell_y);
+        const current = u.Point.at(self.x, self.y);
+        var best_dist: u32 = u.u16max;
+        var closest: ?*Unit = null;
+        for (entities.?.items) |entity| {
+            if (entity.kind != Kind.Unit) continue;
+            const this_dist = u.distanceSquared(current, u.Point.atEntity(entity));
+            if (this_dist > best_dist) continue;
+            const other = entity.ref.Unit;
+            // Check if valid mate
+            if (other != self and other.owner == self.owner and other.genome.sex != self.genome.sex and other.energy >= other.selectivity and other.state != State.Mating and other.state != State.Dead and other.mate_target == null) {
+                best_dist = this_dist;
+                closest = other;
+            }
+        }
+        return closest;
     }
 
     /// Attempt mating if conditions are met
@@ -681,7 +705,7 @@ pub const Unit = struct {
                     if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |b| {
                         self.target = u.Circle.aroundEntity(b, self.reachU16());
                     } else {
-                        self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
+                        //self.target = u.Circle.at(offsetFromPosition(self.last_step), u.Subcell.size);
                     }
                 } else if (self.state == State.Seeking and self.mate_target != null) {
                     self.target = u.Circle.aroundEntity(self.mate_target.?.entity, self.reachU16());
@@ -866,7 +890,7 @@ pub const Unit = struct {
                             self.target = u.Circle.aroundEntity(structure.?, self.reachU16());
                         }
                     } else { // Found no structure to deliver to, wanders
-                        self.target = u.Circle.at(offsetFromPosition(current), u.Subcell.size);
+                        //self.target = u.Circle.at(offsetFromPosition(current), u.Subcell.size);
                     }
                 } else { // Not carrying, looks for new resource or wander
                     var resource: ?*Entity = self.getResourceTarget();
@@ -886,7 +910,7 @@ pub const Unit = struct {
                             self.target = u.Circle.at(u.Point.closestContact(self.entity, resource.?), @as(u16, @intFromFloat(self.reach / 2)));
                         }
                     } else { // Found no new resource, wanders
-                        self.target = u.Circle.at(offsetFromPosition(current), u.Subcell.size);
+                        //self.target = u.Circle.at(offsetFromPosition(current), u.Subcell.size);
                     }
                 }
             }
@@ -1072,6 +1096,7 @@ pub const Unit = struct {
             .height = 0,
             .speed = 0,
             .health = 0,
+            .hunger = 0,
             .reach = 0,
             .tempo = 0,
             .carry = 0,
@@ -1138,7 +1163,8 @@ pub const Structure = struct {
     life: i16,
     restitution: f16,
     capacity: u16,
-    connected: ?[]*Structure,
+    connected: [16]?*Structure,
+    complex: ?*Complex = null,
     materials: u16 = 0,
     elapsed: u16 = 0,
     selected: bool = false,
@@ -1190,15 +1216,15 @@ pub const Structure = struct {
                     std.debug.print("Failed to spawn unit: {}. May want some sort of indication.\n", .{err});
                 }
             }
-            if (self.connected) |old_connected| main.World.grid.allocator.free(old_connected);
-            self.connected = u.findConnectedStructures(&main.World.grid, self) catch |err| {
-                std.debug.print("Failed to update connections: {}\n", .{err});
-                return;
-            }; // Updates array
+            // Regular connection update
+            // self.connected = u.findConnectedStructures(&main.World.grid, self) catch |err| {
+            //    std.debug.print("Failed to update connections: {}\n", .{err});
+            //    return;
+            //}; // Updates array
         }
         if (self.capacity > 0) { // Propagates capacity to connected buildings with lower capacity
-            if (self.connected) |buildings| {
-                for (buildings) |building| {
+            for (self.connected) |maybe_building| {
+                if (maybe_building) |building| {
                     if (self.capacity > building.capacity and building.capacity < Structure.preset(building.class).capacity) {
                         building.capacity = @min(building.capacity + 1, Structure.preset(building.class).capacity);
                         self.capacity -= 1;
@@ -1236,7 +1262,7 @@ pub const Structure = struct {
             .capacity = from_class.start_capacity,
             .x = x,
             .y = y,
-            .connected = null,
+            .connected = [_]?*Structure{null} ** 16,
         };
         entity.* = Entity{
             .kind = Kind.Structure,
@@ -1244,7 +1270,6 @@ pub const Structure = struct {
         };
 
         u.markSubcellsBlocked(x, y, from_class.width, from_class.height, true);
-
         try main.World.grid.addToCell(entity, null, null);
         return structure;
     }
@@ -1260,6 +1285,18 @@ pub const Structure = struct {
             std.debug.print("Failed to initialize connections: {}\n", .{err});
             return null;
         }; // Initial connections array
+        for (structure.connected) |maybe_connected| { // Updating pre-existing neighbors
+            if (maybe_connected) |neighbor| {
+                for (neighbor.connected, 0..) |slot, i| { // Directly updating neighbors' connected
+                    if (slot != null and slot.? == structure) break; // Somehow already connected
+                    if (slot == null) {
+                        neighbor.connected[i] = structure;
+                        break;
+                    }
+                }
+            }
+        }
+        structure.complex = structure.setComplex() catch null;
         return structure;
     }
 
@@ -1275,14 +1312,48 @@ pub const Structure = struct {
         try u.findAndSwapRemove(Structure, &structures, self); // Removes structure from the structures collection
         for (structures.items) |structure| {
             std.debug.assert(structure != self); // For debugging, structure must be removed at this point
+            for (structure.connected, 0..) |connected, i| { // Removes pointer from other structures' connected
+                if (connected == self) {
+                    structure.connected[i] = null;
+                }
+            }
         }
 
         u.markSubcellsBlocked(self.x, self.y, self.width(), self.height(), false);
-
-        if (self.connected) |connected| main.World.grid.allocator.free(connected); // Frees connection array
+        if (self.complex != null) self.complex.?.remove(self);
         //self.model.destroy(main.World.grid.allocator); // Deallocates memory for the model
         main.World.grid.allocator.destroy(self.entity); // Deallocates memory for the Entity
         main.World.grid.allocator.destroy(self); // Deallocates memory for the Structure
+    }
+
+    fn setComplex(self: *Structure) !?*Complex {
+        var found_complex: ?*Complex = null;
+        for (self.connected) |maybe_neighbor| { // Surrounding complex
+            if (maybe_neighbor) |neighbor| {
+                if (neighbor.complex) |c| {
+                    found_complex = c;
+                    break;
+                }
+            }
+        }
+        if (found_complex == null) { // None, making new complex
+            const complex = try Complex.create();
+            complex.add(self);
+            self.complex = complex;
+            return complex;
+        }
+        const base = found_complex.?;
+        base.add(self);
+        for (base.members) |maybe_neighbor| {
+            if (maybe_neighbor) |neighbor| {
+                if (neighbor.complex) |other| {
+                    if (other != base) { // Some neighbor has another
+                        base.merge(other);
+                    }
+                }
+            }
+        }
+        return base;
     }
 
     pub fn spawnClass(self: *Structure) u8 {
@@ -1608,6 +1679,65 @@ pub const Projectile = struct {
 
     fn speed(self: *Projectile) f16 {
         return preset(self.class).speed;
+    }
+};
+
+// Complex
+//----------------------------------------------------------------------------------
+pub const Complex = struct {
+    members: [main.Config.MAX_COMPLEX_SIZE]?*Structure,
+
+    pub fn add(self: *Complex, structure: *Structure) void {
+        for (self.members, 0..) |slot, i| {
+            if (slot == structure) return;
+            if (slot == null) {
+                self.members[i] = structure;
+                return;
+            }
+        }
+        // Clobbers if exceeding limit
+        for (0..self.members.len - 1) |i| {
+            self.members[i] = self.members[i + 1];
+        }
+        self.members[self.members.len - 1] = structure;
+    }
+
+    pub fn remove(self: *Complex, structure: *Structure) void {
+        for (self.members, 0..) |slot, i| {
+            if (slot == structure) {
+                for (i..self.members.len - 1) |j| { // Shifts array left to fill null
+                    self.members[j] = self.members[j + 1];
+                }
+                self.members[self.members.len - 1] = null;
+                break;
+            }
+        }
+        if (self.members[0] == null) {
+            self.destroy();
+        }
+    }
+
+    pub fn merge(self: *Complex, other: *Complex) void {
+        for (other.members) |maybe_member| {
+            if (maybe_member) |member| {
+                self.add(member);
+                member.complex = self;
+            }
+        }
+        other.destroy();
+    }
+
+    pub fn create() !*Complex {
+        const complex = try main.World.grid.allocator.create(Complex);
+        complex.* = Complex{
+            .members = [_]?*Structure{null} ** main.Config.MAX_COMPLEX_SIZE,
+        };
+        return complex;
+    }
+
+    pub fn destroy(self: *Complex) void {
+        // Clean up, by reassigning or nulling, self.members in context
+        main.World.grid.allocator.destroy(self);
     }
 };
 

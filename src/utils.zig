@@ -368,6 +368,11 @@ pub fn randomU16(max: u16) u16 {
     return @as(u16, @truncate(random_value));
 }
 
+pub fn randomU32(max: u32) u32 {
+    const random_value = main.World.rng.next() % @as(u64, @intCast(max + 1));
+    return @as(u32, @truncate(random_value));
+}
+
 pub fn randomI16(max: u16) i16 {
     const random_value = main.World.rng.next() % @as(u64, @intCast(max + 1));
     return @as(i16, @intCast(random_value));
@@ -1682,26 +1687,23 @@ pub fn concentricRelationalSearch(grid: *e.Grid, origin: *e.Entity, relation: Re
     return null; // If no entity was found after the entire search
 }
 
-/// Searches for `Structure` connected to `origin` `Structure`. Returns slice of any `Structure` found, or `null`.
-pub fn findConnectedStructures(grid: *e.Grid, origin: *e.Structure) !?[]*e.Structure {
+/// Searches for `Structure` connected to `origin` `Structure`. Returns 16 `Structures` found or null.
+pub fn findConnectedStructures(grid: *e.Grid, origin: *e.Structure) ![16]?*e.Structure {
+    var result: [16]?*e.Structure = [_]?*e.Structure{null} ** 16;
     const origin_col = Grid.x(origin.x);
     const origin_row = Grid.y(origin.y);
-    const entities: ?*std.ArrayList(*e.Entity) = grid.sectionEntities(origin_col, origin_row);
-    var structures = std.ArrayList(*e.Structure).init(grid.allocator.*);
-    defer structures.deinit();
-
+    const entities = grid.sectionEntities(origin_col, origin_row);
+    var index: usize = 0;
     if (entities) |entitylist| {
         for (entitylist.items) |entity| {
-            if (entity.kind == e.Kind.Structure and e.Entity.isTouching(origin.entity, entity, 1)) {
-                try structures.append(entity.ref.Structure);
+            if (entity.kind == e.Kind.Structure and entity != origin.entity and e.Entity.isTouching(origin.entity, entity, 1)) {
+                if (index >= 16) return error.TooManyConnections;
+                result[index] = entity.ref.Structure;
+                index += 1;
             }
         }
     }
-    if (structures.items.len > 0) {
-        return try structures.toOwnedSlice(); // Converts the ArrayList to a slice
-    } else {
-        return null;
-    }
+    return result;
 }
 
 // Game data
@@ -1728,10 +1730,10 @@ pub fn structureTypeFromClass(class: u8) []const u8 {
 
 pub fn resourceTypeFromClass(class: u8) []const u8 {
     return switch (class) {
-        0 => "Food",
-        1 => "Wood",
-        2 => "Iron",
-        3 => "Grail",
+        0 => "A", // "Food",
+        1 => "B", // "Wood",
+        2 => "C", // "Iron",
+        3 => "D", // "Grail",
         else => "Unknown resource type",
     };
 }

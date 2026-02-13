@@ -13,6 +13,7 @@ pub const Config = struct {
     pub const PLAYER_SEARCH_LIMIT = 2056; // Player collision search limit, must exceed #entities in 3x3 cells
     pub const UNIT_SEARCH_LIMIT = 1028; // Unit collision search limit
     pub const BUFFERSIZE = 65536; // Limit to number of entities updated via sectionSearch per tick
+    pub const MAX_COMPLEX_SIZE = 256; // Limit to connected buildings
     pub const DASHBOARD_HEIGHT = 200;
     pub var last_tick_time: f64 = 0.0;
     pub var profile_mode = false;
@@ -311,7 +312,7 @@ pub fn main() anyerror!void {
         rl.beginDrawing();
         defer rl.endDrawing();
 
-        rl.clearBackground(rl.Color.init(40, 40, 80, 255)); // Background color
+        rl.clearBackground(rl.Color.init(0, 0, 0, 255)); // Background color
         draw(profile_frame);
         if (profile_frame) u.endTimer(0, "Drawing phase took {} seconds in total.\n");
 
@@ -360,6 +361,7 @@ fn processInput(stored_mouse_input_l: *rl.Vector2, stored_mouse_input_r: *rl.Vec
     if (rl.isKeyDown(rl.KeyboardKey.key_space)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Space);
     if (rl.isKeyPressed(rl.KeyboardKey.key_left_control) or rl.isKeyPressed(rl.KeyboardKey.key_right_control)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Ctrl);
     if (rl.isKeyPressed(rl.KeyboardKey.key_enter) or rl.isKeyPressed(rl.KeyboardKey.key_kp_enter)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Enter);
+    if (rl.isKeyPressed(rl.KeyboardKey.key_backspace)) stored_key_input.* |= @intFromEnum(u.Key.InputValue.Backspace);
 }
 
 // Game loop: Controls
@@ -454,9 +456,13 @@ fn setSelection(target: ?*e.Entity) void {
     if (target == null) return;
     target.?.setSelected(true); // Sets flag on entity
     // Adding derived secondary selected
-    if (target.?.kind == e.Kind.Structure and target.?.ref.Structure.connected != null) {
-        for (target.?.ref.Structure.connected.?) |connected_structure| {
-            addSelection(connected_structure.entity);
+    if (target.?.kind == e.Kind.Structure) {
+        if (target.?.ref.Structure.complex) |complex| {
+            for (complex.members) |maybe_connected| {
+                if (maybe_connected) |connected| {
+                    addSelection(connected.entity);
+                }
+            }
         }
     }
 }
@@ -803,12 +809,11 @@ pub fn drawMap() void {
         var y: usize = u.Subcell.toCornerY(u.u16Sub(Player.self.?.y, u.Grid.cell_half));
         while (y <= u.u16Add(Player.self.?.y, u.Grid.cell_half)) : (y += subcell) {
             while (x <= u.u16Add(Player.self.?.x, u.Grid.cell_half)) : (x += subcell) {
-                // Draw land textures
                 //u.drawTexture(landTexture.?.*, @as(i32, @intCast(x)), @as(i32, @intCast(y)), rl.Color.white);
                 if (isInBuildDistance(@intCast(x + subcell / 2), @intCast(y + subcell / 2))) {
                     const nodex: u16 = @intCast(x + subhalf);
                     const nodey: u16 = @intCast(y + subhalf);
-                    const color = if (World.grid.blocked_subcells.contains(u.Point.at(nodex, nodey))) u.opacity(rl.Color.red, 0.2) else u.opacity(rl.Color.white, 0.2);
+                    const color = if (World.grid.blocked_subcells.contains(u.Point.at(nodex, nodey))) u.opacity(rl.Color.red, 0.1) else u.opacity(rl.Color.white, 0.1);
                     u.drawRect(@as(i32, @intCast(x)), @as(i32, @intCast(y)), subcell, subcell, color);
                 }
             }
@@ -825,18 +830,18 @@ pub fn drawMap() void {
         // std.debug.print("current Camera.canvas_zoom: {}\n", .{Camera.canvas_zoom});
 
         while (rowIndex * subcell < World.height) : (rowIndex += 1) {
-            rl.drawRectangle(0, u.canvasY(@intCast(subcell * rowIndex), Camera.canvas_offset_y, Camera.canvas_zoom), World.width, thinLine, u.opacity(rl.Color.white, 0.2));
+            rl.drawRectangle(0, u.canvasY(@intCast(subcell * rowIndex), Camera.canvas_offset_y, Camera.canvas_zoom), World.width, thinLine, u.opacity(rl.Color.white, 0.1));
         }
         while (colIndex * subcell < World.width) : (colIndex += 1) {
-            rl.drawRectangle(u.canvasX(@as(i32, @intCast(subcell * colIndex)), Camera.canvas_offset_x, Camera.canvas_zoom), 0, thinLine, World.height, u.opacity(rl.Color.white, 0.2));
+            rl.drawRectangle(u.canvasX(@as(i32, @intCast(subcell * colIndex)), Camera.canvas_offset_x, Camera.canvas_zoom), 0, thinLine, World.height, u.opacity(rl.Color.white, 0.1));
         }
         rowIndex = 1;
         while (rowIndex * u.Grid.cell_size < World.height) : (rowIndex += 1) {
-            rl.drawRectangle(0, u.canvasY(@as(i32, @intCast(u.Grid.cell_size * rowIndex)), Camera.canvas_offset_y, Camera.canvas_zoom), World.width, thickLine, u.opacity(rl.Color.white, 0.4));
+            rl.drawRectangle(0, u.canvasY(@as(i32, @intCast(u.Grid.cell_size * rowIndex)), Camera.canvas_offset_y, Camera.canvas_zoom), World.width, thickLine, u.opacity(rl.Color.white, 0.2));
         }
         colIndex = 1;
         while (colIndex * u.Grid.cell_size < World.width) : (colIndex += 1) {
-            rl.drawRectangle(u.canvasX(@as(i32, @intCast(u.Grid.cell_size * colIndex)), Camera.canvas_offset_x, Camera.canvas_zoom), 0, thickLine, World.height, u.opacity(rl.Color.white, 0.4));
+            rl.drawRectangle(u.canvasX(@as(i32, @intCast(u.Grid.cell_size * colIndex)), Camera.canvas_offset_x, Camera.canvas_zoom), 0, thickLine, World.height, u.opacity(rl.Color.white, 0.2));
         }
         if (Player.selected[0]) |selected| {
             if (selected.kind == e.Kind.Unit) {
@@ -940,7 +945,7 @@ pub fn drawInterface() void {
 
     // Bottom dashboard
     const dash_y: i32 = rl.getScreenHeight() - Config.DASHBOARD_HEIGHT;
-    rl.drawRectangle(0, dash_y, rl.getScreenWidth(), Config.DASHBOARD_HEIGHT, rl.Color.init(140, 140, 255, 180));
+    rl.drawRectangle(0, dash_y, rl.getScreenWidth(), Config.DASHBOARD_HEIGHT, rl.Color.init(255, 255, 255, 85));
 
     // Sets id to selected's owner, otherwise client's player id
     const id = if (Player.selected[0] != null) Player.selected[0].?.owner() else Player.id orelse 0;
@@ -1016,7 +1021,8 @@ pub fn drawInterface() void {
             rl.drawText(text, x, y, fsize, rl.Color.black); // Draws field data or ""
         }
 
-        fsize = 14;
+        fsize = 15;
+        var target_count: usize = 1;
         // Writes columns 3 - 18 : Secondary selections
         for (Player.selected, 0..) |selected, i| {
             if (selected == null or i <= 0) continue;
@@ -1031,6 +1037,23 @@ pub fn drawInterface() void {
             };
             text = std.fmt.bufPrintZ(&buffer, "{s}", .{label}) catch "Error";
             rl.drawText(text, x, y, fsize, rl.Color.black);
+            target_count += 1;
+        }
+        fsize = 28;
+        if (target_count > 1) { // Draws secondary target count
+            text = std.fmt.bufPrintZ(&buffer, "{}", .{target_count}) catch "Error";
+            rl.drawText(text, 750 + (65 * 31), dash_y + 20 + (20 * 7), fsize, rl.Color.black);
+        } else if (kind == e.Kind.Unit) { // Primary selection properties
+            x = 750;
+            for (ref.Unit.genome.traits, 0..) |trait, i| {
+                const index = @as(u16, @intCast(i));
+                x = 750 + (260 * @divFloor(index, 4));
+                y = dash_y + 20 + (40 * (index % 4));
+                text = std.fmt.bufPrintZ(&buffer, "{s}:", .{@tagName(trait.metric)}) catch "Error";
+                rl.drawText(text, x, y, fsize, rl.Color.black);
+                text = std.fmt.bufPrintZ(&buffer, "{d:.2}", .{trait.value}) catch "Error";
+                rl.drawText(text, x + 130, y, fsize, rl.Color.black);
+            }
         }
     }
 
@@ -1185,9 +1208,10 @@ fn processActionInput(key_input: u32) void { // Called in processInput
 
 pub fn executeBuild(class: u8) void {
     const mouse_position = rl.getMousePosition();
-    const mouse_closest_center = u.screenToSubcell(mouse_position).node;
-    if (!isInBuildDistance(mouse_closest_center.x, mouse_closest_center.y) or Player.id == null) return;
     const xy = findBuildPosition(class, mouse_position);
+    // const mouse_closest_center = u.screenToSubcell(mouse_position).node;
+    //if (!isInBuildDistance(mouse_closest_center.x, mouse_closest_center.y) or Player.id == null) return;
+    if (Player.id == null or !canBuildOn(xy[0], xy[1], e.Structure.preset(class).width, e.Structure.preset(class).height)) return;
     const built = e.Structure.construct(Player.id.?, xy[0], xy[1], class);
     if (built) |building| {
         std.debug.print("Structure built successfully: \n{}.\nPointer address of structure is: {}.\n", .{ building, @intFromPtr(building) });
@@ -1228,6 +1252,24 @@ fn isInBuildDistance(x: u16, y: u16) bool {
     return distance <= distance_max;
 }
 
+fn canBuildOn(x: u16, y: u16, width: u16, height: u16) bool {
+    const in_map = u.isInMap(x, y, width, height);
+    const in_range = u.Subcell.forEachBlockedSubcell(
+        x,
+        y,
+        width,
+        height,
+        struct {
+            fn f(subcell: u.Subcell) bool {
+                const node = subcell.node;
+                return isInBuildDistance(node.x, node.y);
+            }
+        }.f,
+    );
+    const open = if (in_map) (u.isOpenGround(x, y, width, height) catch false) else false;
+    return open and in_range;
+}
+
 // Interface
 //----------------------------------------------------------------------------
 pub fn drawGuide(class: u8) void {
@@ -1235,10 +1277,7 @@ pub fn drawGuide(class: u8) void {
     const mouse_position = rl.getMousePosition();
     const xy = findBuildPosition(class, mouse_position);
     const building = e.Structure.preset(class);
-    const in_map = u.isInMap(xy[0], xy[1], building.width, building.height);
-    const open = if (in_map) (u.isOpenGround(xy[0], xy[1], building.width, building.height) catch false) else false;
-    const mouse_closest_center = u.screenToSubcell(mouse_position).node;
-    if (!open or !isInBuildDistance(mouse_closest_center.x, mouse_closest_center.y)) {
+    if (!canBuildOn(xy[0], xy[1], building.width, building.height)) {
         u.drawGuideFail(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));
     } else {
         u.drawGuide(xy[0], xy[1], building.width, building.height, Player.self.?.entity.color(1));

@@ -29,6 +29,7 @@ pub const Genome = struct {
         var height: f32 = 20.0;
         var speed: f32 = 30.0;
         var health: f32 = 100.0;
+        var hunger: f32 = 20.0;
         var reach: f32 = 5.0;
         var tempo: f32 = 20.0;
         var carry: f32 = 3.0;
@@ -39,10 +40,10 @@ pub const Genome = struct {
                 .Height => height *= trait.value,
                 .Speed => speed *= trait.value,
                 .Health => health *= trait.value,
+                .Hunger => hunger *= trait.value,
                 .Reach => reach *= trait.value,
                 .Tempo => tempo *= trait.value,
                 .Carry => carry *= trait.value,
-                else => {},
             }
         }
 
@@ -50,6 +51,7 @@ pub const Genome = struct {
         unit.height = @intFromFloat(height);
         unit.speed = @as(f16, @floatCast(speed));
         unit.health = @intFromFloat(health);
+        unit.hunger = @intFromFloat(hunger);
         unit.tempo = @intFromFloat(tempo);
         unit.carry = @intFromFloat(carry);
         unit.life = unit.health;
