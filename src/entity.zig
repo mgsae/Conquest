@@ -420,7 +420,7 @@ pub const Unit = struct {
     // Resources and reproduction
     resources: [4]u16,
     energy: u16, // Energy for mating (gained from food)
-    selectivity: u16 = 1, // Threshold for mating (own & other's energy must exceed)
+    selectivity: u16 = 25, // Threshold for mating (own & other's energy must exceed)
     mate_target: ?*Unit, // Current mate if in mating process
     // projectiles: *std.ArrayList(*Projectile),
 
@@ -471,6 +471,7 @@ pub const Unit = struct {
 
             // Execute actions at tempo rate
             if (main.moveDivMultiple(self.elapsed, self.tempo)) {
+                self.energy = u.u16Add(self.energy, 1);
                 try self.executeAction(); // Updates state, behavior
             }
 
@@ -533,7 +534,7 @@ pub const Unit = struct {
         }
 
         // Seek mate if energy is high enough
-        if (self.energy >= self.selectivity and self.state != State.Mating and self.mate_target == null) {
+        if (self.energy >= self.selectivity and self.state != State.Mating) {
             if (self.findPotentialMate()) |mate| {
                 self.mate_target = mate;
                 mate.mate_target = self;
@@ -567,8 +568,6 @@ pub const Unit = struct {
                     return;
                 }
             }
-        } else if (self.state == State.Delivering) {
-            self.state = State.Seeking;
         }
 
         // Not currently gathering, clears gathering state
@@ -632,7 +631,7 @@ pub const Unit = struct {
             if (this_dist > best_dist) continue;
             const other = entity.ref.Unit;
             // Check if valid mate
-            if (other != self and other.owner == self.owner and other.genome.sex != self.genome.sex and other.energy >= other.selectivity and other.state != State.Mating and other.state != State.Dead and other.mate_target == null) {
+            if (other != self and other.owner == self.owner and other.genome.sex != self.genome.sex and other.state != State.Mating and other.state != State.Dead) {
                 best_dist = this_dist;
                 closest = other;
             }
@@ -652,8 +651,8 @@ pub const Unit = struct {
 
             if (self.entity.isTouching(mate.entity, self.reachU16())) {
                 // Both units consume energy and create offspring
-                self.energy = u.u16Sub(self.energy, 1);
-                mate.energy = u.u16Sub(mate.energy, 1);
+                self.energy = u.u16Sub(self.energy, self.selectivity);
+                mate.energy = u.u16Sub(mate.energy, self.selectivity);
 
                 self.state = State.Mating;
                 mate.state = State.Mating;
