@@ -598,7 +598,7 @@ pub const Unit = struct {
         return false;
     }
 
-    /// Try to consume resources from own structure
+    /// Does concentric relational search for own structure. If touching, subtracts one capacity and increases `self` life by `self.life` + `self.energy` and returns true. If not touching, sets target around structure and returns false.
     fn eatResources(self: *Unit) bool {
         if (u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isOwnStructure)) |building| {
             if (self.entity.isTouching(building, self.reachU16())) {
@@ -943,7 +943,7 @@ pub const Unit = struct {
             const cur_wp = u.Waypoint.closest(current.x, current.y);
             const tar_wp = u.Waypoint.closest(self.target.center.x, self.target.center.y);
 
-            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.stored_extrema[0].?.x != cur_wp.x or self.stored_extrema[0].?.y != cur_wp.y or self.stored_extrema[1].?.x != tar_wp.x or self.stored_extrema[1].?.y != tar_wp.y) {
+            if (self.stored_extrema[0] == null or self.stored_extrema[1] == null or self.stored_extrema[1].?.x != tar_wp.x or self.stored_extrema[1].?.y != tar_wp.y or (self.stored_extrema[0] != null and u.distanceSquared(current, self.stored_extrema[0].?) <= u.Grid.cell_quarter * u.Grid.cell_quarter)) {
                 const new_path = main.World.grid.findWaypointPath(cur_wp, tar_wp) catch |err| switch (err) {
                     error.NoPath => null,
                     else => {
@@ -953,15 +953,37 @@ pub const Unit = struct {
                 };
                 if (new_path) |path| {
                     defer path.deinit();
-                    if (path.items.len > 1 and self.immediate_target.contains(path.items[0])) {
-                        self.immediate_target = u.Circle.at(path.items[1], u.Grid.cell_quarter);
-                    } else {
-                        self.immediate_target = u.Circle.at(path.items[0], u.Grid.cell_quarter);
+                    const next_wp = if (path.items.len > 1 and path.items[0].x == cur_wp.x and path.items[0].y == cur_wp.y) path.items[1] else path.items[0];
+                    self.stored_extrema[0] = next_wp;
+                    self.stored_extrema[1] = tar_wp;
+                }
+            }
+
+            if (self.stored_extrema[0] != null) {
+                const wp_point = self.stored_extrema[0].?;
+                const wp_circle = u.Circle.at(wp_point, u.Grid.cell_quarter);
+
+                const cur_node = u.Subcell.closestNodePoint(current.x, current.y);
+                const tar_node = u.Subcell.closestNodePoint(wp_circle.center.x, wp_circle.center.y);
+
+                if (self.immediate_target.contains(current) or !u.Point.equals(tar_node, u.Subcell.closestNodePoint(self.immediate_target.center.x, self.immediate_target.center.y))) {
+                    const new_node_path = main.World.grid.findNodePath(cur_node, wp_circle) catch |err| switch (err) {
+                        error.NoPath => null,
+                        else => {
+                            std.debug.print("Error: {}\n", .{err});
+                            return current;
+                        },
+                    };
+                    if (new_node_path) |npath| {
+                        defer npath.deinit();
+                        if (npath.items.len > 1 and self.immediate_target.contains(npath.items[0])) {
+                            self.immediate_target = u.Circle.at(npath.items[1], u.Subcell.size);
+                        } else {
+                            self.immediate_target = u.Circle.at(npath.items[0], u.Subcell.size);
+                        }
                     }
                 }
             }
-            self.stored_extrema[0] = cur_wp;
-            self.stored_extrema[1] = tar_wp;
         }
 
         return self.stepTowardsTarget(current, self.immediate_target.center);
