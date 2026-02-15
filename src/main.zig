@@ -624,7 +624,7 @@ fn updateEntities(profile_frame: bool) !void {
     }
     if (profile_frame) u.endTimer(1, "Updating structures took {} seconds.");
 
-    // Units (and projectiles)
+    // Units
     if (profile_frame) u.startTimer(1, "- Updating units.");
     @memset(&Player.id_unit_count, 0); // Resets unit counters
     for (e.units.items) |unit| {

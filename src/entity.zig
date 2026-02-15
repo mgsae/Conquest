@@ -422,7 +422,6 @@ pub const Unit = struct {
     energy: u16, // Energy for mating (gained from food)
     selectivity: u16 = 25, // Threshold for mating (own & other's energy must exceed)
     mate_target: ?*Unit, // Current mate if in mating process
-    // projectiles: *std.ArrayList(*Projectile),
 
     elapsed: i16 = 0,
     experience: i16 = 0,
@@ -447,7 +446,6 @@ pub const Unit = struct {
         u.drawModel(self.model, self.width * m, self.height * m, self.entity.color(alpha), self.entity.color(alpha));
         if (self.selected) u.drawCircumference(self.target, self.entity.color(alpha / 2));
         u.drawLifeInterpolated(self.x, self.y, self.width, self.life, self.health, self.last_step, self.elapsed);
-        // for (self.projectiles.items) |projectile| projectile.draw(alpha);
     }
 
     pub fn update(self: *Unit) !void {
@@ -954,7 +952,7 @@ pub const Unit = struct {
                 if (new_path) |path| {
                     defer path.deinit();
                     const next_wp = if (path.items.len > 1 and path.items[0].x == cur_wp.x and path.items[0].y == cur_wp.y) path.items[1] else path.items[0];
-                    self.stored_extrema[0] = next_wp;
+                    self.stored_extrema[0] = next_wp; // For long-distance, stored_extrema[0] tracks upcoming waypoint
                     self.stored_extrema[1] = tar_wp;
                 }
             }
@@ -962,10 +960,9 @@ pub const Unit = struct {
             if (self.stored_extrema[0] != null) {
                 const wp_point = self.stored_extrema[0].?;
                 const wp_circle = u.Circle.at(wp_point, u.Grid.cell_quarter);
-
                 const cur_node = u.Subcell.closestNodePoint(current.x, current.y);
                 const tar_node = u.Subcell.closestNodePoint(wp_circle.center.x, wp_circle.center.y);
-
+                // Node pathing towards upcoming waypoint
                 if (self.immediate_target.contains(current) or !u.Point.equals(tar_node, u.Subcell.closestNodePoint(self.immediate_target.center.x, self.immediate_target.center.y))) {
                     const new_node_path = main.World.grid.findNodePath(cur_node, wp_circle) catch |err| switch (err) {
                         error.NoPath => null,
@@ -1036,7 +1033,7 @@ pub const Unit = struct {
 
     fn getAttackTarget(self: *Unit) ?*Entity {
         const found_entity = u.concentricRelationalSearch(&main.World.grid, self.entity, Entity.isEnemy);
-        if (found_entity != null and self.entity.inRangeOf(found_entity.?, self.reach)) {
+        if (found_entity != null and self.entity.inRangeOf(found_entity.?, self.reach * 10)) {
             return found_entity;
         }
         return null;
@@ -1051,7 +1048,6 @@ pub const Unit = struct {
             std.debug.print("Attack failed: {}.\n", .{err});
             return false;
         };
-        //try self.projectiles.append(projectile);
         return true;
     }
 
@@ -1083,8 +1079,6 @@ pub const Unit = struct {
     pub fn createFromGenome(owner: u8, x: u16, y: u16, genome: Genome) !*Unit {
         const entity = try main.World.grid.allocator.create(Entity);
         const unit = try main.World.grid.allocator.create(Unit);
-        //const projectiles = try main.World.grid.allocator.create(std.ArrayList(*Projectile));
-        //projectiles.* = std.ArrayList(*Projectile).init(main.World.grid.allocator.*);
 
         const start_point = u.Point.at(x, y);
 
@@ -1126,7 +1120,6 @@ pub const Unit = struct {
             .last_step = start_point,
             .stored_extrema = [2]?u.Point{ null, null },
             .cached_cellsigns = [_]u32{0} ** 9,
-            //.projectiles = projectiles,
             .state = State.Default,
             .resources = [_]u16{ 0, 0, 0, 0 },
             .energy = 0,
@@ -1160,8 +1153,6 @@ pub const Unit = struct {
             std.debug.assert(unit != self);
         }
 
-        //self.projectiles.deinit();
-        //main.World.grid.allocator.destroy(self.projectiles);
         self.model.destroy(main.World.grid.allocator);
         main.World.grid.allocator.destroy(self.entity);
         main.World.grid.allocator.destroy(self);
@@ -1573,6 +1564,7 @@ pub const Projectile = struct {
 
     pub fn update(self: *Projectile) void {
         self.life -= 1;
+        std.debug.print("Updating projectile. Life: {d}\n", .{self.life});
         if (self.life <= 0) {
             self.state = State.Destroyed; // Cleared in main
             return;
@@ -1638,6 +1630,8 @@ pub const Projectile = struct {
             .color = source.color(1),
             .targets = filtered_near,
         };
+        try main.World.new_projectiles.append(projectile);
+        std.debug.print("Launching projectile: {any}\n", .{projectile});
         return projectile;
     }
 
