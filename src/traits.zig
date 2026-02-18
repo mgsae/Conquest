@@ -17,6 +17,7 @@ const Metric = enum {
 pub const Genome = struct {
     traits: [@typeInfo(Metric).Enum.fields.len]Trait,
     sex: Sex,
+    code: [8]u8,
 
     pub const Sex = enum {
         Male,
@@ -78,6 +79,23 @@ pub const Genome = struct {
             }
         }
 
+        var new_code: [8]u8 = .{' '} ** 8;
+        var write_index: usize = 0;
+        for (0..new_code.len - 1) |i| {
+            if (self.code[i] != ' ') {
+                if (write_index < 8) {
+                    new_code[write_index] = self.code[i];
+                    write_index += 1;
+                }
+            }
+            if (other.code[i] != ' ') {
+                if (write_index < 8) {
+                    new_code[write_index] = other.code[i];
+                    write_index += 1;
+                }
+            }
+        }
+
         // Randomly determine sex
         const offspring_sex: Sex = if (random.boolean()) .Male else .Female;
 
@@ -85,6 +103,7 @@ pub const Genome = struct {
         return Genome{
             .traits = offspring_traits,
             .sex = offspring_sex,
+            .code = new_code,
         };
     }
 
@@ -101,7 +120,7 @@ pub const Genome = struct {
         var traits: [@typeInfo(Metric).Enum.fields.len]Trait = undefined;
 
         switch (source) {
-            0 => { // Gatherer
+            'A' => {
                 traits[@intFromEnum(Metric.Width)] = .{ .metric = .Width, .value = 1.0 };
                 traits[@intFromEnum(Metric.Height)] = .{ .metric = .Height, .value = 1.0 };
                 traits[@intFromEnum(Metric.Speed)] = .{ .metric = .Speed, .value = 1.0 };
@@ -111,7 +130,7 @@ pub const Genome = struct {
                 traits[@intFromEnum(Metric.Tempo)] = .{ .metric = .Tempo, .value = 1.0 };
                 traits[@intFromEnum(Metric.Carry)] = .{ .metric = .Carry, .value = 1.0 };
             },
-            1 => { // Soldier
+            'B' => {
                 traits[@intFromEnum(Metric.Width)] = .{ .metric = .Width, .value = 1.25 };
                 traits[@intFromEnum(Metric.Height)] = .{ .metric = .Height, .value = 1.25 };
                 traits[@intFromEnum(Metric.Speed)] = .{ .metric = .Speed, .value = 1.1 };
@@ -121,7 +140,7 @@ pub const Genome = struct {
                 traits[@intFromEnum(Metric.Tempo)] = .{ .metric = .Tempo, .value = 1.0 };
                 traits[@intFromEnum(Metric.Carry)] = .{ .metric = .Carry, .value = 1.0 };
             },
-            2 => { // Trebuchet
+            'C' => {
                 traits[@intFromEnum(Metric.Width)] = .{ .metric = .Width, .value = 2.25 };
                 traits[@intFromEnum(Metric.Height)] = .{ .metric = .Height, .value = 2.25 };
                 traits[@intFromEnum(Metric.Speed)] = .{ .metric = .Speed, .value = 0.66 };
@@ -131,7 +150,7 @@ pub const Genome = struct {
                 traits[@intFromEnum(Metric.Tempo)] = .{ .metric = .Tempo, .value = 1.0 };
                 traits[@intFromEnum(Metric.Carry)] = .{ .metric = .Carry, .value = 1.0 };
             },
-            3 => { // Cavalry
+            'D' => {
                 traits[@intFromEnum(Metric.Width)] = .{ .metric = .Width, .value = 1.75 };
                 traits[@intFromEnum(Metric.Height)] = .{ .metric = .Height, .value = 1.75 };
                 traits[@intFromEnum(Metric.Speed)] = .{ .metric = .Speed, .value = 2.0 };
@@ -150,6 +169,7 @@ pub const Genome = struct {
         return Genome{
             .traits = traits,
             .sex = sex,
+            .code = .{source} ++ .{' '} ** 7,
         };
     }
 };

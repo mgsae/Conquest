@@ -71,17 +71,17 @@ fn generateThreeLanes(allocator: std.mem.Allocator, path: []const u8) !void {
     // Left lane
     for (0..20) |i| {
         const y = 1000 + i * (height - 2000) / 20;
-        try resources.append(.{ .x = width / 6, .y = @intCast(y), .class = 0 });
+        try resources.append(.{ .x = width / 6, .y = @intCast(y), .class = 'A' });
     }
     // Middle lane
     for (0..20) |i| {
         const y = 1000 + i * (height - 2000) / 20;
-        try resources.append(.{ .x = width / 2, .y = @intCast(y), .class = 0 });
+        try resources.append(.{ .x = width / 2, .y = @intCast(y), .class = 'B' });
     }
     // Right lane
     for (0..20) |i| {
         const y = 1000 + i * (height - 2000) / 20;
-        try resources.append(.{ .x = width / 6 * 5, .y = @intCast(y), .class = 0 });
+        try resources.append(.{ .x = width / 6 * 5, .y = @intCast(y), .class = 'C' });
     }
 
     const map = MapFile{
@@ -139,7 +139,7 @@ fn generateOpenPlains(allocator: std.mem.Allocator, path: []const u8) !void {
         try resources.append(.{
             .x = @intCast(random.intRangeAtMost(u16, 1000, width - 1000)),
             .y = @intCast(random.intRangeAtMost(u16, 1000, height - 1000)),
-            .class = 0,
+            .class = if (random.boolean()) 'A' else 'B',
         });
     }
 
@@ -197,7 +197,7 @@ fn generateMiniTest(allocator: std.mem.Allocator, path: []const u8) !void {
         try resources.append(.{
             .x = @intCast(random.intRangeAtMost(u16, 300, width - 300)),
             .y = @intCast(random.intRangeAtMost(u16, 300, height - 300)),
-            .class = random.intRangeAtMost(u8, 0, 1),
+            .class = if (random.boolean()) 'A' else 'B',
         });
     }
 

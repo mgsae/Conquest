@@ -961,7 +961,7 @@ pub fn drawInterface() void {
     text = std.fmt.bufPrintZ(&buffer, "Structures: {}", .{Player.id_structure_count[id]}) catch "Error";
     rl.drawText(text, x, dash_y + 100, fsize, rl.Color.black);
     if (Player.build_guide != null) {
-        text = std.fmt.bufPrintZ(&buffer, "Creating: {s}", .{u.structureTypeFromClass(Player.build_guide.?)}) catch "Error";
+        text = std.fmt.bufPrintZ(&buffer, "Creating: {any}", .{Player.build_guide.?}) catch "Error";
         rl.drawText(text, x, dash_y + 140, fsize, rl.Color.black);
     } else if (Player.id_player[id]) |player| {
         text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{player.life}) catch "Error";
@@ -986,24 +986,20 @@ pub fn drawInterface() void {
                 }
             } else if (kind == e.Kind.Unit) {
                 //const unit = ref.Unit;
-                const class: u8 = 0; // placeholder
                 switch (field) {
-                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} {s} ({s})", .{ @tagName(target.ref.Unit.genome.sex), u.unitTypeFromClass(class), @tagName(ref.Unit.state) }) catch "Error",
+                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} {s} ({s})", .{ @tagName(target.ref.Unit.genome.sex), target.ref.Unit.genome.code, @tagName(ref.Unit.state) }) catch "Error",
                     1 => text = std.fmt.bufPrintZ(&buffer, "Life: {}, Energy: {}", .{ target.ref.Unit.life, target.ref.Unit.energy }) catch "Error",
                     2 => // Checks for carried resources
                     {
-                        if (class == 0) { // Gatherer
-                            const carry = ref.Unit.resources;
-                            text = std.fmt.bufPrintZ(&buffer, "{s}: {d}, {s}: {d}, {s}: {d}, {s}: {d}", .{ u.resourceTypeFromClass(0), carry[0], u.resourceTypeFromClass(1), carry[1], u.resourceTypeFromClass(2), carry[2], u.resourceTypeFromClass(3), carry[3] }) catch "Error";
-                        } else { // Non-gatherer
-                            text = std.fmt.bufPrintZ(&buffer, "Experience: {}", .{target.ref.Unit.experience}) catch "Error";
-                        }
+                        const carry = ref.Unit.resources;
+                        text = std.fmt.bufPrintZ(&buffer, "{s}: {d}, {s}: {d}, {s}: {d}, {s}: {d}", .{ u.resourceTypeFromClass(0), carry[0], u.resourceTypeFromClass(1), carry[1], u.resourceTypeFromClass(2), carry[2], u.resourceTypeFromClass(3), carry[3] }) catch "Error";
                     },
+                    3 => text = std.fmt.bufPrintZ(&buffer, "Experience: {}", .{target.ref.Unit.experience}) catch "Error",
                     else => {},
                 }
             } else if (kind == e.Kind.Structure) {
                 switch (field) {
-                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.structureTypeFromClass(target.ref.Structure.class), @tagName(e.Kind.Structure) }) catch "Error",
+                    0 => text = std.fmt.bufPrintZ(&buffer, "{c} ({s})", .{ target.ref.Structure.class, @tagName(e.Kind.Structure) }) catch "Error",
                     1 => text = std.fmt.bufPrintZ(&buffer, "Life: {}", .{target.life()}) catch "Error",
                     2 => text = std.fmt.bufPrintZ(&buffer, "Capacity: {}/{}", .{ target.ref.Structure.capacity, e.Structure.preset(target.ref.Structure.class).capacity }) catch "Error",
                     3 => text = std.fmt.bufPrintZ(&buffer, "Materials: {}", .{target.ref.Structure.materials}) catch "Error",
@@ -1011,7 +1007,7 @@ pub fn drawInterface() void {
                 }
             } else if (kind == e.Kind.Resource) {
                 switch (field) {
-                    0 => text = std.fmt.bufPrintZ(&buffer, "{s} ({s})", .{ u.resourceTypeFromClass(target.ref.Resource.class), @tagName(e.Kind.Resource) }) catch "Error",
+                    0 => text = std.fmt.bufPrintZ(&buffer, "{c} ({s})", .{ target.ref.Resource.class, @tagName(e.Kind.Resource) }) catch "Error",
                     1 => text = std.fmt.bufPrintZ(&buffer, "Remaining: {}", .{target.life()}) catch "Error",
                     2 => text = std.fmt.bufPrintZ(&buffer, "Yield: {d}", .{target.ref.Resource.yield / Config.TICKRATE}) catch "Error",
                     3 => text = std.fmt.bufPrintZ(&buffer, "Growth: {d}", .{target.ref.Resource.growth}) catch "Error",
@@ -1029,11 +1025,11 @@ pub fn drawInterface() void {
             const index = @as(u16, @intCast(i - 1));
             x = 750 + (65 * @divFloor(index, 8));
             y = dash_y + 20 + (20 * (index % 8));
-            const label: []const u8 = switch (kind) {
-                e.Kind.Player => "Player",
-                e.Kind.Resource => u.resourceTypeFromClass(selected.?.ref.Resource.class),
-                e.Kind.Structure => u.structureTypeFromClass(selected.?.ref.Structure.class),
-                e.Kind.Unit => u.unitTypeFromClass(0),
+            const label: [8]u8 = switch (kind) {
+                e.Kind.Player => "Player  ".*,
+                e.Kind.Resource => .{selected.?.ref.Resource.class} ++ .{' '} ** 7,
+                e.Kind.Structure => .{selected.?.ref.Structure.class} ++ .{' '} ** 7,
+                e.Kind.Unit => selected.?.ref.Unit.genome.code,
             };
             text = std.fmt.bufPrintZ(&buffer, "{s}", .{label}) catch "Error";
             rl.drawText(text, x, y, fsize, rl.Color.black);
@@ -1125,18 +1121,18 @@ pub const EnemyPlayerAI = struct {
             // Shuffles direction array
             u.shuffleArray(u8, &directions);
 
-            // Generate a "random" structure class value between 0 and 3 (0 (farm) at 50%)
-            const class_value = if (tick % move_all < move_all / 2) 0 else u.asU8(u64, tick / 300 % 4);
-            constructBuilding(ai, class_value, tick);
+            // Generate a "random" structure class value between 0 and 3 (0 at 50%)
+            const build_index = if (tick % move_all < move_all / 2) 0 else u.asU8(u64, tick / 300 % 4);
+            constructBuilding(ai, u.classFromIndexStructure(build_index), tick);
         }
     }
 
     pub fn constructBuilding(ai: *e.Player, class: u8, tick: u64) void {
-        const x_raw = @max(@rem(@as(i32, @intCast(tick)), 500) - 250, 0);
-        const y_raw = @max(@rem(@divTrunc(@as(i32, @intCast(tick)), 2), 500) - 250, 0);
-        const x = @as(u16, @intCast(x_raw));
-        const y = @as(u16, @intCast(y_raw));
-        _ = e.Structure.construct(ai.id, ai.x + x, ai.y + y, class);
+        const dx: i32 = @rem(@as(i32, @intCast(tick)), 600) - 300;
+        const dy: i32 = @rem(@as(i32, @intCast(tick / 2)), 600) - 300;
+        const x: u16 = @intCast(@as(i32, ai.x) + dx);
+        const y: u16 = @intCast(@as(i32, ai.y) + dy);
+        _ = e.Structure.construct(ai.id, x, y, class);
     }
 
     /// Moves continuously in a tick-determined direction for up to `duration` ticks.
@@ -1197,7 +1193,7 @@ fn processActionInput(key_input: u32) void { // Called in processInput
     if (Player.build_index != null) { // Sets build guide
         if (Player.build_guide == null or Player.build_guide.? != Player.build_index.?) {
             std.debug.print("Set a build guide!\n", .{});
-            Player.build_guide = Player.build_index;
+            Player.build_guide = u.classFromIndexStructure(Player.build_index.?);
         } else {
             std.debug.print("Removed build guide!\n", .{});
             Player.build_guide = null;

@@ -1044,7 +1044,7 @@ pub const Unit = struct {
     }
 
     fn attack(self: *Unit, target: *Entity) !bool {
-        _ = Projectile.launch(self.entity, 0, target) catch |err| {
+        _ = Projectile.launch(self.entity, self.classFromGenome(), target) catch |err| {
             std.debug.print("Attack failed: {}.\n", .{err});
             return false;
         };
@@ -1056,7 +1056,7 @@ pub const Unit = struct {
         if (target.kind != Kind.Resource or target.ref.Resource.capacity == 0) return false;
         if (!self.entity.isTouching(target, self.reachU16())) return false;
         target.ref.Resource.capacity = u.u16Sub(target.ref.Resource.capacity, 1);
-        self.resources[target.ref.Resource.class] += 1;
+        self.resources[u.indexFromClassResource(target.ref.Resource.class)] += 1;
 
         // Check if carrying max, set to return
         if (self.resources[0] + self.resources[1] >= self.carry) {
@@ -1138,6 +1138,16 @@ pub const Unit = struct {
         return unit;
     }
 
+    /// Returns the last character of genome code. Returns `N` if none found.
+    pub fn classFromGenome(self: *Unit) u8 {
+        var i: usize = self.genome.code.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.genome.code[i] != ' ') return self.genome.code[i];
+        }
+        return 'N';
+    }
+
     pub fn die(self: *Unit, cause: ?u8) !void {
         _ = cause;
         try main.World.grid.removeFromAllSections(self.entity);
@@ -1207,10 +1217,10 @@ pub const Structure = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = u.Subcell.half * 5, .height = u.Subcell.half * 5, .life = 12000, .restitution = 8.6, .capacity = 3, .start_capacity = 3 }, // Farm
-            1 => Properties{ .width = u.Subcell.half * 3, .height = u.Subcell.half * 3, .life = 8000, .restitution = 4.0, .capacity = 1, .start_capacity = 0 }, // Home
-            2 => Properties{ .width = u.Subcell.half * 6, .height = u.Subcell.half * 4, .life = 14000, .restitution = 14.0, .capacity = 6, .start_capacity = 0 }, // Yard
-            3 => Properties{ .width = u.Subcell.half * 3, .height = u.Subcell.half * 5, .life = 9000, .restitution = 11.0, .capacity = 4, .start_capacity = 0 }, // Keep
+            'A' => Properties{ .width = u.Subcell.half * 5, .height = u.Subcell.half * 5, .life = 12000, .restitution = 8.6, .capacity = 3, .start_capacity = 3 }, // Farm
+            'B' => Properties{ .width = u.Subcell.half * 3, .height = u.Subcell.half * 3, .life = 8000, .restitution = 4.0, .capacity = 1, .start_capacity = 0 }, // Home
+            'C' => Properties{ .width = u.Subcell.half * 6, .height = u.Subcell.half * 4, .life = 14000, .restitution = 14.0, .capacity = 6, .start_capacity = 0 }, // Yard
+            'D' => Properties{ .width = u.Subcell.half * 3, .height = u.Subcell.half * 5, .life = 9000, .restitution = 11.0, .capacity = 4, .start_capacity = 0 }, // Keep
             else => @panic("Invalid structure class"),
         };
     }
@@ -1370,10 +1380,10 @@ pub const Structure = struct {
 
     pub fn spawnClass(self: *Structure) u8 {
         return switch (self.class) {
-            0 => 0, // Not very useful now, but may want to change values here
-            1 => 1, // To change what units different buildings spawn
-            2 => 2,
-            3 => 3,
+            'A' => 'A', // Not very useful now, but may want to change values here
+            'B' => 'B', // To change what units different buildings spawn
+            'C' => 'C',
+            'D' => 'D',
             else => @panic("Invalid structure class"),
         };
     }
@@ -1426,7 +1436,7 @@ pub const Resource = struct {
                         copy = result;
                         // std.debug.print("Spawned resource: {s} at {}/{}.\n", .{ u.resourceTypeFromClass(result.class), result.x, result.y });
                     } else |err| {
-                        std.debug.print("Failed to spawn resource {s}: {}.\n", .{ u.resourceTypeFromClass(self.class), err });
+                        std.debug.print("Failed to spawn resource {any}: {}.\n", .{ self.class, err });
                     }
                 }
                 if (copy == null) { // If didn't spawn copy, ticks capacity towards inactivity
@@ -1452,10 +1462,10 @@ pub const Resource = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100, .growth = 8.0 },
-            1 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 50, .growth = 60.0 },
-            2 => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 800, .growth = 0 },
-            3 => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 20, .growth = 0 },
+            'A' => Properties{ .width = u.Subcell.size, .height = u.Subcell.size, .capacity = 100, .growth = 8.0 },
+            'B' => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 50, .growth = 60.0 },
+            'C' => Properties{ .width = u.Subcell.size / 2, .height = u.Subcell.size / 2, .capacity = 800, .growth = 0 },
+            'D' => Properties{ .width = u.Subcell.size / 4, .height = u.Subcell.size / 4, .capacity = 20, .growth = 0 },
             else => @panic("Invalid resource class"),
         };
     }
@@ -1500,19 +1510,19 @@ pub const Resource = struct {
     /// Returns carried resource index (i.e. food/wood/iron/gold) from resource entity's class.
     fn typeFromClass(self: *Resource) usize {
         return switch (self.class) {
-            0 => 0,
-            1 => 1,
-            2 => 2,
-            3 => 3,
+            'A' => 'A',
+            'B' => 'B',
+            'C' => 'C',
+            'D' => 'D',
         };
     }
 
     pub fn spawnClass(self: *Resource) u8 {
         return switch (self.class) {
-            0 => 0, // Not very useful now, but may want to change values here
-            1 => 1, // To change what resources get spawned from what
-            2 => 2,
-            3 => 3,
+            'A' => 'A', // Not very useful now, but may want to change values here
+            'B' => 'B', // To change what resources get spawned from what
+            'C' => 'C',
+            'D' => 'D',
             else => @panic("Invalid resource class"),
         };
     }
@@ -1564,7 +1574,6 @@ pub const Projectile = struct {
 
     pub fn update(self: *Projectile) void {
         self.life -= 1;
-        std.debug.print("Updating projectile. Life: {d}\n", .{self.life});
         if (self.life <= 0) {
             self.state = State.Destroyed; // Cleared in main
             return;
@@ -1591,10 +1600,10 @@ pub const Projectile = struct {
     /// Returns a `Properties` template determined by `class`.
     pub fn preset(class: u8) Properties {
         return switch (class) {
-            0 => Properties{ .life = 32, .speed = 8, .width = 4, .height = 4, .damage = 6 },
-            1 => Properties{ .life = 32, .speed = 14, .width = 4, .height = 4, .damage = 16 },
-            2 => Properties{ .life = 128, .speed = 6, .width = 8, .height = 8, .damage = 56 },
-            3 => Properties{ .life = 36, .speed = 12, .width = 6, .height = 6, .damage = 32 },
+            'A' => Properties{ .life = 32, .speed = 8, .width = 4, .height = 4, .damage = 6 },
+            'B' => Properties{ .life = 32, .speed = 14, .width = 4, .height = 4, .damage = 16 },
+            'C' => Properties{ .life = 128, .speed = 6, .width = 8, .height = 8, .damage = 56 },
+            'D' => Properties{ .life = 36, .speed = 12, .width = 6, .height = 6, .damage = 32 },
             else => @panic("Invalid projectile class"),
         };
     }

@@ -1708,7 +1708,7 @@ pub fn findConnectedStructures(grid: *e.Grid, origin: *e.Structure) ![16]?*e.Str
 
 // Game data
 //----------------------------------------------------------------------------------
-pub fn unitTypeFromClass(class: u8) []const u8 {
+pub fn unitTypeFromClass(class: u8) []const u8 { // Obsolete
     return switch (class) {
         0 => "A", // "Peasant",
         1 => "B", // "Soldier",
@@ -1718,7 +1718,7 @@ pub fn unitTypeFromClass(class: u8) []const u8 {
     };
 }
 
-pub fn structureTypeFromClass(class: u8) []const u8 {
+pub fn structureTypeFromClass(class: u8) []const u8 { // Obsolete
     return switch (class) {
         0 => "Structure A", // "Farm",
         1 => "Structure B", // "Home",
@@ -1728,13 +1728,35 @@ pub fn structureTypeFromClass(class: u8) []const u8 {
     };
 }
 
-pub fn resourceTypeFromClass(class: u8) []const u8 {
+pub fn resourceTypeFromClass(class: u8) []const u8 { // Obsolete
     return switch (class) {
         0 => "A", // "Food",
         1 => "B", // "Wood",
         2 => "C", // "Iron",
         3 => "D", // "Grail",
         else => "Unknown resource type",
+    };
+}
+
+/// Converts build index to structure class. Returns `N` if not found.
+pub fn classFromIndexStructure(index: u8) u8 {
+    return switch (index) {
+        0 => 'A',
+        1 => 'B',
+        2 => 'C',
+        3 => 'D',
+        else => 'N',
+    };
+}
+
+/// Converts resource class to carry index. Panics if not A/B/C/D.
+pub fn indexFromClassResource(class: u8) u8 {
+    return switch (class) {
+        'A' => 0,
+        'B' => 1,
+        'C' => 2,
+        'D' => 3,
+        else => @panic("Unrecognized resource class"),
     };
 }
 
