@@ -1128,11 +1128,24 @@ pub const EnemyPlayerAI = struct {
     }
 
     pub fn constructBuilding(ai: *e.Player, class: u8, tick: u64) void {
+        const building = e.Structure.preset(class);
+
         const dx: i32 = @rem(@as(i32, @intCast(tick)), 600) - 300;
         const dy: i32 = @rem(@as(i32, @intCast(tick / 2)), 600) - 300;
-        const x: u16 = @intCast(@as(i32, ai.x) + dx);
-        const y: u16 = @intCast(@as(i32, ai.y) + dy);
-        _ = e.Structure.construct(ai.id, x, y, class);
+
+        const map_x: u16 = @intCast(@as(i32, ai.x) + dx);
+        const map_y: u16 = @intCast(@as(i32, ai.y) + dy);
+
+        const subcell = u.mapToSubcell(map_x, map_y);
+
+        const snapped = u.Subcell.snapToCorner(
+            subcell.corner()[0],
+            subcell.corner()[1],
+            building.width,
+            building.height,
+        );
+
+        _ = e.Structure.construct(ai.id, snapped[0], snapped[1], class);
     }
 
     /// Moves continuously in a tick-determined direction for up to `duration` ticks.
